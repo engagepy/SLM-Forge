@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { api } from "../api";
-import { cx } from "../ui";
+import { cx, Popover } from "../ui";
 
 export interface Spend {
   provider: "openai";
@@ -29,11 +29,20 @@ export function useSpend() {
 }
 
 /** A pill with what the OpenAI account has spent; click for the breakdown or to refresh. */
-export default function UsageMeter({ className }: { className?: string }) {
+export default function UsageMeter({
+  className,
+  side = "down",
+  align = "right",
+}: {
+  className?: string;
+  side?: "down" | "up";
+  align?: "left" | "right";
+}) {
   const { data } = useSpend();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   if (!data) {
     return (
       <span className={cx("flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs text-faint", className)}>
@@ -44,8 +53,11 @@ export default function UsageMeter({ className }: { className?: string }) {
   const ok = data.configured && !data.error;
   const refresh = async () => {
     setRefreshing(true);
+    setRefreshError(null);
     try {
       qc.setQueryData(["usage"], await api.get<Spend>("/api/usage?refresh=true"));
+    } catch (e) {
+      setRefreshError((e as Error).message);
     } finally {
       setRefreshing(false);
     }
@@ -54,6 +66,7 @@ export default function UsageMeter({ className }: { className?: string }) {
     <div className={cx("relative", className)}>
       <button
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
         title="OpenAI spend, read from your account"
         className="flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs text-muted hover:text-fg"
       >
@@ -67,8 +80,7 @@ export default function UsageMeter({ className }: { className?: string }) {
           <span className={data.error ? "text-warn" : "text-faint"}>{data.error ? "can't read spend" : "spend not set up"}</span>
         )}
       </button>
-      {open && (
-        <div className="absolute right-0 z-20 mt-1.5 w-72 rounded-xl border border-line bg-panel p-3 text-xs shadow-lg">
+      <Popover open={open} onClose={() => setOpen(false)} align={align} side={side}>
           {ok ? (
             <>
               <ul className="space-y-1">
@@ -93,6 +105,7 @@ export default function UsageMeter({ className }: { className?: string }) {
                 <button onClick={refresh} className="hover:text-fg" disabled={refreshing}>
                   {refreshing ? "…" : "refresh"}
                 </button>
+                {refreshError && <span className="text-warn">{refreshError}</span>}
               </div>
               <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
                 From OpenAI's Costs API; OpenAI posts costs with a lag of a few hours. Key in use {data.key} · {data.model}
@@ -103,8 +116,7 @@ export default function UsageMeter({ className }: { className?: string }) {
           ) : (
             <p className="leading-relaxed text-muted">{data.setup}</p>
           )}
-        </div>
-      )}
+      </Popover>
     </div>
   );
 }

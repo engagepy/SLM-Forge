@@ -141,7 +141,7 @@ export default function StoragePage() {
               <li key={p.id} className="rounded-xl border border-line bg-panel p-3">
                 <div className="flex items-center gap-3">
                   <div className="min-w-0 flex-1">
-                    <Link to={`/p/${p.id}`} className="truncate text-[13px] font-medium hover:underline">
+                    <Link to={`/p/${p.id}`} className="block truncate text-[13px] font-medium hover:underline">
                       {p.name}
                     </Link>
                     <div className="truncate text-xs text-muted">{p.goal}</div>

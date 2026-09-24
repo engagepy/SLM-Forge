@@ -39,7 +39,7 @@ function Suggestions({
             key={c.text}
             onClick={() => !c.used && onPick(c)}
             disabled={busy || c.used}
-            title={c.expect ? `Expect: ${c.expect}` : undefined}
+            title={c.expect ? `${c.text}\n\nExpect: ${c.expect}` : c.text}
             className={cx(
               "max-w-full truncate rounded-full border px-3 py-1 text-left text-[12px] transition",
               c.used
@@ -102,11 +102,19 @@ export default function TryModel() {
   const usedTexts = () => chips.filter((c) => c.used).map((c) => c.text);
   useEffect(() => {
     if (seeded || !project.data) return;
-    const own = (project.data.project.test_questions ?? []).map((q) => q.input);
-    const fromSamples = [...new Set((project.data.samples ?? []).map((x) => x.prompt))];
-    const first = [...new Set([...own, ...fromSamples])].slice(0, 4);
+    const own: Chip[] = (project.data.project.test_questions ?? []).map((q) => ({
+      text: q.input,
+      kind: q.kind === "should-not" ? "should-not" : "on-goal",
+      expect: q.expected ?? "",
+      used: false,
+    }));
+    const seen = new Set(own.map((c) => c.text));
+    const fromSamples: Chip[] = (project.data.samples ?? [])
+      .filter((x) => !seen.has(x.prompt) && seen.add(x.prompt))
+      .map((x) => ({ text: x.prompt, kind: "on-goal", expect: "", used: false }));
+    const first = [...own, ...fromSamples].slice(0, 4);
     setSeeded(true);
-    if (first.length) setChips(first.map((text) => ({ text, kind: "on-goal", expect: "", used: false })));
+    if (first.length) setChips(first);
     else suggest.mutate([]);
   }, [project.data, seeded]); // eslint-disable-line react-hooks/exhaustive-deps
   const useChip = (c: Chip) => {

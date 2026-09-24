@@ -126,7 +126,14 @@ export default function Studio() {
     <div className="flex h-full flex-col">
       <TopBar snapshot={snapshot.data} />
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-2">
-        <Chat projectId={projectId} messages={messages.data ?? []} streaming={streaming} busy={busy} pending={snapshot.data?.pending_action ?? null} />
+        <Chat
+          projectId={projectId}
+          messages={messages.data ?? []}
+          loaded={messages.isSuccess}
+          streaming={streaming}
+          busy={busy}
+          pending={snapshot.data?.pending_action ?? null}
+        />
         {snapshot.data ? <Canvas snapshot={snapshot.data} messages={messages.data ?? []} /> : <div className="grid place-items-center"><Spinner /></div>}
       </div>
     </div>
@@ -154,12 +161,14 @@ function TopBar({ snapshot }: { snapshot?: Snapshot }) {
 function Chat({
   projectId,
   messages,
+  loaded,
   streaming,
   busy,
   pending,
 }: {
   projectId: number;
   messages: TunerMessage[];
+  loaded: boolean;
   streaming: string;
   busy: boolean;
   pending: PendingAction | null;
@@ -167,7 +176,9 @@ function Chat({
   const [input, setInput] = useState("");
   const { data: sys } = useSystem();
   const send = useMutation({
-    mutationFn: (text: string) => api.post(`/api/projects/${projectId}/tuner/message`, { text }),
+    // pending_id: a plain "yes" confirms only the card the user was looking at.
+    mutationFn: (text: string) => api.post(`/api/projects/${projectId}/tuner/message`, { text, pending_id: pending?.id ?? null }),
+    onError: (_e, text) => setInput(text), // the message comes back so it isn't lost
   });
   const bottom = useRef<HTMLDivElement>(null);
   // Block body: scrollIntoView() now returns a Promise in Chrome, and an effect must not return one.
@@ -177,7 +188,7 @@ function Chat({
 
   const submit = (text: string) => {
     const t = text.trim();
-    if (!t) return;
+    if (!t || send.isPending) return;
     setInput("");
     send.mutate(t);
   };
@@ -202,7 +213,7 @@ function Chat({
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
-        {messages.length === 0 && !busy && <StartTuner projectId={projectId} />}
+        {loaded && messages.length === 0 && !busy && <StartTuner projectId={projectId} />}
         {groupTools(visible).map((item) =>
           Array.isArray(item) ? <ToolGroup key={item[0].id} steps={item} /> : <ChatItem key={item.id} m={item} />,
         )}
@@ -222,6 +233,7 @@ function Chat({
 
       <div className="border-t border-line p-4">
         {pending && <ConfirmCard projectId={projectId} action={pending} />}
+        <ErrorNote error={send.error} />
         <form
           className="flex gap-2"
           onSubmit={(e) => {
@@ -248,7 +260,7 @@ function Chat({
                   : "Type to steer the Tuner (optional)…"
             }
           />
-          <Button type="submit" variant="primary" disabled={!input.trim()}>
+          <Button type="submit" variant="primary" disabled={!input.trim() || send.isPending} loading={send.isPending}>
             Send
           </Button>
         </form>
@@ -331,9 +343,11 @@ function ConfirmCard({ projectId, action }: { projectId: number; action: Pending
   const decide = useMutation({
     mutationFn: (go: boolean) =>
       api.post(`/api/projects/${projectId}/studio/${go ? "confirm" : "decline"}`, { action_id: action.id, reason: why }),
-    onSettled: () => {
+    onSuccess: () => {
       setAsking(false);
       setWhy("");
+    },
+    onSettled: () => {
       for (const k of ["studio", "sessions"]) qc.invalidateQueries({ queryKey: [k] });
     },
   });

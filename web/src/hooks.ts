@@ -46,12 +46,33 @@ export function useOverview(projectId: number) {
 }
 
 /** Subscribe to a server-sent event stream; reconnects automatically (EventSource default). */
+// One connection per stream URL, shared by every subscriber on the page (a training run's log is
+// shown by the canvas and the console at once), so a tab stays under the browser's per-host limit.
+const sources = new Map<string, { es: EventSource; refs: number }>();
+
+function acquire(url: string): EventSource {
+  const entry = sources.get(url) ?? { es: new EventSource(url), refs: 0 };
+  entry.refs += 1;
+  sources.set(url, entry);
+  return entry.es;
+}
+
+function release(url: string) {
+  const entry = sources.get(url);
+  if (!entry) return;
+  entry.refs -= 1;
+  if (entry.refs <= 0) {
+    entry.es.close();
+    sources.delete(url);
+  }
+}
+
 function useEventSource(url: string | null, onEvent: (type: string, data: Record<string, unknown>) => void, types: string[]) {
   const handler = useRef(onEvent);
   handler.current = onEvent;
   useEffect(() => {
     if (!url) return;
-    const es = new EventSource(url);
+    const es = acquire(url);
     const listeners = types.map((t) => {
       const fn = (e: MessageEvent) => handler.current(t, JSON.parse(e.data));
       es.addEventListener(t, fn);
@@ -59,9 +80,8 @@ function useEventSource(url: string | null, onEvent: (type: string, data: Record
     });
     return () => {
       listeners.forEach(([t, fn]) => es.removeEventListener(t, fn));
-      es.close();
+      release(url);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, types.join()]);
 }
 

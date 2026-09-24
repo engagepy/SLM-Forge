@@ -1,5 +1,5 @@
 // Small, consistent building blocks. Everything reads colours from the tokens in index.css.
-import { type ButtonHTMLAttributes, createContext, type ReactNode, useCallback, useContext, useId, useRef, useState } from "react";
+import { type ButtonHTMLAttributes, createContext, type ReactNode, useCallback, useContext, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
 
 export function cx(...parts: (string | false | null | undefined)[]) {
@@ -77,6 +77,55 @@ export function ProgressBar({ pct, failed = false }: { pct: number; failed?: boo
   return (
     <div className="h-1.5 overflow-hidden rounded-full bg-panel-2">
       <div className={cx("h-full transition-all", failed ? "bg-bad" : "bg-accent")} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+/** A small panel anchored to a trigger. Closes on an outside click or Escape. `align` is which
+ * edge lines up with the trigger; `side` is where it opens. Trigger buttons should set aria-expanded. */
+export function Popover({
+  open,
+  onClose,
+  align = "right",
+  side = "down",
+  className,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  align?: "left" | "right";
+  side?: "down" | "up";
+  className?: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = ref.current;
+      if (el && !el.contains(e.target as Node) && !el.parentElement?.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      className={cx(
+        "absolute z-20 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-panel p-3 text-xs shadow-lg",
+        align === "right" ? "right-0" : "left-0",
+        side === "down" ? "mt-1.5 top-full" : "mb-1.5 bottom-full",
+        className,
+      )}
+    >
+      {children}
     </div>
   );
 }

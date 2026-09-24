@@ -238,7 +238,7 @@ function MachinePanel({ c }: { c: Sessions["capacity"] }) {
           · {c.memory_gb.toFixed(0)} GB · {c.gpu_slots} training at a time
         </span>
       </div>
-      <UsageMeter className="mt-2" />
+      <UsageMeter className="mt-2" side="up" align="left" />
       <Link to="/storage" className="mt-2 block text-[12px] text-muted hover:text-fg">
         Storage & cleanup →
       </Link>

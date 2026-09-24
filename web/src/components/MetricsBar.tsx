@@ -4,7 +4,7 @@ import { Link } from "react-router";
 
 import { api, fmt, type Snapshot, type SystemStatus } from "../api";
 import { useSystem } from "../hooks";
-import { Badge, cx } from "../ui";
+import { Badge, cx, Popover } from "../ui";
 import UsageMeter from "./UsageMeter";
 
 const size = (gb: number) => (gb < 1 ? `${Math.round(gb * 1024)} MB` : fmt.gb(gb));
@@ -26,6 +26,7 @@ function DiskMeter({ disk }: { disk: SystemStatus["disk"] }) {
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
         title="Disk used by SLM Forge on this Mac"
         className="flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs text-muted hover:text-fg"
       >
@@ -34,8 +35,7 @@ function DiskMeter({ disk }: { disk: SystemStatus["disk"] }) {
         <span className="num text-faint">· {fmt.gb(disk.disk_free_gb)} free</span>
         {disk.tidy_suggested && <span className="size-1.5 rounded-full bg-warn" title={`${size(disk.reclaimable_gb)} can be cleared`} />}
       </button>
-      {open && (
-        <div className="absolute right-0 z-20 mt-1.5 w-72 rounded-xl border border-line bg-panel p-3 text-xs shadow-lg">
+      <Popover open={open} onClose={() => setOpen(false)} align="left">
           <div className="flex items-center justify-between">
             <span className="font-semibold">Used by SLM Forge</span>
             <span className="num text-[15px] font-semibold">{size(disk.total_gb)}</span>
@@ -63,8 +63,7 @@ function DiskMeter({ disk }: { disk: SystemStatus["disk"] }) {
           <Link to="/storage" className="mt-2 block text-[12px] font-medium text-accent hover:underline" onClick={() => setOpen(false)}>
             Manage storage →
           </Link>
-        </div>
-      )}
+      </Popover>
     </div>
   );
 }
