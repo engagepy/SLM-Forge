@@ -16,7 +16,15 @@ interface Inventory {
     total_gb: number;
     exports: { job_id: number; name: string; path: string; size_gb: number }[];
   }[];
-  footprint: { total_gb: number; disk_free_gb: number; disk_total_gb: number; parts_gb: Record<string, number> };
+  footprint: {
+    total_gb: number;
+    disk_free_gb: number;
+    disk_total_gb: number;
+    parts_gb: Record<string, number>;
+    reclaimable_gb: number;
+    tidy_threshold_gb: number;
+    tidy_suggested: boolean;
+  };
 }
 
 const size = (gb: number) => (gb < 1 ? `${Math.round(gb * 1024)} MB` : fmt.gb(gb));
@@ -46,7 +54,12 @@ export default function StoragePage() {
     onSuccess: done("Project"),
     onError: setError,
   });
-  const busy = removeModel.isPending || deleteExport.isPending || deleteProject.isPending;
+  const tidy = useMutation({
+    mutationFn: () => api.post<{ freed_gb: number; deleted: number }>("/api/storage/tidy"),
+    onSuccess: done("Intermediate run files"),
+    onError: setError,
+  });
+  const busy = removeModel.isPending || deleteExport.isPending || deleteProject.isPending || tidy.isPending;
   const d = inv.data;
 
   return (
@@ -65,6 +78,27 @@ export default function StoragePage() {
           )}
         </div>
         <ErrorNote error={error} />
+
+        {d && d.footprint.reclaimable_gb >= 0.05 && (
+          <section className={cx("rounded-xl border p-4", d.footprint.tidy_suggested ? "border-warn/50 bg-warn-soft/40" : "border-line bg-panel")}>
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-medium">
+                  {size(d.footprint.reclaimable_gb)} of intermediate run files can be cleared
+                  {d.footprint.tidy_suggested && ` · the app is over ${d.footprint.tidy_threshold_gb} GB`}
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-muted">
+                  Each training run writes a fused copy of the model so the next run can start from it, and failed or cancelled runs leave
+                  their folders. Clearing removes those copies only. Every run's adapter, metrics and evaluation stay, exports stay, and any
+                  checkpoint can still be served or built on (it is re-fused from its adapter when needed).
+                </p>
+              </div>
+              <Button variant="primary" size="sm" loading={tidy.isPending} disabled={busy} onClick={() => tidy.mutate()}>
+                Clear {size(d.footprint.reclaimable_gb)}
+              </Button>
+            </div>
+          </section>
+        )}
 
         <section>
           <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-faint">Base models downloaded from Hugging Face</h2>

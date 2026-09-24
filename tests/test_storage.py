@@ -129,3 +129,77 @@ def test_removing_a_base_model_is_refused_while_a_project_uses_it(session, tmp_p
     session.expire_all()
     assert session.exec(__import__("sqlmodel").select(ModelRecord)).all() == []
     assert client.delete("/api/models/org/tiny").status_code == 404
+
+
+def test_tidy_clears_only_fused_copies_nothing_depends_on(session, client, monkeypatch):
+    from slm.db import Checkpoint, Job, Project
+
+    s = get_settings()
+    s.ensure_dirs()
+    session.expunge_all()
+    p = Project(name="Chef", goal="g", base_model="org/tiny")
+    session.add(p)
+    session.commit()
+    session.refresh(p)
+    jobs = [Job(project_id=p.id, kind="sft", status=st) for st in ("succeeded", "succeeded", "succeeded", "failed")]
+    session.add_all(jobs)
+    session.commit()
+    for j in jobs:
+        session.refresh(j)
+    runs = [s.runs_dir / f"job-{j.id:05d}" for j in jobs]
+    for r in runs:
+        for name in ("adapters", "policy-fused"):
+            (r / name).mkdir(parents=True, exist_ok=True)
+            (r / name / "w").write_bytes(b"x" * 1_000_000)
+    # Run 1's fused copy is the base of checkpoint 2; run 2's is served; run 3's is free; run 4 died.
+    c1 = Checkpoint(
+        project_id=p.id,
+        kind="sft",
+        job_id=jobs[0].id,
+        base_model_path="/base",
+        adapter_path=str(runs[0] / "adapters"),
+        fused_path=str(runs[0] / "policy-fused"),
+    )
+    c2 = Checkpoint(
+        project_id=p.id,
+        kind="sft",
+        job_id=jobs[1].id,
+        base_model_path=str(runs[0] / "policy-fused"),
+        adapter_path=str(runs[1] / "adapters"),
+        fused_path=str(runs[1] / "policy-fused"),
+    )
+    c3 = Checkpoint(
+        project_id=p.id,
+        kind="sft",
+        job_id=jobs[2].id,
+        base_model_path=str(runs[1] / "policy-fused"),
+        adapter_path=str(runs[2] / "adapters"),
+        fused_path=str(runs[2] / "policy-fused"),
+    )
+    session.add_all([c1, c2, c3])
+    p.current_model_path = str(runs[1] / "policy-fused")
+    session.add(p)
+    session.commit()
+    storage._cache.clear()
+    items = storage.reclaimable_items()
+    assert sorted(i["path"] for i in items) == sorted([str(runs[2] / "policy-fused"), str(runs[3])])
+    fp = client.get("/api/system").json()["disk"]
+    assert fp["reclaimable_gb"] == round(3_000_000 / storage.GB, 3) and fp["tidy_suggested"] is False  # far below 20 GB
+    monkeypatch.setattr(s, "disk_tidy_gb", 0.001)
+    storage._cache.clear()
+    assert (
+        client.get("/api/system").json()["disk"]["tidy_suggested"] is False
+    )  # reclaimable under 0.5 GB: not worth a nudge
+    out = client.post("/api/storage/tidy").json()
+    assert out["deleted"] == 2 and out["freed_gb"] == round(3_000_000 / storage.GB, 3)
+    assert (
+        (runs[0] / "policy-fused").exists()
+        and (runs[1] / "policy-fused").exists()
+        and not (runs[2] / "policy-fused").exists()
+    )
+    assert (runs[2] / "adapters").exists() and not runs[3].exists()  # adapters always stay
+    session.expire_all()
+    assert (
+        session.get(Checkpoint, c3.id).fused_path is None and session.get(Checkpoint, c3.id).adapter_path
+    )  # still servable
+    assert storage.reclaimable_items() == []

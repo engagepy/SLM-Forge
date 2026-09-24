@@ -32,6 +32,7 @@ function DiskMeter({ disk }: { disk: SystemStatus["disk"] }) {
         <span className="text-faint">Disk</span>
         <span className="num font-medium text-fg">{size(disk.total_gb)}</span>
         <span className="num text-faint">· {fmt.gb(disk.disk_free_gb)} free</span>
+        {disk.tidy_suggested && <span className="size-1.5 rounded-full bg-warn" title={`${size(disk.reclaimable_gb)} can be cleared`} />}
       </button>
       {open && (
         <div className="absolute right-0 z-20 mt-1.5 w-72 rounded-xl border border-line bg-panel p-3 text-xs shadow-lg">
@@ -53,6 +54,12 @@ function DiskMeter({ disk }: { disk: SystemStatus["disk"] }) {
           <p className="mt-2 border-t border-line pt-2 text-[11px] leading-relaxed break-all whitespace-normal text-faint">
             {fmt.gb(disk.disk_free_gb)} free of {fmt.gb(disk.disk_total_gb)} on this disk. Workspace: {disk.workspace}
           </p>
+          {disk.reclaimable_gb >= 0.05 && (
+            <p className={cx("mt-2 text-[11px] leading-relaxed", disk.tidy_suggested ? "text-warn" : "text-faint")}>
+              {size(disk.reclaimable_gb)} of intermediate run files can be cleared (fused copies earlier runs left behind; adapters,
+              exports and rollback stay).
+            </p>
+          )}
           <Link to="/storage" className="mt-2 block text-[12px] font-medium text-accent hover:underline" onClick={() => setOpen(false)}>
             Manage storage →
           </Link>

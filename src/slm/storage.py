@@ -64,13 +64,70 @@ def _measure() -> dict:
         for rec in db.exec(select(ModelRecord)).all():
             parts["models"] += _size(rec.local_path)  # snapshot links resolve to the cached blobs
     usage = shutil.disk_usage(s.workspace)
+    total = sum(parts.values())
+    reclaimable = sum(item["bytes"] for item in reclaimable_items())
     return {
-        "total_gb": _gb(sum(parts.values())),
+        "total_gb": _gb(total),
         "parts_gb": {k: _gb(v) for k, v in parts.items()},
         "workspace": str(s.workspace),
         "disk_free_gb": round(usage.free / GB, 1),
         "disk_total_gb": round(usage.total / GB, 1),
+        "reclaimable_gb": _gb(reclaimable),
+        "tidy_threshold_gb": s.disk_tidy_gb,
+        "tidy_suggested": total / GB > s.disk_tidy_gb and reclaimable / GB >= 0.5,
     }
+
+
+# ── what earlier runs left behind ───────────────────────────────────────────
+
+FUSED_DIRS = ("base-fused", "policy-fused", "fused")
+
+
+def reclaimable_items() -> list[dict]:
+    """Run files nothing depends on any more: the fused model copies a run wrote so the next run
+    could start from it (rebuildable from base + adapter, which stay), and the folders of runs that
+    failed or were cancelled. A fused copy is kept while any project serves it or any checkpoint
+    was trained on top of it, so rolling back to any checkpoint still works after tidying."""
+    cfg = get_settings()
+    with Session(engine()) as s:
+        needed = {p.current_model_path for p in s.exec(select(Project)).all() if p.current_model_path}
+        needed |= {c.base_model_path for c in s.exec(select(Checkpoint)).all()}
+        checkpoint_jobs = {c.job_id for c in s.exec(select(Checkpoint)).all()}
+        dead_jobs = [
+            j.id
+            for j in s.exec(select(Job).where(Job.status.in_(["failed", "cancelled"]))).all()
+            if j.id not in checkpoint_jobs
+        ]
+    items, whole = [], set()
+    for job_id in dead_jobs:
+        run = cfg.runs_dir / f"job-{job_id:05d}"
+        if run.is_dir() and (n := _size(run)):
+            items.append({"path": str(run), "bytes": n, "why": f"run {job_id} failed or was cancelled"})
+            whole.add(run)
+    for run in sorted(cfg.runs_dir.glob("job-*")) if cfg.runs_dir.exists() else []:
+        if run in whole:
+            continue  # the whole folder is already listed
+        for name in FUSED_DIRS:
+            fused = run / name
+            if fused.is_dir() and str(fused) not in needed and (n := _size(fused)):
+                items.append(
+                    {"path": str(fused), "bytes": n, "why": f"{run.name}: fused copy, rebuildable from its adapter"}
+                )
+    return items
+
+
+def tidy() -> dict:
+    """Delete what reclaimable_items lists, and forget fused paths that no longer exist."""
+    items = reclaimable_items()
+    freed = sum(_rmtree(item["path"]) for item in items)
+    with Session(engine()) as s:
+        for c in s.exec(select(Checkpoint)).all():
+            if c.fused_path and not Path(c.fused_path).exists():
+                c.fused_path = None  # serve_checkpoint falls back to base + adapter
+                s.add(c)
+        s.commit()
+    footprint(refresh=True)
+    return {"freed_gb": _gb(freed), "deleted": len(items)}
 
 
 def footprint(refresh: bool = False) -> dict:

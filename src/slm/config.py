@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
 
+    # Above this many GB used by the app, the Disk pill suggests clearing intermediate run files.
+    disk_tidy_gb: float = 20.0
+
     host: str = "127.0.0.1"
     port: int = 8000
 

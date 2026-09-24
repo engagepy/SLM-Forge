@@ -137,6 +137,11 @@ agents and the UI don't care which one is behind them.
 - **A metrics strip above every project:** the Mac and its ML budget, the GPU, how much disk the app
   occupies (datasets, runs, exports, uploads, databases and the downloaded models, with free space),
   and the OpenAI spend below.
+- **Disk is not the constraint.** The Tuner keeps every adapter, metric, evaluation and example,
+  and sizes data by the goal (hundreds for a persona, thousands for extraction or JSON). What runs
+  leave behind that *is* reclaimable, the fused model copies each run writes for the next and the
+  folders of failed runs, shows in the Disk pill; past `SLM_DISK_TIDY_GB` (20) it's suggested, and
+  one click clears it with rollback intact (checkpoints re-fuse from their adapters).
 - **Storage & cleanup** (`/storage`, from the Disk pill or the sidebar): every base model the app
   downloaded (and which projects use it), every project with the size of its runs, data and
   exported models. Remove a model, delete an export, or delete a project (keeping its exports if

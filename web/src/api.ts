@@ -28,6 +28,9 @@ export interface SystemStatus {
     workspace: string;
     disk_free_gb: number;
     disk_total_gb: number;
+    reclaimable_gb: number;
+    tidy_threshold_gb: number;
+    tidy_suggested: boolean;
   };
 }
 

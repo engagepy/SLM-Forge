@@ -787,7 +787,7 @@ def evaluate_model(ctx: Ctx, target: str = "current", reason: str = "") -> dict:
             "at": now().isoformat(),
         }
         st = studio_state(s, pid)
-        st.evals = (previous + [record])[-12:]
+        st.evals = (previous + [record])[-60:]  # the whole history: disk is not the constraint
         flag_modified(st, "evals")
         st.stage = "evaluate"
         s.add(st)

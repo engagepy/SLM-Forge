@@ -45,6 +45,13 @@ def storage_inventory() -> dict:
     return storage.inventory()
 
 
+@router.post("/storage/tidy")
+def storage_tidy() -> dict:
+    """Clear intermediate run files nothing depends on (fused copies, dead runs); adapters, exports
+    and every checkpoint's ability to be served again stay."""
+    return storage.tidy()
+
+
 @router.delete("/models/{repo_id:path}")
 def remove_model(repo_id: str) -> dict:
     """Delete a downloaded base model from the Hugging Face cache (refused while a project uses it)."""

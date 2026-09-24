@@ -82,7 +82,10 @@ src/slm/
   profile.py       user level + notes, prompt_section() injected into Tuner instructions
   storage.py       disk footprint (workspace parts + downloaded models), cached a minute; in /api/system.
                    inventory(); remove_model / delete_export / delete_project (files + rows + Tuner
-                   memory; models stay unless removed explicitly); each returns freed_gb
+                   memory; models stay unless removed explicitly); each returns freed_gb.
+                   reclaimable_items()/tidy(): fused copies no project serves and no checkpoint
+                   builds on, plus dead runs' folders; Checkpoint.fused_path is nulled (serve falls
+                   back to base + adapter). Threshold: SLM_DISK_TIDY_GB
   usage.py         spend meter: OpenAI Costs API (needs OPENAI_ADMIN_KEY), narrowed to the key's own
                    project (detected via the admin key list; OPENAI_PROJECT_ID overrides), 10-minute
                    cache, never raises; GET /api/usage
