@@ -78,19 +78,30 @@ def _find_project(admin_key: str, api_key: str) -> dict | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def _project_name(admin_key: str, project_id: str) -> str:
+    with httpx.Client(timeout=20, headers={"Authorization": f"Bearer {admin_key}"}) as client:
+        r = client.get(f"{ORG}/projects/{project_id}")
+        return r.json().get("name", "") if r.status_code == 200 else ""
+
+
 def project() -> dict | None:
     """Which project the meter reads: OPENAI_PROJECT_ID if set, else detected once from the key."""
     s = get_settings()
-    if s.openai_project_id:
-        return {"id": s.openai_project_id, "name": ""}
     if not (s.openai_admin_key and s.openai_api_key):
-        return None
+        return {"id": s.openai_project_id, "name": ""} if s.openai_project_id else None
     with _lock:
         if "project" not in _cache:
             try:
-                _cache["project"] = _find_project(s.openai_admin_key, s.openai_api_key)
+                if s.openai_project_id:
+                    _cache["project"] = {
+                        "id": s.openai_project_id,
+                        "name": _project_name(s.openai_admin_key, s.openai_project_id),
+                    }
+                else:
+                    _cache["project"] = _find_project(s.openai_admin_key, s.openai_api_key)
             except Exception:
-                _cache["project"] = None  # organisation-wide, then; the reading says so
+                # Organisation-wide then (or the bare id): the reading says which.
+                _cache["project"] = {"id": s.openai_project_id, "name": ""} if s.openai_project_id else None
         return _cache["project"]
 
 

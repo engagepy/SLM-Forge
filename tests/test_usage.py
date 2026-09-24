@@ -64,6 +64,20 @@ def test_spend_sums_openai_cost_buckets_for_today_month_and_weeks(monkeypatch, c
     assert len(calls) == 2
 
 
+def test_an_explicit_project_id_wins_and_gets_its_name(monkeypatch, client):
+    s = get_settings()
+    monkeypatch.setattr(s, "openai_admin_key", "sk-admin-test")
+    monkeypatch.setattr(s, "openai_project_id", "proj_set")
+    monkeypatch.setattr(s, "openai_api_key", "sk-proj-abcdefghijklmnop1234")
+    usage._cache.clear()
+    monkeypatch.setattr(usage, "_find_project", lambda admin, key: (_ for _ in ()).throw(AssertionError("not needed")))
+    monkeypatch.setattr(usage, "_project_name", lambda admin, pid: "Named")
+    seen = []
+    monkeypatch.setattr(usage, "_fetch_costs", lambda admin, start, pid: seen.append(pid) or [])
+    out = client.get("/api/usage").json()
+    assert seen == ["proj_set"] and out["project_id"] == "proj_set" and out["project_name"] == "Named"
+
+
 def test_an_ambiguous_or_unlisted_key_falls_back_to_the_whole_organisation(monkeypatch, client):
     s = get_settings()
     monkeypatch.setattr(s, "openai_admin_key", "sk-admin-test")
