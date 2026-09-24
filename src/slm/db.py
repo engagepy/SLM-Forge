@@ -1,5 +1,6 @@
 """SQLite persistence. Every artifact records the project and parent it came from."""
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -285,22 +286,32 @@ def _add_missing_columns(eng) -> None:
     from sqlalchemy import inspect, text
 
     insp = inspect(eng)
+    models = {m.class_.__tablename__: m.class_ for m in SQLModel._sa_registry.mappers}
     with eng.begin() as conn:
         for table in SQLModel.metadata.sorted_tables:
             if not insp.has_table(table.name):
                 continue
             existing = {c["name"] for c in insp.get_columns(table.name)}
+            fields = getattr(models.get(table.name), "model_fields", {})
             for col in table.columns:
-                if col.name in existing:
-                    continue
-                default = col.default.arg if col.default is not None and not callable(col.default.arg) else None
-                sql_default = (
-                    ""
-                    if default is None
-                    else f" DEFAULT {int(default) if isinstance(default, bool) else repr(default)}"
-                )
-                col_type = col.type.compile(eng.dialect)
-                conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col_type}{sql_default}'))
+                if col.name not in existing:
+                    default = col.default.arg if col.default is not None and not callable(col.default.arg) else None
+                    sql_default = (
+                        ""
+                        if default is None
+                        else f" DEFAULT {int(default) if isinstance(default, bool) else repr(default)}"
+                    )
+                    col_type = col.type.compile(eng.dialect)
+                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col_type}{sql_default}'))
+                # JSON fields keep their default on the Python side (a default_factory), so an added
+                # column is NULL for existing rows. Backfill on every start (cheap, idempotent), so a
+                # workspace that was migrated before this fix is repaired too.
+                field = fields.get(col.name)
+                if isinstance(col.type, JSON) and field is not None and field.default_factory is not None:
+                    conn.execute(
+                        text(f'UPDATE "{table.name}" SET "{col.name}" = :v WHERE "{col.name}" IS NULL'),
+                        {"v": json.dumps(field.default_factory())},
+                    )
 
 
 def set_engine(new_engine) -> None:
