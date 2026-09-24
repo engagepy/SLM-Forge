@@ -34,7 +34,13 @@ export default function UsageMeter({ className }: { className?: string }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  if (!data) return null;
+  if (!data) {
+    return (
+      <span className={cx("flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs text-faint", className)}>
+        OpenAI <span className="animate-pulse">…</span>
+      </span>
+    );
+  }
   const ok = data.configured && !data.error;
   const refresh = async () => {
     setRefreshing(true);

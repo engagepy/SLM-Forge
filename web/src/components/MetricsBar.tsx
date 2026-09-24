@@ -71,7 +71,7 @@ export default function MetricsBar({ snapshot }: { snapshot?: Snapshot }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["studio", snapshot!.project.id] }),
   });
   return (
-    <div className="flex h-10 shrink-0 items-center gap-2.5 overflow-x-auto border-b border-line bg-panel px-4 text-xs whitespace-nowrap text-muted">
+    <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-line bg-panel px-4 py-1 text-xs whitespace-nowrap text-muted">
       {sys && (
         <span className="hidden lg:inline">
           {sys.hardware.chip} · <span className="num">{sys.hardware.budget_gb.toFixed(1)} GB</span> for ML
