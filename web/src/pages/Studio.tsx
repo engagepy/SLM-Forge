@@ -141,9 +141,9 @@ function TopBar({ snapshot }: { snapshot?: Snapshot }) {
         <div className="truncate text-[13px] font-semibold">{snapshot?.project.name ?? "…"}</div>
         <div className="truncate text-[11px] text-faint">{snapshot?.project.goal}</div>
       </div>
-      <div className="ml-auto flex items-center gap-3 text-xs text-muted">
+      <div className="ml-auto flex shrink-0 items-center gap-3 whitespace-nowrap text-xs text-muted">
         {sys && (
-          <span className="hidden md:inline">
+          <span className="hidden xl:inline">
             {sys.hardware.chip} · <span className="num">{sys.hardware.budget_gb.toFixed(1)} GB</span> for ML
           </span>
         )}
