@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
-import { api, DEFAULT_SAMPLING, type ExportRow, fmt } from "../api";
+import { api, DEFAULT_SAMPLING, type ExportRow, fmt, runCommand } from "../api";
 import ChatComposer from "../components/ChatComposer";
 import Markdown from "../components/Markdown";
 import { useChatStream, useStudio } from "../hooks";
@@ -170,7 +170,7 @@ export default function TryModel() {
               <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">Use it outside SLM Forge</div>
               <p className="text-xs text-muted">The model is a folder you can copy to any Apple Silicon Mac with {chosen.min_ram_gb} GB or more.</p>
               <CodeBlock className="mt-2" label="Folder" text={chosen.path} />
-              <CodeBlock className="mt-2" label="Chat in Terminal" text={`pip install mlx-lm && mlx_lm.chat --model "${chosen.path}"`} />
+              <CodeBlock className="mt-2" label="Ask it in Terminal" text={`pip install mlx-lm && ${runCommand(chosen, project.data?.project.system_prompt ?? "")}`} />
             </div>
           </aside>
         </div>

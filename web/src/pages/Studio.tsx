@@ -10,6 +10,7 @@ import {
   isActive,
   type Job,
   type PendingAction,
+  runCommand,
   type Sample,
   type Snapshot,
   type Stage,
@@ -927,7 +928,10 @@ function ExportView({ s }: { s: Snapshot }) {
               ▶ Try it
             </Link>
           </div>
-          <CodeBlock text={`mlx_lm.generate --model ${e.path} --prompt "Hello"`} />
+          <CodeBlock text={runCommand(e, s.project.system_prompt)} />
+          {!e.system_prompt_built_in && s.project.system_prompt && (
+            <p className="text-[11px] text-faint">This export needs the system prompt passed in; newer exports build it in.</p>
+          )}
         </div>
       ))}
     </div>

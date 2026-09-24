@@ -205,3 +205,40 @@ def test_trainer_truncation_warnings_are_counted():
         )
         == 0
     )
+
+
+QWEN_TEMPLATE = (
+    "{%- if tools %}\n"
+    "    {{- '<|im_start|>system\\n' }}\n"
+    "    {%- if messages[0]['role'] == 'system' %}\n"
+    "        {{- messages[0]['content'] }}\n"
+    "    {%- else %}\n"
+    "        {{- 'You are Qwen, created by Alibaba Cloud. You are a helpful assistant.' }}\n"
+    "    {%- endif %}\n"
+    "{%- else %}\n"
+    "    {%- if messages[0]['role'] == 'system' %}\n"
+    "        {{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}\n"
+    "    {%- else %}\n"
+    "        {{- '<|im_start|>system\\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\\n' }}\n"
+    "    {%- endif %}\n"
+    "{%- endif %}"
+)
+
+
+def test_the_system_prompt_is_built_into_the_exported_chat_template(tmp_path):
+    # Regression: `mlx_lm.generate --prompt "Hello"` on an export answered like the plain base
+    # model, because nothing supplied the system prompt every training example carried.
+    from slm.export.fuse import bake_system_prompt, run_command
+
+    (tmp_path / "chat_template.jinja").write_text(QWEN_TEMPLATE)
+    prompt = "Return only JSON: {\"events\": []}. Don't infer what isn't stated."
+    assert bake_system_prompt(tmp_path, prompt) is True
+    out = (tmp_path / "chat_template.jinja").read_text()
+    assert "You are Qwen" not in out
+    assert out.count("Return only JSON") == 2  # both branches
+    assert "'<|im_start|>system\\nReturn only JSON" in out and "isn\\'t stated.<|im_end|>\\n' }}" in out  # markup kept
+    assert bake_system_prompt(tmp_path, "") is False
+    (tmp_path / "chat_template.jinja").write_text("{{ messages }}")
+    assert bake_system_prompt(tmp_path, prompt) is False  # nothing to replace: the README says --system-prompt
+    assert run_command("/m", prompt, built_in=True) == 'mlx_lm.generate --model "/m" --prompt "Hello"'
+    assert "--system-prompt" in run_command("/m", prompt, built_in=False)

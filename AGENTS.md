@@ -94,7 +94,7 @@ src/slm/
                    regexes), worker (3 lanes), jobs (download/import/prepare/sft/dpo/export), diagnose
   inference/       engine.py (single resident model on one dedicated thread); /generate targets
                    current | base | checkpoint:<id> | export:<job id>
-  export/          fuse.py (fuse, quantize, model card)
+  export/          fuse.py (fuse, quantize, model card, bake_system_prompt into the chat template)
   agents/          provider abstraction (OpenAI | Claude | Ollama) + legacy proposal agents
                    (scout, prep, observer, synth) used by the Advanced screens
   tuner/           agent.py (INSTRUCTIONS, build_agent), tools.py (29 @tool functions),

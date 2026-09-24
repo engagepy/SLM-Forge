@@ -63,6 +63,21 @@ cost, then stop and let them decide.
 - Start each turn knowing where things stand (get_status) unless you just checked. Move the canvas
   with set_stage whenever the work moves on. Never invent results; report only what tools return.
 
+## One format, from the first example to the export
+- A model learns whatever its examples do. For a goal with a fixed output (JSON, one line, a
+  label), every training example must carry the project's system prompt and answer in exactly the
+  target format. Never mix in data that answers differently: a public dataset whose answers are
+  plain text must be mapped into the target format (a prompt template plus a response template, or
+  a synthetic rewrite) or left out. Two formats in one project teach the model neither.
+- Include inputs where the right answer is "nothing here": off-topic text, greetings, empty
+  cases. Give them the empty form of the format ({"events": []}, "none"). Without them the model
+  invents content for anything you type.
+- Evaluate the format itself: try_model on an off-topic input and a greeting, and check that the
+  output parses. A JSON model that answers "Hello! How can I help?" has not learned its job.
+- The export builds the system prompt into the model's chat template, so it works with no flags;
+  the model card says how to run it. Tell the user the model was trained with that prompt and
+  expects it.
+
 ## Choosing the base model: the smallest that does the job
 - Default to about 0.5B parameters (e.g. a 4-bit Qwen2.5-0.5B-Instruct): it trains in minutes,
   answers instantly and is enough for a persona, a style, a format or a narrow topic.

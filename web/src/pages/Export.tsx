@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { api, DEFAULT_SAMPLING, type ExportRow, fmt, isServing } from "../api";
+import { api, DEFAULT_SAMPLING, type ExportRow, fmt, isServing, runCommand } from "../api";
 import { useOverview, useProjectId, followJob } from "../hooks";
 import { Badge, Button, Card, CodeBlock, Empty, ErrorNote, Field, Input, Mono, Select } from "../ui";
 
@@ -122,7 +122,7 @@ export default function ExportPage() {
                   <span className="ml-auto text-[11px] text-faint">{fmt.ago(e.created_at)}</span>
                 </div>
                 <CodeBlock text={e.path} />
-                <CodeBlock text={`mlx_lm.generate --model ${e.path} --prompt "Hello"`} />
+                <CodeBlock text={runCommand(e, project.system_prompt)} />
               </li>
             ))}
           </ul>

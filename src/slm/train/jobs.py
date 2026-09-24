@@ -401,7 +401,17 @@ def export_job(ctx: JobContext) -> None:
             ctx.note("Model is already quantized; exporting as-is.")
         shutil.copytree(staged, dest)
 
-    fusing.write_model_card(dest, name=name, project=project_info, lineage=lineage, sampling=c.get("sampling", {}))
+    built_in = fusing.bake_system_prompt(dest, project_info.get("system_prompt") or "")
+    if built_in:
+        ctx.note("Built the system prompt into the chat template: the export answers like the app with no flags.")
+    fusing.write_model_card(
+        dest, name=name, project=project_info, lineage=lineage, sampling=c.get("sampling", {}), built_in=built_in
+    )
     size = manage.dir_size_gb(dest)
     ctx.note(f"Exported to {dest} ({size:.2f} GB)")
-    ctx.result = {"path": str(dest), "size_gb": round(size, 3), "min_ram_gb": fusing.min_mac_memory_gb(dest)}
+    ctx.result = {
+        "path": str(dest),
+        "size_gb": round(size, 3),
+        "min_ram_gb": fusing.min_mac_memory_gb(dest),
+        "system_prompt_built_in": built_in,
+    }

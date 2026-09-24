@@ -335,13 +335,20 @@ export interface Snapshot {
   evals: Evaluation[];
   comparisons: Comparison[];
   feedback: { judgements: number; pairs_ready: number };
-  exports: { job_id: number; path: string; size_gb: number; min_ram_gb: number }[];
+  exports: { job_id: number; path: string; size_gb: number; min_ram_gb: number; system_prompt_built_in?: boolean }[];
 }
 
 export const STAGES = ["goal", "data", "model", "train", "evaluate", "refine", "export"] as const;
 export type Stage = (typeof STAGES)[number];
 
 export const isActive = (j: Job) => j.status === "running" || j.status === "queued";
+
+/** How to run an exported model from Terminal. Exports built before the system prompt was baked
+ * into the chat template need it passed explicitly, or the model answers like the plain base. */
+export function runCommand(e: { path: string; system_prompt_built_in?: boolean }, systemPrompt: string, tool = "generate"): string {
+  const flag = e.system_prompt_built_in || !systemPrompt ? "" : ` --system-prompt ${JSON.stringify(systemPrompt)}`;
+  return tool === "chat" ? `mlx_lm.chat --model "${e.path}"${flag}` : `mlx_lm.generate --model "${e.path}"${flag} --prompt "Hello"`;
+}
 
 /** Is the project serving this checkpoint (its adapter, or its fused model)? */
 export const isServing = (p: Project, c: Checkpoint) =>
@@ -355,6 +362,7 @@ export interface ExportRow {
   size_gb: number;
   min_ram_gb: number;
   on_disk: boolean;
+  system_prompt_built_in?: boolean;
   created_at: string | null;
 }
 

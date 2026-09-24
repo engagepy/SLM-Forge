@@ -128,6 +128,9 @@ agents and the UI don't care which one is behind them.
   checkpoint on them with `evaluate_model` (GPT-6 grades each answer 0–10 against the goal). The
   scores sit on the Evaluate card, the export is the best-scoring checkpoint (`serve_checkpoint`
   rolls back if the latest run made things worse), and DPO isn't attempted under 30 pairs.
+- **Exports work with no flags.** The project's system prompt is built into the exported model's
+  chat template, so `mlx_lm.generate --model <folder> --prompt "…"` (or any loader) behaves like
+  the app. Exports made before this show a `--system-prompt` in their command instead.
 - **A metrics strip above every project:** the Mac and its ML budget, the GPU, how much disk the app
   occupies (datasets, runs, exports, uploads, databases and the downloaded models, with free space),
   and the OpenAI spend below.
