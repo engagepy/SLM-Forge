@@ -1,5 +1,7 @@
 """The OpenAI usage meter: self-metered from token counts, priced per model."""
 
+from sqlmodel import select
+
 from slm import usage
 from slm.config import get_settings
 from slm.db import ApiUsage
@@ -24,7 +26,7 @@ def test_record_attributes_calls_to_the_scoped_project_and_summarises(session, p
         usage.record("gpt-6-luna", 500, 100, cached_tokens=400)
     usage.record("gpt-6-luna", 10_000, 2_000, requests=5, project_id=project.id, purpose="tuner")
     usage.record("gpt-6-luna", 100, 10)  # outside any scope: no project
-    rows = session.query(ApiUsage).all()
+    rows = session.exec(select(ApiUsage).order_by(ApiUsage.id)).all()
     assert [(r.project_id, r.purpose, r.requests) for r in rows] == [
         (project.id, "evaluate", 1),
         (project.id, "evaluate", 1),
