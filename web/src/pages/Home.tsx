@@ -36,7 +36,8 @@ export default function Home() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-3xl space-y-8 px-6 py-10">
+      {/* Centred in the viewport while it fits; scrolls from the top once it doesn't. */}
+      <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center gap-8 px-6 py-10">
         {active.length > 0 && (
           <section>
             <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-faint">Running now</h2>
