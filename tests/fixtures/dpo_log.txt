@@ -1,0 +1,8 @@
+Iter 1: Val loss 0.693, Val chosen reward 0.000, Val rejected reward 0.000, Val accuracy 0.000, Val margin 0.000, Val took 0.148s
+Iter 2: loss 0.693, chosen_r 0.000, rejected_r 0.000, acc 0.000, margin 0.000, lr 5.000e-07, it/s 3.940, tok/s 516.184, peak_mem 1.200GB
+Iter 4: loss 0.632, chosen_r 0.083, rejected_r -0.047, acc 1.000, margin 0.130, lr 1.500e-06, it/s 4.906, tok/s 591.207, peak_mem 1.200GB
+Iter 5: Val loss 0.714, Val chosen reward -0.000, Val rejected reward 0.000, Val accuracy 0.000, Val margin -0.041, Val took 0.129s
+Iter 6: loss 0.581, chosen_r 0.176, rejected_r -0.091, acc 0.500, margin 0.266, lr 2.500e-06, it/s 4.362, tok/s 564.889, peak_mem 1.200GB
+Iter 8: loss 0.518, chosen_r 0.183, rejected_r -0.215, acc 1.000, margin 0.399, lr 3.500e-06, it/s 5.470, tok/s 650.951, peak_mem 1.200GB
+Iter 10: Val loss 0.775, Val chosen reward -0.001, Val rejected reward 0.001, Val accuracy 0.000, Val margin -0.158, Val took 0.129s
+Iter 10: loss 0.287, chosen_r 0.583, rejected_r -1.665, acc 1.000, margin 2.248, lr 4.500e-06, it/s 9.761, tok/s 1161.602, peak_mem 1.200GB

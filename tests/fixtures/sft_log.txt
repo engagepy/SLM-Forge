@@ -1,0 +1,6 @@
+Starting training..., iters: 40
+Iter 1: Val loss 5.332, Val took 0.289s
+Iter 5: Train loss 3.832, Learning Rate 1.600e-04, It/sec 5.511, Tokens/sec 492.651, Trained Tokens 447, Peak mem 0.924 GB
+Iter 10: Train loss 0.511, Learning Rate 1.968e-04, It/sec 5.044, Tokens/sec 434.830, Trained Tokens 878, Peak mem 1.029 GB
+Iter 15: Train loss 0.146, Learning Rate 1.778e-04, It/sec 5.225, Tokens/sec 484.926, Trained Tokens 1342, Peak mem 1.180 GB
+Iter 20: Val loss 0.335, Val took 0.099s

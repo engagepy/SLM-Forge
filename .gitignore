@@ -1,3 +1,10 @@
 .venv/
 __pycache__/
 *.pyc
+.env
+workspace/
+node_modules/
+web/dist/
+.DS_Store
+.ruff_cache/
+.pytest_cache/
