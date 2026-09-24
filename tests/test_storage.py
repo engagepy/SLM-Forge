@@ -35,6 +35,7 @@ def _project_with_files(session, name="Chef"):
 
     s = get_settings()
     s.ensure_dirs()
+    session.expunge_all()  # rows deleted through the API may get their ids reused
     p = Project(name=name, goal="g", base_model="org/tiny")
     session.add(p)
     session.commit()
