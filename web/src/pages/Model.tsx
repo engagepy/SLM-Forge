@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useNavigate } from "react-router";
 
 import { api, fmt, type Job, type MemoryEstimate, type ModelCandidate, type Preset } from "../api";
 import { useOverview, useProjectId, waitForJob } from "../hooks";
@@ -139,7 +140,12 @@ export default function ModelPage() {
 
         <div className="lg:col-span-2">
           {selected ? (
-            <ModelDetail repoId={selected} projectId={projectId} locked={!!ov?.checkpoints.length && selected !== current} />
+            <ModelDetail
+              repoId={selected}
+              projectId={projectId}
+              locked={!!ov?.checkpoints.length && selected !== current}
+              inUse={selected === current && !!ov?.base_model_downloaded}
+            />
           ) : (
             <Empty title="Select a model">See the exact memory it needs for inference and for each training preset.</Empty>
           )}
@@ -149,8 +155,9 @@ export default function ModelPage() {
   );
 }
 
-function ModelDetail({ repoId, projectId, locked }: { repoId: string; projectId: number; locked: boolean }) {
+function ModelDetail({ repoId, projectId, locked, inUse }: { repoId: string; projectId: number; locked: boolean; inUse: boolean }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const info = useQuery({
     queryKey: ["inspect", repoId],
     queryFn: () => api.get<Inspection>(`/api/models/inspect?repo_id=${encodeURIComponent(repoId)}`),
@@ -169,6 +176,8 @@ function ModelDetail({ repoId, projectId, locked }: { repoId: string; projectId:
       qc.invalidateQueries({ queryKey: ["overview", projectId] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
+    // Downloaded and set as the base model: on to the next step.
+    onSuccess: () => navigate(`/p/${projectId}/data`),
   });
 
   return (
@@ -227,15 +236,15 @@ function ModelDetail({ repoId, projectId, locked }: { repoId: string; projectId:
           </p>
 
           <ErrorNote error={choose.error} />
-          <Button
-            variant="primary"
-            className="w-full"
-            disabled={locked}
-            loading={choose.isPending}
-            onClick={() => choose.mutate()}
-          >
-            {choose.isPending ? `Downloading… (${status ?? "queued"})` : locked ? "Base model locked after training" : "Use this model"}
-          </Button>
+          {inUse ? (
+            <Button variant="primary" className="w-full" onClick={() => navigate(`/p/${projectId}/data`)}>
+              ✓ In use and downloaded: continue to data →
+            </Button>
+          ) : (
+            <Button variant="primary" className="w-full" disabled={locked} loading={choose.isPending} onClick={() => choose.mutate()}>
+              {choose.isPending ? `Downloading… (${status ?? "queued"})` : locked ? "Base model locked after training" : "Use this model"}
+            </Button>
+          )}
         </div>
       )}
     </Card>

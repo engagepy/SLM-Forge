@@ -99,3 +99,45 @@ def test_split_is_deterministic():
 def test_token_stats():
     stats = split.token_stats([10, 20, 30, 400], max_seq_length=256)
     assert stats["max"] == 400 and stats["over_max_seq_length"] == 1 and stats["total_tokens"] == 460
+
+
+RECIPE = {
+    "title": "Risotto",
+    "ingredients": ["200g rice", "1 onion"],
+    "method": ["Fry the onion.", "Add rice and stock for 18 minutes."],
+}
+
+
+def test_recipe_columns_are_recognised():
+    assert fmt.guess_mapping(list(RECIPE)) == {
+        "format": "instruction",
+        "prompt": "title",
+        "response": "method",
+        "input": "ingredients",
+    }
+
+
+def test_list_cells_become_readable_lines():
+    rec = fmt.map_row(RECIPE, fmt.guess_mapping(list(RECIPE)))
+    assert rec["messages"][0]["content"] == "Risotto\n\n- 200g rice\n- 1 onion"
+    assert rec["messages"][1]["content"] == "- Fry the onion.\n- Add rice and stock for 18 minutes."
+
+
+def test_unset_or_unknown_columns_are_errors_not_empty_strings():
+    # Regression: an instruction mapping with no columns used to "map" every row to empty turns.
+    with pytest.raises(ValueError, match="choose a column for 'prompt'"):
+        fmt.map_row(RECIPE, {"format": "instruction"})
+    with pytest.raises(ValueError, match="not in the data"):
+        fmt.map_row(RECIPE, {"format": "instruction", "prompt": "title", "response": "steps"})
+
+
+def test_constant_templates_insert_columns():
+    rec = fmt.map_row(
+        RECIPE, {"format": "instruction", "prompt": "=How do I make {title}? {unknown}", "response": "method"}
+    )
+    assert rec["messages"][0]["content"] == "How do I make Risotto? {unknown}"
+
+
+def test_mojibake_repaired_without_touching_real_accents():
+    assert clean.fix_mojibake("100g/3Â½oz, itâ€™s crÃ¨me") == "100g/3½oz, it’s crème"
+    assert clean.fix_mojibake("naïve café, Ångström, 50°C") == "naïve café, Ångström, 50°C"

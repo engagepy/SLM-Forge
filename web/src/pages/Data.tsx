@@ -323,10 +323,26 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
     mutationFn: () => api.post(`/api/projects/${projectId}/agents/prep`, { dataset_id: dataset.id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["proposals", projectId] }),
   });
+  // DataPrep's latest suggestion for this dataset (the project feed keeps this fresh).
+  const proposals = useQuery({
+    queryKey: ["proposals", projectId],
+    queryFn: () => api.get<Proposal[]>(`/api/projects/${projectId}/proposals`),
+  });
+  const suggestion = proposals.data?.find(
+    (p) => p.action === "prepare_dataset" && p.status === "pending" && (p.payload as { dataset_id?: number }).dataset_id === dataset.id,
+  );
+  const applySuggestion = (p: Proposal) => {
+    const { system: sys, ...rest } = (p.payload as { mapping: Mapping }).mapping;
+    setMapping(rest as Mapping);
+    setSystem(sys?.startsWith("=") ? sys.slice(1) : "");
+    const r = (p.payload as { rules?: Partial<typeof rules> }).rules ?? {};
+    setRules({ ...rules, ...r });
+  };
 
   const fields = FORMAT_FIELDS[mapping.format] ?? [];
   const cols = ["", ...dataset.columns];
-  const ok = preview.data && preview.data.failed < preview.data.sampled;
+  const missing = fields.filter((f) => f.required && !mapping[f.key]).map((f) => f.label.toLowerCase());
+  const ok = !missing.length && preview.data && preview.data.failed < preview.data.sampled;
 
   return (
     <div className="space-y-4 p-4">
@@ -337,7 +353,27 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
           Ask DataPrep agent
         </Button>
       </div>
-      {askPrep.isSuccess && <p className="text-xs text-muted">DataPrep is working; its proposal will appear under Agents and on this page.</p>}
+      {askPrep.isSuccess && !suggestion && (
+        <p className="flex items-center gap-2 text-xs text-muted">
+          <Spinner /> DataPrep is reading the columns and sample rows…
+        </p>
+      )}
+      {suggestion && (
+        <div className="rounded-lg border border-accent/40 bg-accent-soft/50 p-3 text-[13px]">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="accent">DataPrep suggests</Badge>
+            <span className="font-mono text-xs">
+              {Object.entries((suggestion.payload as { mapping: Record<string, string> }).mapping)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(" · ")}
+            </span>
+            <Button size="sm" variant="primary" className="ml-auto" onClick={() => applySuggestion(suggestion)}>
+              Use this mapping
+            </Button>
+          </div>
+          {suggestion.rationale && <p className="mt-1.5 text-xs leading-relaxed text-muted">{suggestion.rationale}</p>}
+        </div>
+      )}
 
       <div className="grid gap-3 md:grid-cols-4">
         <Field label="Record format">
@@ -359,7 +395,7 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
         ))}
       </div>
       {mapping.format !== "text" && (
-        <Field label="Constant system prompt" hint="optional">
+        <Field label="Constant system prompt" hint="optional · {column} inserts a value">
           <Input value={system} onChange={(e) => setSystem(e.target.value)} placeholder="Leave blank to use none" />
         </Field>
       )}
@@ -367,16 +403,29 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
       <div>
         <div className="mb-1 flex items-center gap-2 text-xs text-muted">
           Preview
-          {preview.data && (
+          {preview.data && !missing.length && (
             <Badge tone={preview.data.failed ? (ok ? "warn" : "bad") : "good"}>
               {preview.data.sampled - preview.data.failed}/{preview.data.sampled} rows map
             </Badge>
           )}
         </div>
-        <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-bg p-3 font-mono text-[11px] leading-relaxed text-muted">
-          {preview.data ? JSON.stringify(preview.data.records.slice(0, 2), null, 2) : "…"}
-        </pre>
-        {!!preview.data?.errors.length && <p className="mt-1 text-[11px] text-bad">{preview.data.errors[0]}</p>}
+        {missing.length ? (
+          <div className="rounded-lg border border-warn/40 bg-warn-soft px-3 py-2.5 text-xs text-warn">
+            Choose a column for {missing.join(" and ")}
+            {dataset.columns.length > 0 && (
+              <span className="text-muted">
+                {" "}
+                (available: <span className="font-mono">{dataset.columns.join(", ")}</span>)
+              </span>
+            )}
+            , or ask DataPrep.
+          </div>
+        ) : (
+          <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-bg p-3 font-mono text-[11px] leading-relaxed text-muted">
+            {preview.data ? (preview.data.records.length ? JSON.stringify(preview.data.records.slice(0, 2), null, 2) : "No rows mapped.") : "…"}
+          </pre>
+        )}
+        {!missing.length && !!preview.data?.errors.length && <p className="mt-1 text-[11px] text-bad">{preview.data.errors[0]}</p>}
       </div>
 
       <Collapsible title="Cleaning and splitting">

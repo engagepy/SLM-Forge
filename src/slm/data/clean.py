@@ -30,7 +30,36 @@ class CleaningReport:
         return {"input_rows": self.input_rows, "kept": self.kept, "dropped": dict(self.dropped)}
 
 
+# A UTF-8 lead byte (Â-ô as Latin-1) followed by continuation bytes, as they appear after
+# UTF-8 text was decoded as CP1252/Latin-1: "Â½" (½), "â€™" (’), "Ã©" (é).
+_MOJIBAKE_RUN = re.compile(
+    "[\u00c2-\u00f4][\u0080-\u00bf\u0152\u0153\u0160\u0161\u0178\u017d\u017e\u0192\u02c6\u02dc\u2013-\u203a\u20ac\u2122]{1,3}"
+)
+
+
+def _undo(run: str) -> str:
+    raw = bytearray()
+    for ch in run:
+        try:
+            raw += ch.encode("cp1252")
+        except UnicodeEncodeError:
+            if ord(ch) > 255:
+                return run
+            raw.append(ord(ch))  # bytes CP1252 leaves undefined (e.g. 0x9d) survive as Latin-1
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return run
+
+
+def fix_mojibake(s: str) -> str:
+    """Undo UTF-8 text that was mis-decoded as CP1252/Latin-1 (e.g. `3Â½oz` → `3½oz`).
+    Each garbled run is repaired separately; runs that don't decode are left alone."""
+    return _MOJIBAKE_RUN.sub(lambda m: _undo(m[0]), s)
+
+
 def normalise_text(s: str) -> str:
+    s = fix_mojibake(s)
     s = unicodedata.normalize("NFC", s)
     s = _CONTROL.sub("", s)
     s = s.replace("\r\n", "\n")
