@@ -189,9 +189,10 @@ Design decisions worth knowing:
 - **All in-process MLX work runs on one dedicated thread.** MLX's thread-local compile cache
   holds Python objects; on the main thread it's destroyed after the interpreter shuts down
   and segfaults the process on exit.
-- **Runs build on each other.** A new run starts from whatever the project serves (pending
-  adapters are fused first), unless you start from the base model to compare settings
-  fairly. Every checkpoint records its parent; exports list only the served model's
+- **Runs build on each other without copying the model.** A new SFT run continues the served
+  adapter on the shared base model (no fused copy per run; a project's history is small adapters),
+  unless you start from the base model to compare settings fairly. Only a DPO round and an export
+  write a fused model. Every checkpoint records its parent; exports list only the served model's
   ancestry.
 - **Every finished run is diagnosed** for divergence, overfitting, no improvement and
   "memorised" validation (near-zero validation loss usually means the validation set overlaps

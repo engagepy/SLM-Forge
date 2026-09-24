@@ -168,9 +168,34 @@ def _fuse(ctx: JobContext, model_path: str, adapter_path: str, dest: Path) -> Pa
     return dest
 
 
-def _train(ctx: JobContext, cfg: TrainConfig, *, model_path: str, data_dir: str, n_train: int) -> Path:
+def match_adapter(cfg: TrainConfig, adapter_dir: Path, note=lambda _: None) -> TrainConfig:
+    """Resuming an adapter needs the same LoRA shape it was trained with: take rank, scale and
+    layer count from its adapter_config.json, whatever the preset says."""
+    cfg_path = adapter_dir / "adapter_config.json"
+    if not cfg_path.exists():
+        return cfg
+    saved = json.loads(cfg_path.read_text())
+    lora = saved.get("lora_parameters") or {}
+    changes = {}
+    if saved.get("num_layers") and saved["num_layers"] != cfg.num_layers:
+        changes["num_layers"] = saved["num_layers"]
+    if lora.get("rank") and lora["rank"] != cfg.lora_rank:
+        changes["lora_rank"] = lora["rank"]
+    if lora.get("scale") and lora["scale"] != cfg.lora_scale:
+        changes["lora_scale"] = lora["scale"]
+    if changes:
+        note(f"Continuing the served adapter, so its LoRA shape applies: {changes}")
+        cfg = TrainConfig(**(cfg.model_dump() | changes))
+    return cfg
+
+
+def _train(
+    ctx: JobContext, cfg: TrainConfig, *, model_path: str, data_dir: str, n_train: int, resume_from: str | None = None
+) -> Path:
     adapter_dir = ctx.run_dir / "adapters"
-    yaml_cfg = cfg.to_trainer_yaml(model=model_path, data=data_dir, adapter_path=str(adapter_dir), n_train=n_train)
+    yaml_cfg = cfg.to_trainer_yaml(
+        model=model_path, data=data_dir, adapter_path=str(adapter_dir), n_train=n_train, resume_adapter_file=resume_from
+    )
     config_path = runner.write_config(yaml_cfg, ctx.run_dir / "config.yaml")
     iters = yaml_cfg["iters"]
     ctx.result["total_iters"] = iters
@@ -237,19 +262,28 @@ def sft_job(ctx: JobContext) -> None:
             parent = s.exec(
                 select(Checkpoint).where(Checkpoint.project_id == project.id).order_by(Checkpoint.id.desc())
             ).first()
-            # Continue from the served state: if the latest checkpoint is an un-fused adapter,
-            # fuse it first so this SFT round builds on it rather than replacing it.
+            # Continue from the served state. An un-fused adapter is continued in place (the trainer
+            # resumes its weights on the same base), rather than fused into a 1–2 GB copy per run.
             pending_adapter = project.current_adapter_path
 
+    resume = None
     if pending_adapter:
-        model_path = str(_fuse(ctx, model_path, pending_adapter, ctx.run_dir / "base-fused"))
+        weights = Path(pending_adapter) / "adapters.safetensors"
+        if weights.exists():
+            resume = str(weights)
+            cfg = match_adapter(cfg, Path(pending_adapter), ctx.note)
+            ctx.note(f"Continuing adapter {pending_adapter} on {model_path}")
+        else:  # an adapter without weights on disk: fall back to fusing what can be loaded
+            model_path = str(_fuse(ctx, model_path, pending_adapter, ctx.run_dir / "base-fused"))
 
     if version.mapping.get("format") == "text" and cfg.mask_prompt:
         # Raw text has no prompt/completion split; mlx_lm rejects masking for it.
         cfg.mask_prompt = False
         ctx.note("Text dataset: training on all tokens (prompt masking doesn't apply).")
 
-    adapter_dir = _train(ctx, cfg, model_path=model_path, data_dir=version.path, n_train=version.n_train)
+    adapter_dir = _train(
+        ctx, cfg, model_path=model_path, data_dir=version.path, n_train=version.n_train, resume_from=resume
+    )
     metrics = _final_metrics(ctx.job_id)
     with Session(engine()) as s:
         project = _project(s, ctx.project_id)
@@ -287,8 +321,9 @@ def dpo_job(ctx: JobContext) -> None:
             select(Checkpoint).where(Checkpoint.project_id == project.id).order_by(Checkpoint.id.desc())
         ).first()
 
-    # DPO's frozen reference is loaded from the same path as the policy, so the policy must
-    # be a standalone (fused) model: fuse the latest SFT adapter first.
+    # DPO's frozen reference is loaded from the same path as the policy, so the policy must be a
+    # standalone (fused) model: fuse the latest SFT adapter first. This is the one place a fused
+    # copy is still written per run; the Storage page reclaims it once nothing builds on it.
     if pending_adapter:
         model_path = str(_fuse(ctx, model_path, pending_adapter, ctx.run_dir / "policy-fused"))
         if parent and parent.adapter_path == pending_adapter:

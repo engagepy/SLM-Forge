@@ -91,7 +91,9 @@ class TrainConfig(BaseModel):
             p["keys"] = self.lora_keys
         return p
 
-    def to_trainer_yaml(self, *, model: str, data: str, adapter_path: str, n_train: int) -> dict:
+    def to_trainer_yaml(
+        self, *, model: str, data: str, adapter_path: str, n_train: int, resume_adapter_file: str | None = None
+    ) -> dict:
         iters = self.total_iters(n_train)
         common = {
             "model": model,
@@ -116,6 +118,8 @@ class TrainConfig(BaseModel):
         }
         if sched := self._schedule(iters):
             common["lr_schedule"] = sched
+        if resume_adapter_file:
+            common["resume_adapter_file"] = resume_adapter_file  # continue an adapter instead of starting one
 
         if self.mode == "sft":
             return common | {

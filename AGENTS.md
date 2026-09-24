@@ -132,8 +132,11 @@ scripts/smoke.py   end-to-end GPU smoke test
 - **The two trainers spell their YAML keys differently:**
   - `fine_tune_type` vs `train_type`
   - `grad_accumulation_steps` vs `gradient_accumulation_steps`
-- **Runs build on each other.** A new run starts from the project's served model, fusing pending
-  adapters first. An export's lineage (`served_ancestry`) lists only the served model's ancestors.
+- **Runs build on each other without copying the model.** An SFT run continues the served adapter
+  in place (`resume_adapter_file` on the same base; `match_adapter` keeps its LoRA shape), so a
+  project's history is 25 MB adapters on a shared base. Only DPO (needs a fused policy as its
+  frozen reference) and export fuse. An export's lineage (`served_ancestry`) lists only the served
+  model's ancestors.
 - **Every finished run is diagnosed** (`diagnose.py`) for divergence, no improvement, overfitting,
   memorised validation and "validation worse" (which also covers a round that never beat its
   pre-training validation loss: a roll-back, not "train less"). The warnings feed the Tuner.

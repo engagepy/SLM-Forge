@@ -242,3 +242,24 @@ def test_the_system_prompt_is_built_into_the_exported_chat_template(tmp_path):
     assert bake_system_prompt(tmp_path, prompt) is False  # nothing to replace: the README says --system-prompt
     assert run_command("/m", prompt, built_in=True) == 'mlx_lm.generate --model "/m" --prompt "Hello"'
     assert "--system-prompt" in run_command("/m", prompt, built_in=False)
+
+
+def test_a_continued_run_resumes_the_adapter_in_its_own_lora_shape(tmp_path):
+    # Regression: every SFT round fused the served adapter into a 1–2 GB model copy just to start
+    # the next round from it; eight ADE rounds filled 11 GB. Resuming the adapter needs no copy.
+    from slm.train.config import TrainConfig
+    from slm.train.jobs import match_adapter
+
+    (tmp_path / "adapter_config.json").write_text(
+        '{"fine_tune_type": "lora", "num_layers": 8, "lora_parameters": {"rank": 8, "scale": 20.0, "dropout": 0.0}}'
+    )
+    cfg = TrainConfig(mode="sft", lora_rank=16, num_layers=16, lora_scale=10.0)
+    notes = []
+    matched = match_adapter(cfg, tmp_path, notes.append)
+    assert (matched.lora_rank, matched.num_layers, matched.lora_scale) == (8, 8, 20.0) and notes
+    y = matched.to_trainer_yaml(
+        model="/base", data="/d", adapter_path="/a", n_train=100, resume_adapter_file="/prev/adapters.safetensors"
+    )
+    assert y["resume_adapter_file"] == "/prev/adapters.safetensors" and y["model"] == "/base"
+    assert "resume_adapter_file" not in cfg.to_trainer_yaml(model="/base", data="/d", adapter_path="/a", n_train=100)
+    assert match_adapter(cfg, tmp_path / "missing", notes.append) is cfg  # nothing to match: unchanged
