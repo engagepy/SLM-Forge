@@ -110,7 +110,11 @@ MAX_UNREVIEWED = 150  # synthetic examples nobody has looked at yet: review befo
 
 def _spend(pid: int, tool_name: str, kind: str, title: str, reason: str, details: dict, args: dict) -> dict | None:
     """None: go ahead. A dict: the proposal to return instead (the user decides)."""
-    if confirm.take_grant(pid, tool_name):
+    from slm.tuner.session import tuner
+
+    if tuner.is_halted(pid):
+        raise ValueError(confirm.STOPPED)
+    if confirm.take_grant(pid, tool_name, args):
         return None
     if confirm.pending(pid):
         raise ValueError(
@@ -125,6 +129,14 @@ def _spend(pid: int, tool_name: str, kind: str, title: str, reason: str, details
             "go-ahead: call it again with a plain-words `reason` for the card (what it's for, what it costs)."
         )
     return confirm.propose(pid, kind, title, reason, details, {"tool": tool_name, "args": args})
+
+
+def _check_stop(pid: int) -> None:
+    """Between costly calls in a loop: stop when the user halted or the server is going down."""
+    from slm.tuner.session import tuner
+
+    if shutting_down.is_set() or tuner.is_halted(pid):
+        raise ValueError(confirm.STOPPED)
 
 
 def _wait(job_id: int, timeout: float) -> Job:
@@ -213,6 +225,7 @@ def get_status(ctx: Ctx) -> dict:
         versions = s.exec(select(DatasetVersion).where(DatasetVersion.project_id == pid)).all()
         jobs = s.exec(select(Job).where(Job.project_id == pid).order_by(Job.id.desc()).limit(8)).all()
         ckpts = s.exec(select(Checkpoint).where(Checkpoint.project_id == pid).order_by(Checkpoint.id)).all()
+        served_id = _served_checkpoint_id(s, p)
         job_results = {j.id: j.result for j in s.exec(select(Job).where(Job.id.in_([c.job_id for c in ckpts]))).all()}
 
         feedback = {
@@ -292,7 +305,7 @@ def get_status(ctx: Ctx) -> dict:
                     "from_base": c.parent_id is None and i > 0,
                     "metrics": c.metrics,
                     "warnings": [w["code"] for w in (job_results.get(c.job_id) or {}).get("warnings", [])],
-                    "serving": p.current_adapter_path == c.adapter_path,
+                    "serving": c.id == served_id,
                 }
                 for i, c in enumerate(ckpts)
             ],
@@ -813,12 +826,10 @@ def _where(project: Project, target: str) -> dict:
 
 def _served_checkpoint_id(s: Session, project: Project) -> int | None:
     """The checkpoint the project serves right now, or None for the plain base model."""
-    for c in s.exec(select(Checkpoint).where(Checkpoint.project_id == project.id).order_by(Checkpoint.id.desc())):
-        if c.adapter_path == project.current_adapter_path or (
-            c.fused_path and c.fused_path == project.current_model_path
-        ):
-            return c.id
-    return None
+    from slm.train.jobs import served_checkpoint
+
+    c = served_checkpoint(s, project)
+    return c.id if c else None
 
 
 def _generate(
@@ -970,6 +981,7 @@ def _score_all(project: Project, judge, cases: list[dict], target: str) -> list[
     no expected output or the answer differs from it and may still deserve partial credit."""
     items = []
     for case in cases:
+        _check_stop(project.id)
         q, expected = case["input"], case.get("expected")
         answer = _generate(project, q, 0.3, 300, target)["text"]
         item = {"prompt": q, "kind": case.get("kind", "on-goal"), "answer": answer, "exact": None}
@@ -1242,6 +1254,7 @@ def ai_review_answers(ctx: Ctx, prompts: list[str], reason: str = "") -> dict:
     judge = get_provider()
     verdicts = []
     for q in prompts[:12]:
+        _check_stop(pid)
         a, b = _two_answers(project, q, 350)
         v = judge.json(
             JUDGE_SYSTEM,

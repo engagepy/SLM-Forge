@@ -149,6 +149,7 @@ def stop_project(project_id: int, cancel_jobs: bool = True) -> dict:
         st = studio_state(s, project_id)
         st.autopilot = False
         st.stalled_nudges = 0
+        st.granted = []  # a stop withdraws any go-ahead not yet used
         if cancel_jobs:
             st.pending_action = {}  # a stopped project shouldn't keep a run waiting to be confirmed
         s.add(st)

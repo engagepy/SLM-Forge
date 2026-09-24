@@ -62,18 +62,31 @@ def base_model_locked(s: Session, project: Project, repo_id: str) -> bool:
     return project.base_model != repo_id and trained is not None
 
 
-def take_grant(pid: int, tool_name: str) -> bool:
-    """Use up a one-shot go-ahead for a spending tool, if the user gave one."""
+def _same_args(a: dict, b: dict) -> bool:
+    return json.dumps(a, sort_keys=True, default=str) == json.dumps(b, sort_keys=True, default=str)
+
+
+def take_grant(pid: int, tool_name: str, args: dict) -> bool:
+    """Use up the go-ahead the user gave for exactly this call: same tool, same arguments. A call
+    with different arguments (200 examples where 20 were approved) gets no grant and proposes again."""
     with Session(engine()) as s:
         st = studio_state(s, pid)
-        if tool_name not in st.granted:
-            return False
-        granted = list(st.granted)
-        granted.remove(tool_name)
-        st.granted = granted
-        s.add(st)
-        s.commit()
-        return True
+        for g in st.granted:
+            if isinstance(g, dict) and g.get("tool") == tool_name and _same_args(g.get("args", {}), args):
+                st.granted = [x for x in st.granted if x is not g]
+                s.add(st)
+                s.commit()
+                return True
+        return False
+
+
+def clear_grants(pid: int) -> None:
+    with Session(engine()) as s:
+        st = studio_state(s, pid)
+        if st.granted:
+            st.granted = []
+            s.add(st)
+            s.commit()
 
 
 def needs_go_ahead(pid: int) -> bool:
@@ -136,6 +149,7 @@ def _take(pid: int, action_id: str | None) -> dict:
     if not action or (action_id and action.get("id") != action_id):
         raise LookupError("Nothing is waiting for confirmation (it may have been replaced).")
     _store(pid, {})
+    clear_grants(pid)  # a decision supersedes any go-ahead still lying around
     tuner.unhalt(pid)  # deciding is the user taking part again
     reset_stall(pid)
     return action
@@ -187,13 +201,16 @@ def _execute(pid: int, action: dict) -> dict:
 
     kind, payload = action["kind"], action["payload"]
     with Session(engine()) as s:
-        # A finished project isn't closed: a confirmed action reopens it (autopilot carries the round
-        # through to its next proposal), and the next export completes it again.
         st = studio_state(s, pid)
-        st.completed, st.autopilot, st.stalled_nudges = False, True, 0
         st.stage = STAGE.get(kind, st.stage)
         if kind in SPEND_TOOL:
-            st.granted = [*st.granted, SPEND_TOOL[kind]]
+            # One call, with exactly these arguments. Approving a spend does not reopen a round:
+            # the next spend needs its own card.
+            st.granted = [*st.granted, {"tool": SPEND_TOOL[kind], "args": payload.get("args", {})}]
+        else:
+            # A finished project isn't closed: a confirmed run reopens it (autopilot carries the round
+            # through to its next proposal), and the next export completes it again.
+            st.completed, st.autopilot, st.stalled_nudges = False, True, 0
         s.add(st)
         s.commit()
     if kind in SPEND_TOOL:

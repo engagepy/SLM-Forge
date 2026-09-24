@@ -98,6 +98,7 @@ def tuner_messages(project_id: int, s: Session = SessionDep) -> list[dict]:
 
 class MessageIn(BaseModel):
     text: str
+    pending_id: str | None = None  # the card the user was looking at, so "yes" can't confirm a newer one
 
 
 @router.post("/tuner/message")
@@ -106,11 +107,12 @@ def tuner_message(project_id: int, body: MessageIn, s: Session = SessionDep) -> 
     text = body.text.strip()
     if not text:
         raise HTTPException(422, "empty message")
-    if confirm.is_plain_yes(text) and confirm.pending(project_id):
-        # "yes" to a proposal is the same as pressing Go ahead.
+    card = confirm.pending(project_id)
+    if confirm.is_plain_yes(text) and card and body.pending_id == card.get("id"):
+        # "yes" to the card on screen is the same as pressing Go ahead.
         save_message(project_id, "user", text)
         try:
-            confirm.confirm(project_id)
+            confirm.confirm(project_id, card["id"])
         except (LookupError, ValueError):
             pass  # the Tuner is told what went wrong
         return {"queued": True, "confirmed": True}

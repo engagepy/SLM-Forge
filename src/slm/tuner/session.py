@@ -9,6 +9,7 @@ published on the bus topic `tuner:{project_id}`:
 """
 
 import asyncio
+import concurrent.futures
 import json
 import threading
 import time
@@ -81,6 +82,7 @@ class Tuner:
         # that's still waiting on something.
         self._tools = ThreadPoolExecutor(thread_name_prefix="tuner-tools")
         self._runs: dict[int, object] = {}  # project → the streaming run in progress
+        self._tasks: dict[int, set] = {}  # project → futures of specialist runs in flight
         self._halted: set[int] = set()  # projects the user stopped: no new work until they speak
 
     def halt(self, pid: int) -> None:
@@ -90,9 +92,12 @@ class Tuner:
             self._halted.add(pid)
             self._pending.pop(pid, None)
             run = self._runs.get(pid)
+            tasks = list(self._tasks.get(pid, ()))
         if run is not None and self._loop is not None:
             # "immediate": "after_turn" would still execute pending tool calls (e.g. start training).
             self._loop.call_soon_threadsafe(run.cancel, "immediate")
+        for fut in tasks:  # a specialist mid-search stops too, rather than spending on
+            fut.cancel()
 
     def unhalt(self, pid: int) -> None:
         with self._lock:
@@ -120,17 +125,43 @@ class Tuner:
         if db.exists():
             asyncio.run(SQLiteSession(f"project-{pid}", db).clear_session())
 
-    def run_coroutine(self, coro):
+    def run_coroutine(self, coro, pid: int | None = None):
         """Run a coroutine on the Tuner's loop from a tool thread (specialist agents share the SDK
-        client, which is bound to this loop) and wait for its result."""
-        return asyncio.run_coroutine_threadsafe(coro, self._event_loop()).result()
+        client, which is bound to this loop) and wait for its result. The wait watches halt and
+        shutdown, and cancels the coroutine when either arrives, so nothing runs on after a stop
+        and no thread outlives the server."""
+        loop = self._event_loop()
+        if threading.current_thread().name == "tuner-loop":
+            raise RuntimeError("run_coroutine must be called from a tool thread, not the Tuner loop")
+        fut = asyncio.run_coroutine_threadsafe(coro, loop)
+        if pid is not None:
+            with self._lock:
+                self._tasks.setdefault(pid, set()).add(fut)
+        stopped = "stopped: the user halted the project or the server is shutting down"
+        try:
+            while True:
+                try:
+                    return fut.result(timeout=0.5)
+                except concurrent.futures.CancelledError:
+                    raise RuntimeError(stopped) from None  # halt() or shutdown() cancelled it
+                except concurrent.futures.TimeoutError:
+                    if shutting_down.is_set() or (pid is not None and self.is_halted(pid)):
+                        fut.cancel()
+                        raise RuntimeError(stopped) from None
+        finally:
+            if pid is not None:
+                with self._lock:
+                    self._tasks.get(pid, set()).discard(fut)
 
     def shutdown(self) -> None:
         """Stop every turn and let tool threads finish: the server is going down."""
         shutting_down.set()
         with self._lock:
             runs, loop = list(self._runs.values()), self._loop
+            tasks = [f for futs in self._tasks.values() for f in futs]
             self._pending.clear()
+        for fut in tasks:
+            fut.cancel()
         if loop is not None:
             for run in runs:
                 loop.call_soon_threadsafe(run.cancel, "immediate")
@@ -276,6 +307,8 @@ def autopilot_nudge(pid: int) -> str | None:
     Not when autopilot is off or the project is finished, not while a job runs (its completion
     wakes the Tuner), and not while a proposal or comparisons wait for the user. Pauses itself after
     MAX_STALLED_NUDGES nudges in a row that produced no progress, so it can't spin."""
+    if tuner.is_halted(pid):
+        return None  # stopped: the flag may not be committed yet, and a nudge would start a turn
     with Session(engine()) as s:
         st = studio_state(s, pid)
         if not st.autopilot or st.completed:

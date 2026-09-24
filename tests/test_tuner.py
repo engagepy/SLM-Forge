@@ -426,6 +426,11 @@ def test_a_plain_yes_in_the_chat_confirms_but_other_messages_do_not(client, sess
     client.post(f"/api/projects/{project.id}/tuner/message", json={"text": "yes, but call it sous-chef"})
     assert submitted == [] and sent[-1] == ("user", "yes, but call it sous-chef")  # steering, not a go-ahead
     client.post(f"/api/projects/{project.id}/tuner/message", json={"text": "Go ahead."})
+    assert submitted == [] and sent[-1] == ("user", "Go ahead.")  # no card id: it's just a message
+    card_id = client.get(f"/api/projects/{project.id}/studio").json()["pending_action"]["id"]
+    client.post(f"/api/projects/{project.id}/tuner/message", json={"text": "Go ahead.", "pending_id": "a-stale-one"})
+    assert submitted == []  # a "yes" meant for an older card confirms nothing
+    client.post(f"/api/projects/{project.id}/tuner/message", json={"text": "Go ahead.", "pending_id": card_id})
     assert [j.kind for j in submitted] == ["export"]
     assert sent[-1][0] == "event" and sent[-1][1].startswith("[Confirmed]")
     users = [m.content for m in session.exec(select(TunerMessage).where(TunerMessage.role == "user")).all()]
@@ -542,12 +547,21 @@ def test_a_question_after_the_export_cannot_start_spending(client, session, proj
     snap = client.get(f"/api/projects/{project.id}/studio").json()
     assert snap["pending_action"]["kind"] == "synthesize" and snap["pending_action"]["details"]["count"] == 150
 
-    # Confirming grants exactly one call, and reopens the round.
+    # Confirming grants exactly one call with exactly these arguments, and does NOT reopen the round.
     client.post(f"/api/projects/{project.id}/studio/confirm", json={})
     session.expire_all()
     st = session.get(StudioState, project.id)
-    assert st.granted == ["generate_synthetic_examples"] and st.autopilot and not st.completed
+    expected_grant = {"tool": "generate_synthetic_examples", "args": {"kind": "sft", "count": 150, "focus": "forces"}}
+    assert st.granted == [expected_grant] and st.completed is True  # a spend card is no mandate for the round
     monkeypatch.setattr(tools, "_wait", lambda job_id, timeout: submitted[-1])
+    # Different arguments (200 where 150 were approved): no grant, a new card instead.
+    out = call(project.id, "generate_synthetic_examples", kind="sft", count=200, focus="forces", reason="More.")
+    assert out["status"] == "waiting for the user's confirmation" and submitted == []
+    client.post(f"/api/projects/{project.id}/studio/decline", json={})
+    session.expire_all()
+    assert session.get(StudioState, project.id).granted == []  # a decision clears leftover grants
+    call(project.id, "generate_synthetic_examples", kind="sft", count=150, focus="forces", reason="Fix forces.")
+    client.post(f"/api/projects/{project.id}/studio/confirm", json={})
     call(project.id, "generate_synthetic_examples", kind="sft", count=150, focus="forces")
     assert [j.kind for j in submitted] == ["synthesize"]
     session.expire_all()
@@ -803,6 +817,7 @@ def test_scout_datasets_delegates_to_a_specialist_and_returns_its_report(session
         ("DataScout", "search_datasets"),
         ("DataScout", "preview_dataset"),
     ]
+    assert rows[0].meta["args"] == {"query": "cooking questions"}  # the SDK passes args positionally
 
 
 def test_specialists_are_cards_outside_a_round(session, project, monkeypatch):
@@ -812,3 +827,79 @@ def test_specialists_are_cards_outside_a_round(session, project, monkeypatch):
     assert out["status"] == "waiting for the user's confirmation"
     session.expire_all()
     assert session.get(StudioState, project.id).pending_action["kind"] == "scout"
+
+
+# ── phase 1 regressions ─────────────────────────────────────────────────────
+
+
+def test_a_run_after_a_roll_back_descends_from_the_served_checkpoint(session, project):
+    from slm.db import Checkpoint
+    from slm.train.jobs import serve_checkpoint, served_ancestry, served_checkpoint
+
+    a = Checkpoint(project_id=project.id, kind="sft", job_id=1, base_model_path="/base", adapter_path="/a")
+    session.add(a)
+    session.commit()
+    b = Checkpoint(
+        project_id=project.id, kind="sft", job_id=2, base_model_path="/base", adapter_path="/b", parent_id=a.id
+    )
+    session.add(b)
+    session.commit()
+    p = session.get(Project, project.id)
+    serve_checkpoint(session, p, b)
+    assert served_checkpoint(session, p).id == b.id
+    serve_checkpoint(session, p, a)  # roll back: the next run must record A as its parent
+    assert served_checkpoint(session, p).id == a.id  # not the newest (B)
+    assert [c.id for c in served_ancestry(session, p)] == [a.id]
+
+
+def test_halt_cancels_a_specialist_waiting_in_run_coroutine(project):
+    import asyncio
+    import threading
+    import time
+
+    from slm.tuner.session import Tuner
+
+    t = Tuner()
+
+    async def slow():
+        await asyncio.sleep(30)
+
+    threading.Timer(0.3, lambda: t.halt(project.id)).start()
+    t0 = time.time()
+    with pytest.raises(RuntimeError, match="stopped"):
+        t.run_coroutine(slow(), pid=project.id)
+    assert time.time() - t0 < 5 and not t._tasks.get(project.id)
+
+
+def test_halted_spend_and_nudge_do_nothing(session, project, monkeypatch):
+    from slm.tuner.session import Tuner, autopilot_nudge
+
+    t = Tuner()
+    monkeypatch.setattr("slm.tuner.session.tuner", t)
+    session.add(StudioState(project_id=project.id, autopilot=True))
+    session.commit()
+    t.halt(project.id)
+    assert "stopped this project" in str(call(project.id, "scout_datasets", brief="x", reason="x"))
+    assert autopilot_nudge(project.id) is None  # even though autopilot is still True in the DB
+
+
+def test_stopping_a_project_withdraws_unused_grants(session, project, monkeypatch):
+    from slm.sessions import stop_project
+
+    session.add(StudioState(project_id=project.id, granted=[{"tool": "import_dataset", "args": {}}]))
+    session.commit()
+    monkeypatch.setattr(tuner, "halt", lambda pid: None)
+    stop_project(project.id)
+    session.expire_all()
+    assert session.get(StudioState, project.id).granted == []
+
+
+def test_a_run_with_no_parsed_metrics_is_flagged(project):
+    from types import SimpleNamespace
+
+    from slm.train.jobs import _warnings
+
+    ctx = SimpleNamespace(job_id=999, result={"total_iters": 50}, note=lambda _: None)
+    assert [w["code"] for w in _warnings(ctx)] == ["no_metrics"]
+    ctx.result = {}
+    assert _warnings(ctx) == []  # nothing ran: nothing to flag

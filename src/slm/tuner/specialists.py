@@ -13,6 +13,7 @@ so the console shows what it did.
 
 import asyncio
 import functools
+import inspect
 from dataclasses import dataclass, field
 
 from agents import Agent, AgentOutputSchema, ModelSettings, RunContextWrapper, Runner, function_tool
@@ -84,10 +85,13 @@ def _record(ctx: Ctx, name: str, args: dict, output) -> None:
 def _tool(fn):
     """A specialist tool: runs in a thread (Hub calls block), records itself, non-strict schema."""
 
+    sig = inspect.signature(fn)
+
     @functools.wraps(fn)
     async def run(ctx: Ctx, *args, **kwargs):
         out = await asyncio.to_thread(fn, ctx, *args, **kwargs)
-        _record(ctx, fn.__name__, kwargs, out)
+        bound = sig.bind(ctx, *args, **kwargs).arguments  # the SDK passes arguments positionally
+        _record(ctx, fn.__name__, {k: v for k, v in bound.items() if k != "ctx"}, out)
         return out
 
     return function_tool(run, strict_mode=False)
@@ -230,7 +234,7 @@ def scout(project_id: int, brief: str) -> tuple[ScoutReport, list[dict]]:
     from slm.tuner.session import tuner
 
     ctx = SpecialistContext(project_id=project_id, agent="DataScout")
-    out, calls = tuner.run_coroutine(_run(build_scout(), brief, ctx, max_turns=18))
+    out, calls = tuner.run_coroutine(_run(build_scout(), brief, ctx, max_turns=18), pid=project_id)
     return out, calls
 
 
@@ -238,5 +242,5 @@ def prep(project_id: int, brief: str) -> tuple[PrepPlan, list[dict]]:
     from slm.tuner.session import tuner
 
     ctx = SpecialistContext(project_id=project_id, agent="DataPrep")
-    out, calls = tuner.run_coroutine(_run(build_prep(), brief, ctx, max_turns=10))
+    out, calls = tuner.run_coroutine(_run(build_prep(), brief, ctx, max_turns=10), pid=project_id)
     return out, calls

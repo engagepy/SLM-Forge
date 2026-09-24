@@ -38,8 +38,8 @@ def _run(ctx: JobContext, cmd: list[str], *, parse_metrics: bool = False) -> Non
     def on_line(line: str) -> None:
         ctx.log(line)
         # The trainer warns (once per batch, collapsed by the runner) when it truncates examples.
-        if runner.truncation_count(line):
-            ctx.result["truncated_batches"] = ctx.result.get("truncated_batches", 0) + runner.truncation_count(line)
+        if n := runner.truncation_count(line):
+            ctx.result["truncated_batches"] = ctx.result.get("truncated_batches", 0) + n
         if parse_metrics:
             if (total := runner.parse_total_iters(line)) is not None:
                 ctx.result["total_iters"] = total
@@ -237,6 +237,15 @@ def _warnings(ctx: JobContext) -> list[dict]:
         [(r.iteration, r.values["loss"]) for r in rows if r.split == "train"],
         [(r.iteration, r.values["loss"]) for r in rows if r.split == "val"],
     )
+    if ctx.result.get("total_iters") and not any(r.split == "train" for r in rows):
+        warnings.append(
+            Warning(
+                "no_metrics",
+                "The trainer ran but none of its progress lines were understood (its log format may have "
+                "changed), so there are no loss curves and no diagnostics for this run. Treat its result as "
+                "unverified and check the job log.",
+            )
+        )
     if n := ctx.result.get("truncated_batches"):
         warnings.append(
             Warning(
@@ -267,9 +276,7 @@ def sft_job(ctx: JobContext) -> None:
             ctx.note("Starting from the base model (ignoring earlier checkpoints).")
         else:
             model_path = _serving_model(project)
-            parent = s.exec(
-                select(Checkpoint).where(Checkpoint.project_id == project.id).order_by(Checkpoint.id.desc())
-            ).first()
+            parent = served_checkpoint(s, project)  # the served one, not the newest: roll-backs matter
             # Continue from the served state. An un-fused adapter is continued in place (the trainer
             # resumes its weights on the same base), rather than fused into a 1–2 GB copy per run.
             pending_adapter = project.current_adapter_path
@@ -325,9 +332,7 @@ def dpo_job(ctx: JobContext) -> None:
         project = _project(s, ctx.project_id)
         model_path = _serving_model(project)
         pending_adapter = project.current_adapter_path
-        parent = s.exec(
-            select(Checkpoint).where(Checkpoint.project_id == project.id).order_by(Checkpoint.id.desc())
-        ).first()
+        parent = served_checkpoint(s, project)
 
     # DPO's frozen reference is loaded from the same path as the policy, so the policy must be a
     # standalone (fused) model: fuse the latest SFT adapter first. This is the one place a fused
@@ -391,13 +396,11 @@ def serve_checkpoint(s: Session, project: Project, ckpt: Checkpoint) -> None:
     s.commit()
 
 
-def served_ancestry(s: Session, project: Project) -> list[Checkpoint]:
-    """The chain of checkpoints behind the served model, oldest first.
-
-    Only this model's ancestors: abandoned runs and fresh-from-base branches are excluded.
-    """
-    ckpts = s.exec(select(Checkpoint).where(Checkpoint.project_id == project.id)).all()
-    served = next(
+def served_checkpoint(s: Session, project: Project) -> Checkpoint | None:
+    """The checkpoint the project serves right now (None: the plain base). After a roll-back this
+    is not the newest checkpoint, and it is the parent every new run must record."""
+    ckpts = s.exec(select(Checkpoint).where(Checkpoint.project_id == project.id).order_by(Checkpoint.id)).all()
+    return next(
         (
             c
             for c in reversed(ckpts)
@@ -406,6 +409,15 @@ def served_ancestry(s: Session, project: Project) -> list[Checkpoint]:
         ),
         None,
     )
+
+
+def served_ancestry(s: Session, project: Project) -> list[Checkpoint]:
+    """The chain of checkpoints behind the served model, oldest first.
+
+    Only this model's ancestors: abandoned runs and fresh-from-base branches are excluded.
+    """
+    ckpts = s.exec(select(Checkpoint).where(Checkpoint.project_id == project.id)).all()
+    served = served_checkpoint(s, project)
     by_id = {c.id: c for c in ckpts}
     chain = []
     while served is not None:
