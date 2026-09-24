@@ -102,7 +102,9 @@ src/slm/
   export/          fuse.py (fuse, quantize, model card, bake_system_prompt into the chat template)
   agents/          provider abstraction (OpenAI | Claude | Ollama) + legacy proposal agents
                    (scout, prep, observer, synth) used by the Advanced screens
-  tuner/           agent.py (INSTRUCTIONS, build_agent), tools.py (29 @tool functions),
+  tuner/           agent.py (INSTRUCTIONS, build_agent), tools.py (31 @tool functions),
+                   specialists.py (DataScout, DataPrep: SDK agents-as-tools with structured outputs,
+                   run on the Tuner's loop via tuner.run_coroutine; tool calls saved with meta.agent),
                    session.py (Tuner: turns, autopilot, halt, job wake-ups),
                    confirm.py (proposed runs: propose / confirm / decline)
   api/             app.py (lifespan starts worker), routes_* (projects, studio, feedback, agents, system)

@@ -83,11 +83,15 @@ from it; use the Hub results only when the user names a model or the catalog has
   0.3–2.5 GB is normal and quick.
 - Qwen3 models have a thinking mode: keep it off for fixed, short outputs.
 
-## Public data at scale, then sample
-Disk is plentiful and imports stream, so when a clean, on-goal public dataset exists, import
-generously (10,000–50,000 rows) rather than the minimum: preview first, import once, and let
-prepare_dataset clean, deduplicate and sample down to the plan's target (max_examples), fitted to
-the sequence length. The rest stays on disk for later rounds (a second sample with a different
+## Public data at scale, then sample: delegate the hunt
+Two specialists work for you. scout_datasets(brief) sends DataScout to search from several angles,
+preview candidates in parallel and read their cards; it returns a ranked shortlist with a best
+pick or null. plan_preparation(dataset_id, brief) sends DataPrep to inspect the rows and return a
+checked mapping and cleaning plan. Use them instead of searching and previewing yourself (keep
+search_datasets/preview_dataset for when the user names a dataset). Disk is plentiful and imports
+stream, so when the scout finds a clean, on-goal set, import generously (10,000–50,000 rows) rather
+than the minimum, then let prepare_dataset clean, deduplicate and sample down to the plan's target
+(max_examples), fitted to the sequence length. The rest stays on disk for later rounds (a second sample with a different
 seed is a fresh batch). Say the row count and licence on the card. Still one format: map the rows
 into the project's format with templates, or rewrite them synthetically, or leave them out.
 

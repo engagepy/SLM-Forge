@@ -752,3 +752,63 @@ def test_plan_training_estimates_minutes(session, project, monkeypatch):
         "minutes": max(1, round(out["iterations"] / 2.0 / 60)),
         "basis": "this project's last run",
     }
+
+
+# ── specialists: agents-as-tools ────────────────────────────────────────────
+
+
+def test_scout_datasets_delegates_to_a_specialist_and_returns_its_report(session, project, monkeypatch):
+    import json as _json
+
+    from test_openai_provider import ScriptedModel, _call, _text
+
+    from slm.data import scout_tools
+    from slm.tuner import specialists
+
+    session.add(StudioState(project_id=project.id, autopilot=True))
+    session.commit()
+    monkeypatch.setattr(scout_tools, "search_datasets", lambda q, limit=8: [{"id": "org/cooking-qa", "license": "mit"}])
+    monkeypatch.setattr(
+        scout_tools,
+        "preview_rows",
+        lambda repo, config=None, split=None, n=3: {"columns": ["q", "a"], "rows": [{"q": "x", "a": "y"}]},
+    )
+    report = {
+        "candidates": [
+            {"repo_id": "org/cooking-qa", "licence": "mit", "commercial_ok": True, "columns": ["q", "a"],
+             "suggested_mapping": {"format": "instruction", "prompt": "q", "response": "a"}, "fit_score": 8, "why": "on goal"}
+        ],
+        "best": "org/cooking-qa",
+        "summary": "One good set.",
+    }  # fmt: skip
+    monkeypatch.setattr(
+        specialists,
+        "model_override",
+        ScriptedModel(
+            [
+                [_call("search_datasets", {"query": "cooking questions"}, 1)],
+                [_call("preview_dataset", {"repo_id": "org/cooking-qa"}, 2)],
+                [_text(_json.dumps(report))],
+            ]
+        ),
+    )
+    out = call(project.id, "scout_datasets", brief="cooking Q&A, one-sentence answers, may ship")
+    assert (
+        out["best"] == "org/cooking-qa"
+        and out["candidates"][0]["fit_score"] == 8
+        and out["searched_and_previewed"] == 2
+    )
+    rows = session.exec(select(TunerMessage).where(TunerMessage.role == "tool")).all()
+    assert [(r.meta["agent"], r.meta["name"]) for r in rows] == [
+        ("DataScout", "search_datasets"),
+        ("DataScout", "preview_dataset"),
+    ]
+
+
+def test_specialists_are_cards_outside_a_round(session, project, monkeypatch):
+    monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
+    _open_project(session, project)
+    out = call(project.id, "scout_datasets", brief="x", reason="Find data.")
+    assert out["status"] == "waiting for the user's confirmation"
+    session.expire_all()
+    assert session.get(StudioState, project.id).pending_action["kind"] == "scout"

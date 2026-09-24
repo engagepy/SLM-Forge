@@ -473,6 +473,48 @@ def preview_dataset(ctx: Ctx, repo_id: str) -> dict:
 
 
 @tool
+def scout_datasets(ctx: Ctx, brief: str, reason: str = "") -> dict:
+    """Delegate the dataset hunt to DataScout, a specialist agent: it runs several searches,
+    previews candidates in parallel, reads their cards and returns a ranked shortlist (licence,
+    columns, suggested mapping, answer length, fit score 0–10, caveats) with a best pick or null.
+    brief: the goal, the target output format, the target answer length, whether the user might
+    ship the model (licence), and anything to avoid. Costs a handful of API calls; outside a round
+    it's a card. Then import_dataset the pick and plan_preparation it."""
+    from slm.tuner import specialists
+
+    pid = ctx.context.project_id
+    if proposal := _spend(
+        pid, "scout_datasets", "scout", "Have DataScout find public datasets", reason,
+        {"brief": brief[:200]}, {"brief": brief},
+    ):  # fmt: skip
+        return proposal
+    report, calls = specialists.scout(pid, brief)
+    return {"searched_and_previewed": len(calls), **report.model_dump()}
+
+
+@tool
+def plan_preparation(ctx: Ctx, dataset_id: int, brief: str, reason: str = "") -> dict:
+    """Delegate the mapping and cleaning plan for an imported dataset to DataPrep, a specialist
+    agent: it inspects rows, tries a mapping against them and returns mapping, min/max answer
+    chars, max_seq_length and the expected kept fraction. brief: the project's output format and
+    target answer length. Then call prepare_dataset with the plan (and max_examples per your plan)."""
+    from slm.tuner import specialists
+
+    pid = ctx.context.project_id
+    with Session(engine()) as s:
+        ds = s.get(Dataset, dataset_id)
+        if ds is None or ds.project_id != pid:
+            raise ValueError("no such dataset in this project")
+    if proposal := _spend(
+        pid, "plan_preparation", "prep", f"Have DataPrep plan the cleaning of {ds.name}", reason,
+        {"dataset": ds.name, "rows": ds.n_rows}, {"dataset_id": dataset_id, "brief": brief},
+    ):  # fmt: skip
+        return proposal
+    plan, calls = specialists.prep(pid, f"dataset_id: {dataset_id}\n{brief}")
+    return {"checked": len(calls), **plan.model_dump()}
+
+
+@tool
 def import_dataset(
     ctx: Ctx, repo_id: str, max_rows: int = 20000, config: str | None = None, split: str = "train", reason: str = ""
 ) -> dict:
@@ -1347,6 +1389,8 @@ ALL_TOOLS = [
     choose_base_model,
     search_datasets,
     preview_dataset,
+    scout_datasets,
+    plan_preparation,
     import_dataset,
     inspect_dataset,
     prepare_dataset,

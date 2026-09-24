@@ -20,12 +20,14 @@ from slm.sessions import overview
 
 # Runs (model, sft, dpo, export) submit a job when confirmed. Spends (synthesize, review, import)
 # grant the Tuner one call of the tool it proposed; see tools._spend.
-ACTION_KINDS = ("model", "sft", "dpo", "export", "synthesize", "review", "import", "evaluate")
+ACTION_KINDS = ("model", "sft", "dpo", "export", "synthesize", "review", "import", "evaluate", "scout", "prep")
 SPEND_TOOL = {
     "synthesize": "generate_synthetic_examples",
     "review": "ai_review_answers",
     "import": "import_dataset",
     "evaluate": "evaluate_model",
+    "scout": "scout_datasets",
+    "prep": "plan_preparation",
 }
 # Where the canvas goes once a confirmed action starts.
 STAGE = {
@@ -36,6 +38,8 @@ STAGE = {
     "review": "refine",
     "import": "data",
     "evaluate": "evaluate",
+    "scout": "data",
+    "prep": "data",
 }
 STOPPED = "The user stopped this project. Don't start new work unless they ask you to."
 SWITCH_BASE = "Training has already started on another base model; start a new project to switch."

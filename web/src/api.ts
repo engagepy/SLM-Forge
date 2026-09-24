@@ -284,6 +284,7 @@ export interface TunerMessage {
     kickoff?: boolean;
     autopilot?: boolean;
     autopilot_paused?: boolean;
+    agent?: string;
     confirmed?: string;
     declined?: string;
   } & Record<string, unknown>;
@@ -312,7 +313,7 @@ export interface Sample {
 /** A run the Tuner proposed; nothing starts until the user confirms it. */
 export interface PendingAction {
   id: string;
-  kind: "model" | "sft" | "dpo" | "export" | "synthesize" | "review" | "import" | "evaluate";
+  kind: "model" | "sft" | "dpo" | "export" | "synthesize" | "review" | "import" | "evaluate" | "scout" | "prep";
   title: string;
   reason: string;
   details: Record<string, unknown>;

@@ -168,6 +168,11 @@ taught it.
 - **Base models built to be small.** `find_base_models` lists a curated catalog first (Qwen2.5,
   Qwen3, SmolLM2/3, Llama 3.2, Gemma 3, Granite, Phi-4 mini) with licence, what each is best for
   and why, ordered by the plan's task type; the Tuner shortlists 2–3 and proposes one.
+- **Specialists for data.** The Tuner delegates the hunt to **DataScout** (an Agents-SDK agent
+  that searches from several angles, previews candidates in parallel and returns a ranked shortlist
+  with licence, mapping and fit score) and the cleaning plan to **DataPrep** (inspects rows, checks
+  a mapping against them, returns thresholds and sequence length). Their tool calls show in the
+  console under their names; the Tuner's own context stays small.
 - **Big imports, then a sample.** Hub datasets stream in up to 200,000 rows with progress on the
   canvas; `prepare_dataset(max_examples=…)` cleans, deduplicates and samples to the plan's target,
   and the rest stays on disk as a pool for later rounds.

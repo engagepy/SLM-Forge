@@ -120,6 +120,11 @@ class Tuner:
         if db.exists():
             asyncio.run(SQLiteSession(f"project-{pid}", db).clear_session())
 
+    def run_coroutine(self, coro):
+        """Run a coroutine on the Tuner's loop from a tool thread (specialist agents share the SDK
+        client, which is bound to this loop) and wait for its result."""
+        return asyncio.run_coroutine_threadsafe(coro, self._event_loop()).result()
+
     def shutdown(self) -> None:
         """Stop every turn and let tool threads finish: the server is going down."""
         shutting_down.set()

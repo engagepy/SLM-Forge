@@ -50,7 +50,12 @@ const TOOL_LABEL: Record<string, string> = {
   choose_base_model: "Proposing the base model",
   search_datasets: "Searching datasets",
   preview_dataset: "Previewing a dataset",
+  scout_datasets: "Sending DataScout to find datasets",
+  plan_preparation: "Asking DataPrep for a cleaning plan",
   import_dataset: "Importing data",
+  sample_rows: "reading sample rows",
+  check_mapping: "checking a mapping",
+  dataset_card: "reading a dataset card",
   inspect_dataset: "Inspecting the data",
   prepare_dataset: "Cleaning and preparing the data",
   plan_training: "Planning the training run",
@@ -269,7 +274,7 @@ function ToolGroup({ steps }: { steps: TunerMessage[] }) {
   if (steps.length === 1) return <ChatItem m={steps[0]} />;
   const counts = new Map<string, number>();
   for (const m of steps) {
-    const label = TOOL_LABEL[m.meta.name ?? ""] ?? m.meta.name ?? "step";
+    const label = (m.meta.agent ? `${m.meta.agent}: ` : "") + (TOOL_LABEL[m.meta.name ?? ""] ?? m.meta.name ?? "step");
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   const summary = [...counts.entries()].map(([l, n]) => (n > 1 ? `${l.toLowerCase()} ×${n}` : l.toLowerCase())).join(" · ");
@@ -316,7 +321,7 @@ function StartTuner({ projectId }: { projectId: number }) {
   );
 }
 
-const ACTION_ICON: Record<PendingAction["kind"], string> = { model: "◆", sft: "▲", dpo: "▲", export: "⬇", synthesize: "✎", review: "⚖", import: "⇣", evaluate: "★" };
+const ACTION_ICON: Record<PendingAction["kind"], string> = { model: "◆", sft: "▲", dpo: "▲", export: "⬇", synthesize: "✎", review: "⚖", import: "⇣", evaluate: "★", scout: "⌕", prep: "✂" };
 
 /** The Tuner's proposed run. It only starts from here (or a plain "yes" in the chat). */
 function ConfirmCard({ projectId, action }: { projectId: number; action: PendingAction }) {
@@ -406,6 +411,8 @@ function actionFacts(a: PendingAction): string[] {
     out.push(`${d.prompts} questions`, "runs the model, then uses the OpenAI API");
   } else if (a.kind === "evaluate") {
     out.push(`${d.questions} test questions`, String(d.target), "runs the model, then uses the OpenAI API");
+  } else if (a.kind === "scout" || a.kind === "prep") {
+    out.push("a specialist agent · a handful of API calls");
   } else if (a.kind === "import") {
     out.push(`up to ${Number(d.max_rows).toLocaleString()} rows`, "downloads from Hugging Face");
   }
@@ -431,6 +438,7 @@ function ChatItem({ m }: { m: TunerMessage }) {
     return (
       <div className="flex items-center gap-2 pl-1 text-xs text-muted">
         {running ? <Spinner className="size-3" /> : <span className={failed ? "text-bad" : "text-good"}>{failed ? "✗" : "✓"}</span>}
+        {m.meta.agent && <span className="rounded bg-panel-2 px-1 text-[10px] font-medium text-faint">{m.meta.agent}</span>}
         {TOOL_LABEL[m.meta.name ?? ""] ?? m.meta.name}
       </div>
     );
