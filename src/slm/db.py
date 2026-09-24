@@ -189,7 +189,7 @@ class StudioState(SQLModel, table=True):
     """What the Studio canvas is focused on, as set by the Tuner."""
 
     project_id: int = Field(foreign_key="project.id", primary_key=True)
-    stage: str = "goal"  # goal | model | data | train | evaluate | refine | export
+    stage: str = "goal"  # goal | data | model | train | evaluate | refine | export
     note: str = ""  # one line the Tuner wants on the canvas right now
     comparisons: list = json_field([])  # A/B tasks waiting for the human
     samples: list = json_field([])  # recent model outputs the Tuner showed

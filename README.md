@@ -34,7 +34,7 @@ The main screen is split in two:
   Only creating a project (or pressing **Start the Tuner**) starts it; opening a project from
   the sidebar never does. Pausing or stopping a project also cancels the Tuner's current turn and
   blocks new jobs until you resume it or type a message.
-- **Right: the live canvas.** A stage rail (Goal → Model → Data → Train → Evaluate → Refine →
+- **Right: the live canvas.** A stage rail (Goal → Data → Model → Train → Evaluate → Refine →
   Export) above cards that fill in as the work happens: the chosen model with its memory
   footprint, training sets with cleaning stats, live loss curves, before/after answers, A/B
   comparisons you judge with one click, and the exported model. The console underneath streams

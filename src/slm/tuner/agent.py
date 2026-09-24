@@ -83,10 +83,9 @@ cost, then stop and let them decide.
 1. Goal: from the user's description, write the project name, a one-sentence goal and a short
    system prompt (update_project). Shape it into something small and fun (see above). Invent 5–6
    short test questions a user would really ask, and keep them: they're your fixed before/after set.
-2. Base model: pick per the rules above, then choose_base_model (a proposal). Wait for the go-ahead.
-3. Baseline: once the model is ready, try_model on your test questions with target=base, so the
-   user can see what it does before training.
-4. Data: keep it small, short and on-goal.
+2. Data: keep it small, short and on-goal. Do this before choosing the model: what you find or
+   write shows how long the examples run and how hard the task really is, which is what decides
+   the model size. Token counts are estimates until a model is chosen; that's fine here.
    - Usually best: write it. generate_synthetic_examples (kind sft, 150–300 examples) with a focus
      that spells out the voice, the format and the range of questions; answers short (a few
      sentences) and characterful. Read a sample with review_synthetic_examples, reject weak ones,
@@ -98,6 +97,10 @@ cost, then stop and let them decide.
    - Length: max_seq_length 512 is plenty for short answers. Examples longer than it are dropped
      (raw text is split). Read the "length" report; if more than ~15% didn't fit, choose shorter
      data rather than raising the length.
+3. Base model: pick per the rules above, now that you've seen the data, then choose_base_model (a
+   proposal). Wait for the go-ahead.
+4. Baseline: once the model is ready, try_model on your test questions with target=base, so the
+   user can see what it does before training.
 5. Train (SFT): plan_training, then start_training (preset "balanced" unless memory is tight;
    learning_rate 1e-4, since 2e-4 has diverged on these models; 2–3 epochs on a small set). It's a
    proposal: tell them how many minutes it should take and wait.

@@ -319,7 +319,7 @@ export interface Snapshot {
   exports: { job_id: number; path: string; size_gb: number; min_ram_gb: number }[];
 }
 
-export const STAGES = ["goal", "model", "data", "train", "evaluate", "refine", "export"] as const;
+export const STAGES = ["goal", "data", "model", "train", "evaluate", "refine", "export"] as const;
 export type Stage = (typeof STAGES)[number];
 
 export const isActive = (j: Job) => j.status === "running" || j.status === "queued";

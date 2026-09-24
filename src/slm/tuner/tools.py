@@ -53,7 +53,7 @@ from slm.train.config import TrainConfig, preset
 from slm.train.worker import worker
 from slm.tuner import confirm
 
-STAGES = ("goal", "model", "data", "train", "evaluate", "refine", "export")
+STAGES = ("goal", "data", "model", "train", "evaluate", "refine", "export")
 # Jobs the Tuner starts and does not wait for: it gets woken when they finish.
 NOTIFY_KINDS = {"download", "sft", "dpo", "export"}
 
@@ -263,7 +263,7 @@ def get_status(ctx: Ctx) -> dict:
 @tool
 def set_stage(ctx: Ctx, stage: str, note: str) -> str:
     """Move the live canvas to a pipeline stage and show one short line about what's happening.
-    stage: goal | model | data | train | evaluate | refine | export. Call it whenever the work moves on."""
+    stage: goal | data | model | train | evaluate | refine | export. Call it whenever the work moves on."""
     if stage not in STAGES:
         raise ValueError(f"stage must be one of {STAGES}")
     with Session(engine()) as s:
