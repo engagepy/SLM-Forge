@@ -9,16 +9,13 @@ from pathlib import Path
 from slm import hardware
 
 
-def fuse_command(model_path: str, adapter_path: str, save_path: Path, dequantize: bool = False) -> list[str]:
-    cmd = [
+def fuse_command(model_path: str, adapter_path: str, save_path: Path) -> list[str]:
+    return [
         sys.executable, "-m", "mlx_lm", "fuse",
         "--model", model_path,
         "--adapter-path", adapter_path,
         "--save-path", str(save_path),
     ]  # fmt: skip
-    if dequantize:
-        cmd.append("--dequantize")
-    return cmd
 
 
 QUANTIZE_BITS = (3, 4, 6, 8)

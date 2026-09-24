@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from slm.config import get_settings
 from slm.data import format as fmt
 from slm.data import scout_tools
+from slm.tuner.util import clip as _clip
 
 model_override = None  # tests inject a scripted model
 
@@ -95,16 +96,6 @@ def _tool(fn):
         return out
 
     return function_tool(run, strict_mode=False)
-
-
-def _clip(v, n: int = 300):
-    if isinstance(v, str):
-        return v if len(v) <= n else v[:n] + "…"
-    if isinstance(v, list):
-        return [_clip(x, n) for x in v[:12]]
-    if isinstance(v, dict):
-        return {k: _clip(x, n) for k, x in v.items()}
-    return v
 
 
 # ── DataScout ───────────────────────────────────────────────────────────────

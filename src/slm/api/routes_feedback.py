@@ -1,19 +1,17 @@
 """Playground generation, A/B comparison, human feedback and example review."""
 
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import iterate_in_threadpool
 
-from slm.api.common import SessionDep, get_or_404, project_or_404, sse
-from slm.db import Checkpoint, Job, PreferencePair, Project, SftExample, awaiting_review, ready
+from slm.api.common import SessionDep, project_or_404, sse
+from slm.db import PreferencePair, Project, SftExample, awaiting_review, ready
 from slm.feedback import record_feedback
+from slm.inference import targets
 from slm.inference.engine import EngineBusy, SamplingParams
 from slm.inference.engine import engine as infer
-from slm.models import manage
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["feedback"])
 
@@ -25,31 +23,10 @@ class GenerateIn(BaseModel):
 
 
 def _target(s: Session, p: Project, target: str) -> dict:
-    if target == "base":
-        path = manage.local_path_for(p.base_model or "")
-        if not path:
-            raise HTTPException(409, "Base model not downloaded")
-        return {"model_path": path, "adapter_path": None}
-    if target.startswith("export:"):
-        # The finished, exported model exactly as it sits on disk (fused and quantized).
-        job = s.get(Job, int(target.split(":", 1)[1]))
-        if job is None or job.project_id != p.id or job.kind != "export" or job.status != "succeeded":
-            raise HTTPException(404, "No such export in this project")
-        path = (job.result or {}).get("path")
-        if not path or not Path(path).is_dir():
-            raise HTTPException(409, f"The exported model is no longer at {path}")
-        return {"model_path": path, "adapter_path": None}
-    if target.startswith("checkpoint:"):
-        c = get_or_404(s, Checkpoint, int(target.split(":", 1)[1]))
-        if c.project_id != p.id:
-            raise HTTPException(404, "No such checkpoint in this project")
-        if c.fused_path:
-            return {"model_path": c.fused_path, "adapter_path": None}
-        return {"model_path": c.base_model_path, "adapter_path": c.adapter_path}
-    path = manage.serving_path(p)
-    if not path:
-        raise HTTPException(409, "Download the project's base model first")
-    return {"model_path": path, "adapter_path": p.current_adapter_path}
+    try:
+        return targets.resolve(s, p, target)
+    except targets.TargetError as e:
+        raise HTTPException(e.status, str(e)) from e
 
 
 def _with_system(p: Project, messages: list[dict]) -> list[dict]:

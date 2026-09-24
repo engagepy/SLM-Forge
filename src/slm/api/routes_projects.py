@@ -32,6 +32,7 @@ from slm.sessions import export_jobs, on_disk
 from slm.train.config import TrainConfig, preset
 from slm.train.jobs import model_in_use, serve_checkpoint
 from slm.train.worker import worker
+from slm.tuner import confirm
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -72,9 +73,9 @@ def create_project(body: ProjectIn, s: Session = SessionDep) -> dict:
 def update_project(project_id: int, body: ProjectPatch, s: Session = SessionDep) -> dict:
     p = project_or_404(s, project_id)
     changes = body.model_dump(exclude_none=True)
+    if "base_model" in changes and confirm.base_model_locked(s, p, changes["base_model"]):
+        raise HTTPException(409, confirm.SWITCH_BASE)
     if "base_model" in changes and changes["base_model"] != p.base_model:
-        if s.exec(select(Checkpoint).where(Checkpoint.project_id == p.id)).first():
-            raise HTTPException(409, "Base model can't change after training has started; create a new project.")
         p.current_model_path = manage.local_path_for(changes["base_model"])
         p.current_adapter_path = None
     for k, v in changes.items():

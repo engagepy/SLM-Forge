@@ -289,8 +289,11 @@ def sft_job(ctx: JobContext) -> None:
             resume = str(weights)
             cfg = match_adapter(cfg, Path(pending_adapter), ctx.note)
             ctx.note(f"Continuing adapter {pending_adapter} on {model_path}")
-        else:  # an adapter without weights on disk: fall back to fusing what can be loaded
-            model_path = str(_fuse(ctx, model_path, pending_adapter, ctx.run_dir / "base-fused"))
+        else:  # fusing needs the same file, so there is nothing to continue from
+            raise ValueError(
+                f"The served adapter has no weights on disk ({weights}). Roll back to a checkpoint that "
+                "has them, or start from the base model."
+            )
 
     if version.mapping.get("format") == "text" and cfg.mask_prompt:
         # Raw text has no prompt/completion split; mlx_lm rejects masking for it.

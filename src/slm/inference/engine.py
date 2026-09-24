@@ -102,9 +102,6 @@ class Engine:
             self._key = key
         return self._model, self._tokenizer
 
-    def preload(self, model_path: str, adapter_path: str | None = None) -> None:
-        self._on_mlx_thread(lambda: self._ensure(model_path, adapter_path))
-
     def _prompt(self, tokenizer, messages: list[dict], params: SamplingParams):
         kwargs: dict = {"add_generation_prompt": True, "tokenize": True}
         if params.chat_template:

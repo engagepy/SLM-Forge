@@ -11,6 +11,7 @@ import functools
 import random
 import time
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,6 +47,7 @@ from slm.db import (
 from slm.db import test_cases as db_test_cases
 from slm.events import canvas_changed, shutting_down
 from slm.feedback import record_feedback
+from slm.inference import targets
 from slm.inference.engine import EngineBusy, SamplingParams
 from slm.inference.engine import engine as infer
 from slm.models import hub, manage
@@ -53,6 +55,7 @@ from slm.sessions import overview, resume_project, stop_project
 from slm.train.config import TrainConfig, preset
 from slm.train.worker import worker
 from slm.tuner import confirm
+from slm.tuner.util import clip as _clip
 
 STAGES = ("goal", "data", "model", "train", "evaluate", "refine", "export")
 # Jobs the Tuner starts and does not wait for: it gets woken when they finish.
@@ -82,14 +85,42 @@ def tool(fn):
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 
-def _clip(v, n: int = 300):
-    if isinstance(v, str):
-        return v if len(v) <= n else v[:n] + "…"
-    if isinstance(v, list):
-        return [_clip(x, n) for x in v[:12]] + (["…"] if len(v) > 12 else [])
-    if isinstance(v, dict):
-        return {k: _clip(x, n) for k, x in v.items()}
-    return v
+def _own_dataset(s: Session, pid: int, dataset_id: int) -> Dataset:
+    ds = s.get(Dataset, dataset_id)
+    if ds is None or ds.project_id != pid:
+        raise ValueError("no such dataset in this project")
+    return ds
+
+
+@contextmanager
+def studio(pid: int, *json_fields: str):
+    """Mutate the project's StudioState and show it: commit on exit, then refresh the canvas.
+    Name the JSON columns you assign to, so SQLAlchemy writes them (it can't see in-place edits)."""
+    with Session(engine()) as s:
+        st = studio_state(s, pid)
+        yield st
+        for f in json_fields:
+            flag_modified(st, f)
+        st.updated_at = now()
+        s.add(st)
+        s.commit()
+    canvas_changed(pid)
+
+
+def _version_brief(v: DatasetVersion) -> dict:
+    """What the Tuner needs to know about a prepared dataset version."""
+    tokens, cleaning = v.token_stats or {}, v.cleaning_report or {}
+    return {
+        "version_id": v.id,
+        "kind": v.kind,
+        "train": v.n_train,
+        "valid": v.n_valid,
+        "test": v.n_test,
+        "cleaning": cleaning.get("dropped"),
+        "tokens": {k: tokens.get(k) for k in ("p50", "p95", "max", "over_max_seq_length", "estimated")},
+        "length": cleaning.get("length"),
+        "sampled": cleaning.get("sampled"),
+    }
 
 
 def _submit(kind: str, config: dict, project_id: int) -> Job:
@@ -283,19 +314,7 @@ def get_status(ctx: Ctx) -> dict:
                 }
                 for d in datasets
             ],
-            "prepared_versions": [
-                {
-                    "version_id": v.id,
-                    "kind": v.kind,
-                    "train": v.n_train,
-                    "valid": v.n_valid,
-                    "test": v.n_test,
-                    "p95_tokens": (v.token_stats or {}).get("p95"),
-                    "over_max_len": (v.token_stats or {}).get("over_max_seq_length"),
-                    "cleaning": (v.cleaning_report or {}).get("dropped"),
-                }
-                for v in versions
-            ],
+            "prepared_versions": [_version_brief(v) for v in versions],
             "recent_jobs": [_job_brief(j) for j in jobs],
             "checkpoints": [
                 {
@@ -328,12 +347,8 @@ def set_stage(ctx: Ctx, stage: str, note: str) -> str:
     stage: goal | data | model | train | evaluate | refine | export. Call it whenever the work moves on."""
     if stage not in STAGES:
         raise ValueError(f"stage must be one of {STAGES}")
-    with Session(engine()) as s:
-        st = studio_state(s, ctx.context.project_id)
-        st.stage, st.note, st.updated_at = stage, note[:200], now()
-        s.add(st)
-        s.commit()
-    canvas_changed(ctx.context.project_id)
+    with studio(ctx.context.project_id) as st:
+        st.stage, st.note = stage, note[:200]
     return f"canvas → {stage}"
 
 
@@ -516,9 +531,7 @@ def plan_preparation(ctx: Ctx, dataset_id: int, brief: str, reason: str = "") ->
 
     pid = ctx.context.project_id
     with Session(engine()) as s:
-        ds = s.get(Dataset, dataset_id)
-        if ds is None or ds.project_id != pid:
-            raise ValueError("no such dataset in this project")
+        ds = _own_dataset(s, pid, dataset_id)
     if proposal := _spend(
         pid, "plan_preparation", "prep", f"Have DataPrep plan the cleaning of {ds.name}", reason,
         {"dataset": ds.name, "rows": ds.n_rows}, {"dataset_id": dataset_id, "brief": brief},
@@ -559,9 +572,7 @@ def import_dataset(
 def inspect_dataset(ctx: Ctx, dataset_id: int) -> dict:
     """Columns, row count, three sample rows and a suggested mapping for an imported or uploaded dataset."""
     with Session(engine()) as s:
-        ds = s.get(Dataset, dataset_id)
-        if ds is None or ds.project_id != ctx.context.project_id:
-            raise ValueError("no such dataset in this project")
+        ds = _own_dataset(s, ctx.context.project_id, dataset_id)
     rows = scout_tools.read_raw(Path(ds.raw_path), limit=3)
     return _clip(
         {
@@ -627,9 +638,7 @@ def prepare_dataset(
     if constant_system_prompt:
         mapping["system"] = "=" + constant_system_prompt
     with Session(engine()) as s:
-        ds = s.get(Dataset, dataset_id)
-        if ds is None or ds.project_id != ctx.context.project_id:
-            raise ValueError("no such dataset in this project")
+        ds = _own_dataset(s, ctx.context.project_id, dataset_id)
     check = preview_mapping(ds, mapping, n=1)
     if check["failed"] == check["sampled"]:
         return {"status": "mapping doesn't work", "errors": check["errors"], "columns": ds.columns}
@@ -653,14 +662,7 @@ def prepare_dataset(
         v = s.get(DatasetVersion, job.result["dataset_version_id"])
         return {
             "status": "prepared",
-            "version_id": v.id,
-            "train": v.n_train,
-            "valid": v.n_valid,
-            "test": v.n_test,
-            "cleaning": v.cleaning_report.get("dropped"),
-            "tokens": {k: v.token_stats.get(k) for k in ("p50", "p95", "max", "over_max_seq_length", "estimated")},
-            "length": v.cleaning_report.get("length"),
-            "sampled": v.cleaning_report.get("sampled"),
+            **_version_brief(v),
             "sample_record": _clip(preview_mapping(ds, mapping, n=1)["records"][:1], 500),
         }
 
@@ -675,6 +677,10 @@ def _plan(
     with Session(engine()) as s:
         project = s.get(Project, pid)
         version = s.get(DatasetVersion, dataset_version_id) if dataset_version_id else None
+        if version is not None and version.project_id != pid:
+            raise ValueError("no such dataset version in this project")
+    if mode == "sft" and version is None:
+        raise ValueError("SFT needs dataset_version_id (prepare a dataset first)")
     path = manage.serving_path(project)
     if not path:
         raise ValueError("Download a base model first")
@@ -754,15 +760,11 @@ def start_training(
     pid = ctx.context.project_id
     if mode not in ("sft", "dpo"):
         raise ValueError("mode must be sft or dpo")
-    if mode == "sft" and not dataset_version_id:
-        raise ValueError("SFT needs dataset_version_id (prepare a dataset first)")
     cfg, info, version = _plan(
         pid, mode, preset_name, dataset_version_id,
         learning_rate=learning_rate, epochs=epochs, iters=iters, lora_rank=lora_rank,
         max_seq_length=max_seq_length, batch_size=batch_size,
     )  # fmt: skip
-    if mode == "sft" and version is None:
-        raise ValueError("SFT needs dataset_version_id (prepare a dataset first)")
     if not info["fits"]:
         return {"status": "won't fit", **info, "hint": "use preset safe, lower batch_size or max_seq_length"}
     config = {"train": cfg.model_dump(), "start_from": start_from}
@@ -812,23 +814,8 @@ def cancel_job(ctx: Ctx, job_id: int) -> str:
 
 def _where(project: Project, target: str) -> dict:
     """Which weights answer: current (served) | base (untrained) | checkpoint:<id>."""
-    if target == "base":
-        path = manage.local_path_for(project.base_model or "")
-        if not path:
-            raise ValueError("The base model isn't downloaded yet")
-        return {"model_path": path, "adapter_path": None}
-    if target.startswith("checkpoint:"):
-        with Session(engine()) as s:
-            c = s.get(Checkpoint, int(target.split(":", 1)[1]))
-        if c is None or c.project_id != project.id:
-            raise ValueError("no such checkpoint in this project")
-        if c.fused_path:
-            return {"model_path": c.fused_path, "adapter_path": None}
-        return {"model_path": c.base_model_path, "adapter_path": c.adapter_path}
-    path = manage.serving_path(project)
-    if not path:
-        raise ValueError("No model downloaded yet")
-    return {"model_path": path, "adapter_path": project.current_adapter_path}
+    with Session(engine()) as s:
+        return targets.resolve(s, project, target)  # a TargetError is a ValueError the model reads
 
 
 def _served_checkpoint_id(s: Session, project: Project) -> int | None:
@@ -880,13 +867,8 @@ def try_model(
     for q in prompts[:6]:
         r = _generate(project, q, temperature, max_tokens, target)
         results.append({"prompt": q, "target": target, **r})
-    with Session(engine()) as s:
-        st = studio_state(s, pid)
+    with studio(pid, "samples") as st:
         st.samples = (results + list(st.samples))[:12]
-        flag_modified(st, "samples")
-        s.add(st)
-        s.commit()
-    canvas_changed(pid)
     return results
 
 
@@ -925,9 +907,7 @@ def evaluate_model(ctx: Ctx, target: str = "current", reason: str = "") -> dict:
         reason, {"questions": len(questions), "target": target}, {"target": target},
     ):  # fmt: skip
         return proposal
-    judge = get_provider()
-    items = []
-    items = _score_all(project, judge, cases, target)
+    items = _score_all(project, get_provider(), cases, target)
     mean = round(sum(i["score"] for i in items) / len(items), 1)
     checked = [i for i in items if i.get("exact") is not None]
     exact_rate = round(sum(1 for i in checked if i["exact"]) / len(checked), 2) if checked else None
@@ -948,13 +928,9 @@ def evaluate_model(ctx: Ctx, target: str = "current", reason: str = "") -> dict:
             "items": items,
             "at": now().isoformat(),
         }
-        st = studio_state(s, pid)
+    with studio(pid, "evals") as st:
         st.evals = (previous + [record])[-60:]  # the whole history: disk is not the constraint
-        flag_modified(st, "evals")
         st.stage = "evaluate"
-        s.add(st)
-        s.commit()
-    canvas_changed(pid)
     best = max(previous, key=lambda e: e["mean"], default=None)
     return {
         "target": record["target"],
@@ -1066,14 +1042,9 @@ def ask_user_to_compare(ctx: Ctx, prompts: list[str]) -> dict:
             }
         )
     identical = sum(1 for i in items if i["a"] == i["b"])
-    with Session(engine()) as s:
-        st = studio_state(s, pid)
+    with studio(pid, "comparisons") as st:
         st.comparisons = [dict(c) for c in st.comparisons if c.get("status") == "pending"] + items
-        flag_modified(st, "comparisons")
         st.stage = "evaluate"
-        s.add(st)
-        s.commit()
-    canvas_changed(pid)
     return {
         "queued": len(items),
         "identical_pairs": identical,
@@ -1209,15 +1180,7 @@ def build_dataset_from_examples(ctx: Ctx, max_seq_length: int = 1024) -> dict:
         project = s.get(Project, pid)
     v = build_feedback_version(pid, model_path=manage.serving_path(project), max_seq_length=max_seq_length)
     canvas_changed(pid)
-    return {
-        "status": "prepared",
-        "version_id": v.id,
-        "train": v.n_train,
-        "valid": v.n_valid,
-        "cleaning": (v.cleaning_report or {}).get("dropped"),
-        "tokens": {k: (v.token_stats or {}).get(k) for k in ("p50", "p95", "max", "estimated")},
-        "length": (v.cleaning_report or {}).get("length"),
-    }
+    return {"status": "prepared", **_version_brief(v)}
 
 
 JUDGE_SYSTEM = """You are an expert reviewer grading a small language model that is being fine-tuned
@@ -1268,10 +1231,9 @@ def ai_review_answers(ctx: Ctx, prompts: list[str], reason: str = "") -> dict:
         choice = v.get("choice", "tie")
         chosen = a if choice == "a" else b if choice == "b" else ""
         ideal = (v.get("ideal_answer") or "").strip()
-        # Only store the ideal answer as a correction when it differs from what the model said.
+        # Only store the ideal answer as a correction when it differs from what the model said
+        # (for both_bad nothing was chosen, so any ideal answer is a correction).
         edited = ideal if ideal and ideal != chosen.strip() else ""
-        if choice == "both_bad" and not edited:
-            edited = ideal or ""
         out = record_feedback(
             pid,
             prompt=q,
@@ -1300,14 +1262,9 @@ def ai_review_answers(ctx: Ctx, prompts: list[str], reason: str = "") -> dict:
                 "sft": out["sft_examples"],
             }
         )
-    with Session(engine()) as s:
-        st = studio_state(s, pid)
+    with studio(pid, "comparisons") as st:
         st.comparisons = [dict(c) for c in st.comparisons][-20:] + verdicts
-        flag_modified(st, "comparisons")
         st.stage = "refine"
-        s.add(st)
-        s.commit()
-    canvas_changed(pid)
     return {
         "reviewed": len(verdicts),
         "verdicts": dict(Counter(v["choice"] for v in verdicts)),
@@ -1322,13 +1279,8 @@ def finish_project(ctx: Ctx, summary: str) -> str:
     """Declare the work done, once the model is exported (or you've decided it can't get better).
     Stops autopilot until the user wants more: they can always keep improving the model later.
     summary: two or three sentences on what was built and how good it is."""
-    pid = ctx.context.project_id
-    with Session(engine()) as s:
-        st = studio_state(s, pid)
+    with studio(ctx.context.project_id) as st:
         st.completed, st.stage, st.note = True, "export", summary[:200]
-        s.add(st)
-        s.commit()
-    canvas_changed(pid)
     return "finished"
 
 

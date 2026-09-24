@@ -18,29 +18,23 @@ from slm.events import canvas_changed
 from slm.models import manage
 from slm.sessions import overview
 
-# Runs (model, sft, dpo, export) submit a job when confirmed. Spends (synthesize, review, import)
-# grant the Tuner one call of the tool it proposed; see tools._spend.
-ACTION_KINDS = ("model", "sft", "dpo", "export", "synthesize", "review", "import", "evaluate", "scout", "prep")
-SPEND_TOOL = {
-    "synthesize": "generate_synthetic_examples",
-    "review": "ai_review_answers",
-    "import": "import_dataset",
-    "evaluate": "evaluate_model",
-    "scout": "scout_datasets",
-    "prep": "plan_preparation",
+# Every kind of card: (the tool a confirmed spend grants one call of, or None for a run that
+# submits a job when confirmed; where the canvas goes once it starts). See tools._spend.
+KINDS = {
+    "model": (None, None),
+    "sft": (None, "train"),
+    "dpo": (None, "refine"),
+    "export": (None, "export"),
+    "synthesize": ("generate_synthetic_examples", "data"),
+    "review": ("ai_review_answers", "refine"),
+    "import": ("import_dataset", "data"),
+    "evaluate": ("evaluate_model", "evaluate"),
+    "scout": ("scout_datasets", "data"),
+    "prep": ("plan_preparation", "data"),
 }
-# Where the canvas goes once a confirmed action starts.
-STAGE = {
-    "sft": "train",
-    "dpo": "refine",
-    "export": "export",
-    "synthesize": "data",
-    "review": "refine",
-    "import": "data",
-    "evaluate": "evaluate",
-    "scout": "data",
-    "prep": "data",
-}
+ACTION_KINDS = tuple(KINDS)
+SPEND_TOOL = {kind: tool for kind, (tool, _) in KINDS.items() if tool}
+STAGE = {kind: stage for kind, (_, stage) in KINDS.items() if stage}
 STOPPED = "The user stopped this project. Don't start new work unless they ask you to."
 SWITCH_BASE = "Training has already started on another base model; start a new project to switch."
 

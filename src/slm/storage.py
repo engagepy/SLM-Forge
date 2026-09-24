@@ -273,6 +273,22 @@ def delete_export(project_id: int, job_id: int) -> dict:
     return {"job_id": job_id, "freed_gb": _gb(freed)}
 
 
+# What a project's history is made of (there are no foreign keys, so any order works).
+_HISTORY = (
+    Checkpoint, PreferencePair, SftExample, Feedback, DatasetVersion, Dataset, Proposal, AgentEvent, TunerMessage
+)  # fmt: skip
+
+
+def _wipe_history(s: Session, project_id: int, keep_job_ids: set[int] = frozenset()) -> None:
+    """Delete a project's rows of work: runs' metrics and jobs (except the kept ones), and everything
+    in _HISTORY. The project, its StudioState and its exports on disk are the caller's business."""
+    job_ids = [j.id for j in s.exec(select(Job).where(Job.project_id == project_id)).all() if j.id not in keep_job_ids]
+    s.exec(delete(Metric).where(Metric.job_id.in_(job_ids)))
+    for model in _HISTORY:
+        s.exec(delete(model).where(model.project_id == project_id))
+    s.exec(delete(Job).where(Job.id.in_(job_ids)))
+
+
 def reset_project(project_id: int, keep_export_job_ids: list[int]) -> dict:
     """Wipe a project's history but keep the project and the chosen exported models: runs, data,
     checkpoints, chat and Tuner memory go; the goal, system prompt, plan and test set stay, so the
@@ -290,13 +306,7 @@ def reset_project(project_id: int, keep_export_job_ids: list[int]) -> dict:
         export_paths, kept = [], []
         for j in export_jobs(s, project_id):
             (kept if j.id in keep else export_paths).append(j.result.get("path"))
-        kept_runs = {cfg_run for cfg_run in ()}  # export folders live under exports/, not runs/
-        job_ids = [j.id for j in s.exec(select(Job).where(Job.project_id == project_id)).all() if j.id not in keep]
-        s.exec(delete(Metric).where(Metric.job_id.in_(job_ids)))
-        for model in (Checkpoint, PreferencePair, SftExample, Feedback, DatasetVersion, Dataset, Proposal,
-                      AgentEvent, TunerMessage):  # fmt: skip
-            s.exec(delete(model).where(model.project_id == project_id))
-        s.exec(delete(Job).where(Job.id.in_(job_ids)))
+        _wipe_history(s, project_id, keep)
         st = s.get(StudioState, project_id)
         if st is not None:
             st.stage, st.note, st.comparisons, st.samples, st.evals = "goal", "", [], [], []
@@ -309,7 +319,6 @@ def reset_project(project_id: int, keep_export_job_ids: list[int]) -> dict:
 
     infer.unload()
     freed = sum(_rmtree(p) for paths in files.values() for p in paths) + sum(_rmtree(p) for p in export_paths)
-    del kept_runs
     tuner.forget(project_id)
     footprint(refresh=True)
     return {"project_id": project_id, "freed_gb": _gb(freed), "kept_exports": [Path(p).name for p in kept]}
@@ -328,11 +337,8 @@ def delete_project(project_id: int, keep_exports: bool = False) -> dict:
             raise LookupError(f"project {project_id} not found")
         files = _project_files(s, project_id)
         export_paths = [] if keep_exports else [j.result.get("path") for j in export_jobs(s, project_id)]
-        job_ids = list(s.exec(select(Job.id).where(Job.project_id == project_id)).all())
-        s.exec(delete(Metric).where(Metric.job_id.in_(job_ids)))
-        for model in (Checkpoint, PreferencePair, SftExample, Feedback, DatasetVersion, Dataset, Proposal,
-                      AgentEvent, TunerMessage, StudioState, Job):  # fmt: skip
-            s.exec(delete(model).where(model.project_id == project_id))
+        _wipe_history(s, project_id)
+        s.exec(delete(StudioState).where(StudioState.project_id == project_id))
         s.delete(project)
         s.commit()
     from slm.inference.engine import engine as infer
