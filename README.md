@@ -128,6 +128,11 @@ agents and the UI don't care which one is behind them.
   checkpoint on them with `evaluate_model` (GPT-6 grades each answer 0–10 against the goal). The
   scores sit on the Evaluate card, the export is the best-scoring checkpoint (`serve_checkpoint`
   rolls back if the latest run made things worse), and DPO isn't attempted under 30 pairs.
+- **A meter for the API key.** OpenAI's billing endpoints need an admin key, so the app meters
+  itself: every call's token counts are recorded per project and purpose (Tuner turns, writing
+  examples, review, scoring) and priced with `SLM_OPENAI_PRICE_INPUT` / `_CACHED` / `_OUTPUT`
+  (USD per 1M tokens; set them to your plan). The pill in the Studio bar shows this project's
+  spend; the sidebar shows all projects; `GET /api/usage` has the numbers.
 - **AI feedback instead of human clicks:** `ai_review_answers` has the local model answer each
   prompt twice, and GPT-6 picks the better answer, writes the ideal one and critiques the flaws.
   Each verdict becomes a DPO preference pair and, where the model was wrong, a corrected SFT

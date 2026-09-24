@@ -38,6 +38,14 @@ def system_status() -> dict:
     }
 
 
+@router.get("/usage")
+def api_usage(project_id: int | None = None) -> dict:
+    """The OpenAI meter: tokens and estimated cost for one project and all-time."""
+    from slm import usage
+
+    return usage.summary(project_id)
+
+
 @router.get("/models/search")
 def search_models(
     q: str = "", mlx_only: bool = True, max_params_b: float | None = None, include_too_big: bool = False

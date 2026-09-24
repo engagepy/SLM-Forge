@@ -18,7 +18,7 @@ from agents import RunContextWrapper, function_tool
 from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, select
 
-from slm import hardware, profile
+from slm import hardware, profile, usage
 from slm.agents.provider import get_provider
 from slm.data import format as fmt
 from slm.data import scout_tools
@@ -767,16 +767,8 @@ def evaluate_model(ctx: Ctx, target: str = "current", reason: str = "") -> dict:
         return proposal
     judge = get_provider()
     items = []
-    for q in questions:
-        answer = _generate(project, q, 0.3, 300, target)["text"]
-        v = judge.json(
-            SCORE_SYSTEM,
-            f"Goal: {project.goal}\nSystem prompt: {project.system_prompt or '(none)'}\n\n"
-            f"Question: {q}\n\nAnswer:\n{answer}",
-            SCORE_SCHEMA,
-        )
-        score = max(0, min(10, int(v.get("score", 0))))
-        items.append({"prompt": q, "answer": answer, "score": score, "reason": (v.get("reason") or "")[:300]})
+    with usage.scope(pid, "evaluate"):
+        items = _score_all(project, judge, questions, target)
     mean = round(sum(i["score"] for i in items) / len(items), 1)
     with Session(engine()) as s:
         project = s.get(Project, pid)
@@ -810,6 +802,21 @@ def evaluate_model(ctx: Ctx, target: str = "current", reason: str = "") -> dict:
         "previous_best": {k: best[k] for k in ("target", "checkpoint_id", "mean")} if best else None,
         "note": "Compare with the base score and the previous best; export the best-scoring checkpoint.",
     }
+
+
+def _score_all(project: Project, judge, questions: list[str], target: str) -> list[dict]:
+    items = []
+    for q in questions:
+        answer = _generate(project, q, 0.3, 300, target)["text"]
+        v = judge.json(
+            SCORE_SYSTEM,
+            f"Goal: {project.goal}\nSystem prompt: {project.system_prompt or '(none)'}\n\n"
+            f"Question: {q}\n\nAnswer:\n{answer}",
+            SCORE_SCHEMA,
+        )
+        score = max(0, min(10, int(v.get("score", 0))))
+        items.append({"prompt": q, "answer": answer, "score": score, "reason": (v.get("reason") or "")[:300]})
+    return items
 
 
 @tool
@@ -1052,6 +1059,8 @@ def ai_review_answers(ctx: Ctx, prompts: list[str], reason: str = "") -> dict:
         project = s.get(Project, pid)
     judge = get_provider()
     verdicts = []
+    scope = usage.scope(pid, "review")
+    scope.__enter__()
     for q in prompts[:12]:
         a, b = _two_answers(project, q, 350)
         v = judge.json(
@@ -1095,6 +1104,7 @@ def ai_review_answers(ctx: Ctx, prompts: list[str], reason: str = "") -> dict:
                 "sft": out["sft_examples"],
             }
         )
+    scope.__exit__(None, None, None)
     with Session(engine()) as s:
         st = studio_state(s, pid)
         st.comparisons = [dict(c) for c in st.comparisons][-20:] + verdicts

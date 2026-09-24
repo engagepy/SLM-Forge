@@ -11,6 +11,7 @@ Prompts that match held-out eval prompts are dropped to prevent contamination.
 
 from sqlmodel import Session, select
 
+from slm import usage
 from slm.agents.base import eval_prompts, event_logger, normalise, project_context
 from slm.agents.provider import get_provider
 from slm.db import Feedback, PreferencePair, Project, SftExample, engine
@@ -117,6 +118,15 @@ def run(
 
     with Session(engine()) as s:
         project = s.get(Project, project_id)
+    with usage.scope(project_id, "synthesize"):
+        return _generate_all(
+            project_id, project, provider, ctx, on_event, blocked, feedback, kind, count, focus, on_policy
+        )
+
+
+def _generate_all(
+    project_id, project, provider, ctx, on_event, blocked, feedback, kind, count, focus, on_policy
+) -> dict:
 
     stats = {
         "requested": count,

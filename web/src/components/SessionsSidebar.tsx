@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link, NavLink, useMatch } from "react-router";
 
 import { api } from "../api";
+import UsageMeter from "./UsageMeter";
 import { IDLE_POLL_MS } from "../hooks";
 import { Badge, cx, Spinner } from "../ui";
 
@@ -237,6 +238,7 @@ function MachinePanel({ c }: { c: Sessions["capacity"] }) {
           · {c.memory_gb.toFixed(0)} GB · {c.gpu_slots} training at a time
         </span>
       </div>
+      <UsageMeter className="mt-2" />
       {run ? (
         <div className="mt-1.5">
           <span className="text-info">● </span>

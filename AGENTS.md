@@ -80,6 +80,8 @@ src/slm/
   hardware.py      chip/RAM detect, memory estimators, max_params_for_budget
   sessions.py      machine-wide overview (capacity + per-project state), stop_project, resume_project
   profile.py       user level + notes, prompt_section() injected into Tuner instructions
+  usage.py         OpenAI meter: every call's tokens → ApiUsage rows, priced by SLM_OPENAI_PRICE_*;
+                   usage.scope(project, purpose) attributes calls; GET /api/usage
   feedback.py      record_feedback → preference pairs + SFT examples (used by API and AI judge)
   models/          hub.py (search, fit verdict), manage.py (download local-first, HF cache scan)
   data/            scout_tools (HF search/preview/import), format (column mapping), clean,

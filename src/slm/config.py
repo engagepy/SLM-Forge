@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     agent_provider: Literal["openai", "claude", "ollama"] = "openai"
     openai_model: str = "gpt-6-luna"  # all agentic work: the Tuner and the helper agents
     openai_tracing: bool = True  # send agent traces to the OpenAI dashboard
+    # USD per million tokens, for the usage meter (SLM_OPENAI_PRICE_INPUT etc.). Unset: usage.DEFAULT_PRICES.
+    openai_price_input: float | None = None
+    openai_price_cached: float | None = None
+    openai_price_output: float | None = None
     claude_model: str = "claude-opus-5"
     ollama_model: str = "qwen2.5:7b-instruct"
     ollama_url: str = "http://localhost:11434"

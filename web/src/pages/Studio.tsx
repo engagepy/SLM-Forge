@@ -19,6 +19,7 @@ import {
 import { MetricChart } from "../components/Charts";
 import JobLog from "../components/JobLog";
 import Markdown from "../components/Markdown";
+import UsageMeter from "../components/UsageMeter";
 import { runProgress, useLiveJob, useStudio, useSystem } from "../hooks";
 import { Badge, Button, CodeBlock, cx, ErrorNote, MemoryBar, ProgressBar, Spinner, StatusBadge, TextArea } from "../ui";
 
@@ -154,6 +155,7 @@ function TopBar({ snapshot }: { snapshot?: Snapshot }) {
           <Badge>GPU idle</Badge>
         )}
         {sys && !sys.agents.key_configured && <Badge tone="warn">set {sys.agents.key_env} in .env</Badge>}
+        {snapshot && <UsageMeter projectId={snapshot.project.id} />}
         {snapshot && (
           <button
             onClick={() => toggle.mutate(!snapshot.autopilot)}

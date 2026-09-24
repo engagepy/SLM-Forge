@@ -208,6 +208,21 @@ class StudioState(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=now)
 
 
+class ApiUsage(SQLModel, table=True):
+    """One OpenAI call (or one agent run): the tokens it used and what that cost. See usage.py."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int | None = Field(default=None, index=True)
+    model: str = ""
+    purpose: str = "other"  # tuner | synthesize | review | evaluate | agents | other
+    requests: int = 1
+    input_tokens: int = 0
+    cached_input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+    at: datetime = Field(default_factory=now)
+
+
 class UserProfile(SQLModel, table=True):
     """What the Tuner has learned about the person using this Mac, across all their projects."""
 

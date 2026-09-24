@@ -17,6 +17,7 @@ from agents import Runner, SQLiteSession
 from agents.exceptions import MaxTurnsExceeded
 from sqlmodel import Session, select
 
+from slm import usage
 from slm.agents.provider import OpenAIProvider
 from slm.config import get_settings
 from slm.db import (
@@ -189,6 +190,7 @@ class Tuner:
                         _publish(pid, {"type": "message", "message": m.model_dump(mode="json")})
                     _publish(pid, {"type": "tool_end", "output": output[:500]})
             flush()
+            _record_usage(pid, result)
         except MaxTurnsExceeded:
             flush()
             save_message(pid, "event", "The Tuner paused after many steps. Say “continue” to carry on.")
@@ -201,6 +203,18 @@ class Tuner:
             self._runs.pop(pid, None)
             _publish(pid, {"type": "turn_end"})
             canvas_changed(pid)
+
+
+def _record_usage(pid: int, result) -> None:
+    """Meter the turn: the Agents SDK totals every model call of the run."""
+    u = getattr(getattr(result, "context_wrapper", None), "usage", None)
+    if u is None or not getattr(u, "requests", 0):
+        return
+    cached = getattr(getattr(u, "input_tokens_details", None), "cached_tokens", 0) or 0
+    usage.record(
+        get_settings().openai_model, u.input_tokens, u.output_tokens,
+        cached_tokens=cached, requests=u.requests, project_id=pid, purpose="tuner",
+    )  # fmt: skip
 
 
 tuner = Tuner()
