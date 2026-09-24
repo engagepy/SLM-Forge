@@ -80,7 +80,9 @@ src/slm/
   hardware.py      chip/RAM detect, memory estimators, max_params_for_budget
   sessions.py      machine-wide overview (capacity + per-project state), stop_project, resume_project
   profile.py       user level + notes, prompt_section() injected into Tuner instructions
-  storage.py       disk footprint (workspace parts + downloaded models), cached a minute; in /api/system
+  storage.py       disk footprint (workspace parts + downloaded models), cached a minute; in /api/system.
+                   inventory(); remove_model / delete_export / delete_project (files + rows + Tuner
+                   memory; models stay unless removed explicitly); each returns freed_gb
   usage.py         spend meter: OpenAI Costs API (needs OPENAI_ADMIN_KEY), narrowed to the key's own
                    project (detected via the admin key list; OPENAI_PROJECT_ID overrides), 10-minute
                    cache, never raises; GET /api/usage

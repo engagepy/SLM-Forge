@@ -42,6 +42,7 @@ class ModelRecord(SQLModel, table=True):
     bits: float = 16
     size_gb: float = 0
     config: dict = json_field()
+    origin: str = "downloaded"  # downloaded (by this app) | cache (was already on the Mac when registered)
     downloaded_at: datetime = Field(default_factory=now)
 
 

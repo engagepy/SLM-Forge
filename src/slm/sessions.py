@@ -49,7 +49,7 @@ def export_jobs(s: Session, project_id: int | None = None) -> list[Job]:
     q = select(Job).where(Job.kind == "export", Job.status == "succeeded")
     if project_id is not None:
         q = q.where(Job.project_id == project_id)
-    return list(s.exec(q.order_by(Job.id.desc())).all())
+    return [j for j in s.exec(q.order_by(Job.id.desc())).all() if not (j.result or {}).get("deleted")]
 
 
 def on_disk(job: Job) -> bool:

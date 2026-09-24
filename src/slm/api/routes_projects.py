@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from slm import hardware
+from slm import hardware, storage
 from slm.agents.base import set_proposal_status
 from slm.api.common import SessionDep, get_or_404, project_or_404
 from slm.config import get_settings
@@ -312,6 +312,23 @@ def export_model(project_id: int, body: ExportIn, s: Session = SessionDep) -> di
     if body.quantize_bits not in (None, 3, 4, 6, 8):
         raise HTTPException(422, "quantize_bits must be 3, 4, 6 or 8")
     return {"job_id": worker.submit("export", body.model_dump(), project_id).id}
+
+
+@router.delete("/{project_id}")
+def delete_project(project_id: int, keep_exports: bool = False, s: Session = SessionDep) -> dict:
+    """Remove the project, its runs, data, chat and memory; its exported models too unless kept."""
+    project_or_404(s, project_id)
+    s.close()
+    return storage.delete_project(project_id, keep_exports=keep_exports)
+
+
+@router.delete("/{project_id}/exports/{job_id}")
+def delete_export(project_id: int, job_id: int, s: Session = SessionDep) -> dict:
+    project_or_404(s, project_id)
+    try:
+        return storage.delete_export(project_id, job_id)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from e
 
 
 @router.get("/{project_id}/exports")

@@ -51,9 +51,11 @@ function DiskMeter({ disk }: { disk: SystemStatus["disk"] }) {
             ))}
           </ul>
           <p className="mt-2 border-t border-line pt-2 text-[11px] leading-relaxed break-all whitespace-normal text-faint">
-            {fmt.gb(disk.disk_free_gb)} free of {fmt.gb(disk.disk_total_gb)} on this disk. Workspace: {disk.workspace}. Models live in the
-            Hugging Face cache and are shared between projects.
+            {fmt.gb(disk.disk_free_gb)} free of {fmt.gb(disk.disk_total_gb)} on this disk. Workspace: {disk.workspace}
           </p>
+          <Link to="/storage" className="mt-2 block text-[12px] font-medium text-accent hover:underline" onClick={() => setOpen(false)}>
+            Manage storage →
+          </Link>
         </div>
       )}
     </div>

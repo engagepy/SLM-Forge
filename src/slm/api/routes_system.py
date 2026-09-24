@@ -39,6 +39,23 @@ def system_status() -> dict:
     }
 
 
+@router.get("/storage")
+def storage_inventory() -> dict:
+    """What the app keeps on this Mac, item by item, with sizes."""
+    return storage.inventory()
+
+
+@router.delete("/models/{repo_id:path}")
+def remove_model(repo_id: str) -> dict:
+    """Delete a downloaded base model from the Hugging Face cache (refused while a project uses it)."""
+    try:
+        return storage.remove_model(repo_id)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+
+
 @router.get("/usage")
 def api_usage(refresh: bool = False) -> dict:
     """What the OpenAI account has spent, from OpenAI's Costs API (needs OPENAI_ADMIN_KEY)."""

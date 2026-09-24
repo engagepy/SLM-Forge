@@ -963,6 +963,9 @@ function Console({ messages, activeJob }: { messages: TunerMessage[]; activeJob?
   useEffect(() => {
     if (activeJob) setTab("job");
   }, [activeJob?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Training runs: how far along, as done/total iterations, right on the tab.
+  const training = activeJob && (activeJob.kind === "sft" || activeJob.kind === "dpo") ? runProgress(live) : null;
+  const steps = training && training.total ? `${training.current}/${training.total}` : null;
 
   const agentLines = messages
     .filter((m) => m.role === "tool")
@@ -986,6 +989,7 @@ function Console({ messages, activeJob }: { messages: TunerMessage[]; activeJob?
             className={cx("rounded-md px-2 py-0.5 text-[11px] font-medium", tab === t && open ? "bg-panel-2 text-fg" : "text-faint hover:text-fg")}
           >
             {t === "agent" ? "Agent activity" : activeJob ? `Job ${activeJob.id} output` : "Job output"}
+            {t === "job" && steps && <span className="num ml-1.5 text-faint">{steps} iterations</span>}
           </button>
         ))}
         {activeJob && <span className="size-1.5 animate-pulse rounded-full bg-info" />}

@@ -33,6 +33,7 @@ def dir_size_gb(path: Path) -> float:
 
 def download(repo_id: str, log=print, local_only: bool = False) -> ModelRecord:
     """Register a model, downloading it into the shared HF cache only if it isn't there yet."""
+    origin = "cache"
     try:
         local = Path(snapshot_download(repo_id, allow_patterns=ALLOW_PATTERNS, local_files_only=True))
         log(f"{repo_id} is already on this Mac; no download needed.")
@@ -41,6 +42,7 @@ def download(repo_id: str, log=print, local_only: bool = False) -> ModelRecord:
             raise
         log(f"Downloading {repo_id} ...")
         local = Path(snapshot_download(repo_id, allow_patterns=ALLOW_PATTERNS))
+        origin = "downloaded"
     with open(local / "config.json") as f:
         config = json.load(f)
     shape = hardware.ModelShape.from_config(config)
@@ -50,7 +52,7 @@ def download(repo_id: str, log=print, local_only: bool = False) -> ModelRecord:
     with Session(engine()) as s:
         rec = s.exec(select(ModelRecord).where(ModelRecord.repo_id == repo_id)).first()
         if rec is None:
-            rec = ModelRecord(repo_id=repo_id, local_path=str(local))
+            rec = ModelRecord(repo_id=repo_id, local_path=str(local), origin=origin)
         rec.local_path = str(local)
         rec.params = shape.params
         rec.bits = shape.bits

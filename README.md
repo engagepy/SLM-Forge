@@ -131,6 +131,10 @@ agents and the UI don't care which one is behind them.
 - **A metrics strip above every project:** the Mac and its ML budget, the GPU, how much disk the app
   occupies (datasets, runs, exports, uploads, databases and the downloaded models, with free space),
   and the OpenAI spend below.
+- **Storage & cleanup** (`/storage`, from the Disk pill or the sidebar): every base model the app
+  downloaded (and which projects use it), every project with the size of its runs, data and
+  exported models. Remove a model, delete an export, or delete a project (keeping its exports if
+  you like); each shows the space it freed and the meter updates at once.
 - **A spend meter, read from OpenAI.** The pill in the Studio bar and the sidebar shows what the
   OpenAI account has spent today and this month, straight from OpenAI's Costs API (no token
   counting). It needs an organisation admin key in `.env` (`OPENAI_ADMIN_KEY`; the project key

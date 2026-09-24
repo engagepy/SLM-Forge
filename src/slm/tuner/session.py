@@ -109,6 +109,17 @@ class Tuner:
                 threading.Thread(target=self._loop.run_forever, daemon=True, name="tuner-loop").start()
             return self._loop
 
+    def forget(self, pid: int) -> None:
+        """Drop a deleted project's in-memory state and its SDK memory."""
+        with self._lock:
+            self._busy.discard(pid)
+            self._pending.pop(pid, None)
+            self._halted.discard(pid)
+        _last_signature.pop(pid, None)
+        db = get_settings().workspace / "tuner_sessions.db"
+        if db.exists():
+            asyncio.run(SQLiteSession(f"project-{pid}", db).clear_session())
+
     def shutdown(self) -> None:
         """Stop every turn and let tool threads finish: the server is going down."""
         shutting_down.set()

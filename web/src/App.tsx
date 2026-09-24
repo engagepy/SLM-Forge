@@ -19,6 +19,7 @@ const Playground = lazy(() => import("./pages/Playground"));
 const Studio = lazy(() => import("./pages/Studio"));
 const TrainPage = lazy(() => import("./pages/Train"));
 const TryModel = lazy(() => import("./pages/TryModel"));
+const StoragePage = lazy(() => import("./pages/Storage"));
 
 export default function App() {
   useJobsFeed();
@@ -28,6 +29,7 @@ export default function App() {
         {/* Home and the Studio share the sessions sidebar, so running work is always visible. */}
         <Route path="/" element={<WithSessions><Home /></WithSessions>} />
         <Route path="/p/:projectId" element={<WithSessions><Studio /></WithSessions>} />
+        <Route path="/storage" element={<WithSessions><StoragePage /></WithSessions>} />
         {/* The finished, exported model: where a project ends up. */}
         <Route path="/p/:projectId/try" element={<WithSessions><TryModel /></WithSessions>} />
         <Route path="/p/:projectId/*" element={<AdvancedLayout />} />

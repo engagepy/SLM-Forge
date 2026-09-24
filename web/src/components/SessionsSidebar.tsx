@@ -239,6 +239,9 @@ function MachinePanel({ c }: { c: Sessions["capacity"] }) {
         </span>
       </div>
       <UsageMeter className="mt-2" />
+      <Link to="/storage" className="mt-2 block text-[12px] text-muted hover:text-fg">
+        Storage & cleanup →
+      </Link>
       {run ? (
         <div className="mt-1.5">
           <span className="text-info">● </span>
