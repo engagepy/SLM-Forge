@@ -16,7 +16,7 @@ const Home = lazy(() => import("./pages/Home"));
 const ModelPage = lazy(() => import("./pages/Model"));
 const OverviewPage = lazy(() => import("./pages/Overview"));
 const Playground = lazy(() => import("./pages/Playground"));
-const Studio = lazy(() => import("./pages/Studio"));
+const Studio = lazy(() => import("./pages/studio/index"));
 const TrainPage = lazy(() => import("./pages/Train"));
 const TryModel = lazy(() => import("./pages/TryModel"));
 const StoragePage = lazy(() => import("./pages/Storage"));

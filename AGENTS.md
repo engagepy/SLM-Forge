@@ -113,7 +113,8 @@ src/slm/
   api/             app.py (lifespan starts worker), routes_* (projects, studio, feedback, agents, system)
 web/src/
   App.tsx          routes; / and /p/:id wrapped in SessionsSidebar; /p/:id/* = AdvancedLayout
-  pages/Studio.tsx the Studio (chat, confirm card, canvas, console); pages/TryModel.tsx (chat
+  pages/studio/    the Studio: index (page), Chat, ConfirmCard, Canvas, stages, Evaluate, Console, bits
+                   (shared bits); pages/TryModel.tsx (chat
                    with an export); pages/Home.tsx; other pages = Advanced
   components/      SessionsSidebar, ProfilePanel, Markdown (safe renderer), Charts, JobLog, …
   hooks.ts, ui.tsx, api.ts
