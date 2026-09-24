@@ -39,11 +39,11 @@ def system_status() -> dict:
 
 
 @router.get("/usage")
-def api_usage(project_id: int | None = None) -> dict:
-    """The OpenAI meter: tokens and estimated cost for one project and all-time."""
+def api_usage(refresh: bool = False) -> dict:
+    """What the OpenAI account has spent, from OpenAI's Costs API (needs OPENAI_ADMIN_KEY)."""
     from slm import usage
 
-    return usage.summary(project_id)
+    return usage.spend(refresh=refresh)
 
 
 @router.get("/models/search")

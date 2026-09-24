@@ -75,6 +75,10 @@ def _read(now: datetime) -> dict:
     }
 
 
+def _stamp() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
 def spend(refresh: bool = False) -> dict:
     """The meter's reading, cached for CACHE_SECONDS. Never raises: errors are part of the reading."""
     s = get_settings()
@@ -92,11 +96,8 @@ def spend(refresh: bool = False) -> dict:
         if not refresh and fresh and "reading" in _cache:
             return out | _cache["reading"]
         try:
-            reading = _read(datetime.now(UTC)) | {
-                "as_of": datetime.now(UTC).isoformat(timespec="seconds"),
-                "error": None,
-            }
+            reading = _read(datetime.now(UTC)) | {"as_of": _stamp(), "error": None}
         except Exception as e:  # a bad key, no scope, network: the UI shows why
-            reading = {"error": str(e)[:300], "as_of": datetime.now(UTC).isoformat(timespec="seconds")}
+            reading = {"error": str(e)[:300], "as_of": _stamp()}
         _cache.update(at=time.time(), reading=reading)
         return out | reading

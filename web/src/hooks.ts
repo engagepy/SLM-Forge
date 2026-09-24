@@ -77,10 +77,6 @@ export function useJobsFeed() {
         qc.invalidateQueries({ queryKey: ["sessions"] });
         return;
       }
-      if (type === "usage") {
-        qc.invalidateQueries({ queryKey: ["usage"] });
-        return;
-      }
       qc.invalidateQueries({ queryKey: ["jobs"] });
       qc.invalidateQueries({ queryKey: ["system"] });
       qc.invalidateQueries({ queryKey: ["sessions"] });
@@ -93,7 +89,7 @@ export function useJobsFeed() {
         }
       }
     },
-    ["status", "tuner", "usage"],
+    ["status", "tuner"],
   );
 }
 
