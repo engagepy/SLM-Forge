@@ -131,7 +131,28 @@ def prepare_dataset_job(ctx: JobContext) -> None:
     ctx.note(f"Splits: train={version.n_train} valid={version.n_valid} test={version.n_test}")
     if version.token_stats:
         ctx.note(f"Tokens: {version.token_stats}")
-    ctx.result = {"dataset_version_id": version.id}
+    ctx.result = {
+        "dataset_version_id": version.id,
+        "n_train": version.n_train,
+        "kept": version.cleaning_report.get("kept"),
+        "input_rows": version.cleaning_report.get("input_rows"),
+    }
+    # A pending DataPrep suggestion for this dataset has now been acted on; close it so the
+    # UI doesn't keep offering it. (Approving it directly already marks it executed.)
+    from slm.agents.base import set_proposal_status
+    from slm.db import Proposal
+
+    with Session(engine()) as s:
+        stale = s.exec(
+            select(Proposal).where(
+                Proposal.project_id == ds.project_id,
+                Proposal.action == "prepare_dataset",
+                Proposal.status == "pending",
+            )
+        ).all()
+        stale_ids = [p.id for p in stale if p.payload.get("dataset_id") == ds.id]
+    for pid in stale_ids:
+        set_proposal_status(pid, "executed", {"dataset_version_id": version.id, "via": "manual prepare"})
 
 
 # ── GPU lane ────────────────────────────────────────────────────────────────

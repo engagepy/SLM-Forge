@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # Agent LLM provider. OpenAI is the default; Claude and a local Ollama model also work.
     agent_provider: Literal["openai", "claude", "ollama"] = "openai"
-    openai_model: str | None = None  # None = the OpenAI Agents SDK's default model
+    openai_model: str = "gpt-6-luna"  # all agentic work: the Tuner and the helper agents
     openai_tracing: bool = True  # send agent traces to the OpenAI dashboard
     claude_model: str = "claude-opus-5"
     ollama_model: str = "qwen2.5:7b-instruct"

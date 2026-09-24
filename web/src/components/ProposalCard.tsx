@@ -98,7 +98,7 @@ export default function ProposalCard({ p, projectId }: { p: Proposal; projectId:
 
       {Array.isArray(pl.preview) && pl.preview.length > 0 && (
         <Collapsible title={`Preview ${pl.preview.length} mapped records`}>
-          <pre className="max-h-56 overflow-auto font-mono text-[11px] text-muted">{JSON.stringify(pl.preview, null, 2)}</pre>
+          <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-muted">{JSON.stringify(pl.preview, null, 2)}</pre>
         </Collapsible>
       )}
 

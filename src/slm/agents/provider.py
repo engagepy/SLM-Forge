@@ -177,13 +177,12 @@ class OpenAIProvider:
 
     def __init__(self, model: str | None = None) -> None:
         import agents
-        from agents.models import get_default_model
         from openai import OpenAI
 
         settings = get_settings()
         if not settings.openai_api_key:
             raise ProviderError("No OpenAI API key. Set OPENAI_API_KEY in .env.")
-        self.model = model or settings.openai_model or get_default_model()
+        self.model = model or settings.openai_model
         self.client = OpenAI(api_key=settings.openai_api_key)
         agents.set_default_openai_key(settings.openai_api_key, use_for_tracing=settings.openai_tracing)
         agents.set_tracing_disabled(not settings.openai_tracing)

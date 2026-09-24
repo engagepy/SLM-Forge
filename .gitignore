@@ -8,3 +8,4 @@ web/dist/
 .DS_Store
 .ruff_cache/
 .pytest_cache/
+*.tsbuildinfo

@@ -30,15 +30,21 @@ def dir_size_gb(path: Path) -> float:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / hardware.GB
 
 
-def download(repo_id: str, log=print) -> ModelRecord:
-    """Download a model into the shared HF cache and register it."""
-    log(f"Downloading {repo_id} ...")
-    local = Path(snapshot_download(repo_id, allow_patterns=ALLOW_PATTERNS))
+def download(repo_id: str, log=print, local_only: bool = False) -> ModelRecord:
+    """Register a model, downloading it into the shared HF cache only if it isn't there yet."""
+    try:
+        local = Path(snapshot_download(repo_id, allow_patterns=ALLOW_PATTERNS, local_files_only=True))
+        log(f"{repo_id} is already on this Mac; no download needed.")
+    except Exception:
+        if local_only:
+            raise
+        log(f"Downloading {repo_id} ...")
+        local = Path(snapshot_download(repo_id, allow_patterns=ALLOW_PATTERNS))
     with open(local / "config.json") as f:
         config = json.load(f)
     shape = hardware.ModelShape.from_config(config)
     size = dir_size_gb(local)
-    log(f"Downloaded to {local} ({size:.2f} GB, ~{shape.params / 1e9:.2f}B params)")
+    log(f"Ready at {local} ({size:.2f} GB, ~{shape.params / 1e9:.2f}B params)")
 
     with Session(engine()) as s:
         rec = s.exec(select(ModelRecord).where(ModelRecord.repo_id == repo_id)).first()
@@ -59,3 +65,55 @@ def local_path_for(repo_id: str) -> str | None:
     with Session(engine()) as s:
         rec = s.exec(select(ModelRecord).where(ModelRecord.repo_id == repo_id)).first()
         return rec.local_path if rec else None
+
+
+def local_models() -> list[dict]:
+    """Chat/text-generation models already in the Hugging Face cache that MLX can train.
+
+    Vision-language, speech and embedding models are skipped, as are incomplete snapshots."""
+    from huggingface_hub import scan_cache_dir
+
+    out = []
+    try:
+        repos = scan_cache_dir().repos
+    except Exception:  # no cache yet
+        return out
+    budget = hardware.detect().budget_gb
+    for repo in repos:
+        if repo.repo_type != "model" or not repo.revisions:
+            continue
+        snap = max(repo.revisions, key=lambda r: r.last_modified).snapshot_path
+        cfg_path = snap / "config.json"
+        if not cfg_path.exists() or not any(snap.glob("*.safetensors")):
+            continue
+        try:
+            cfg = json.loads(cfg_path.read_text())
+            archs = cfg.get("architectures") or []
+            if "vision_config" in cfg or not any(a.endswith("ForCausalLM") for a in archs):
+                continue
+            shape = hardware.ModelShape.from_config(cfg)
+        except Exception:
+            continue
+        from slm.models.hub import fit_verdict, rough_training_gb
+
+        train_gb = rough_training_gb(shape.params, shape.bits)
+        out.append(
+            {
+                "repo_id": repo.repo_id,
+                "path": str(snap),
+                "params_b": round(shape.params / 1e9, 2),
+                "bits": shape.bits,
+                "size_gb": round(repo.size_on_disk / 1e9, 2),
+                "train_memory_gb": round(train_gb, 2),
+                "fit": fit_verdict(train_gb, budget),
+            }
+        )
+    return sorted(out, key=lambda m: m["params_b"])
+
+
+def register_local(repo_id: str) -> ModelRecord | None:
+    """Register a model that's already in the HF cache, without touching the network."""
+    try:
+        return download(repo_id, log=lambda _: None, local_only=True)
+    except Exception:
+        return None

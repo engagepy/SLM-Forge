@@ -8,6 +8,7 @@ from starlette.concurrency import iterate_in_threadpool
 
 from slm.api.common import SessionDep, get_or_404, project_or_404, sse
 from slm.db import Checkpoint, Feedback, PreferencePair, Project, SftExample
+from slm.feedback import record_feedback
 from slm.inference.engine import EngineBusy, SamplingParams
 from slm.inference.engine import engine as infer
 from slm.models import manage
@@ -106,56 +107,11 @@ class FeedbackIn(BaseModel):
 
 @router.post("/feedback")
 def submit_feedback(project_id: int, body: FeedbackIn, s: Session = SessionDep) -> dict:
-    """Record a judgement and derive training signal from it.
-
-    - a/b picked → preference pair (picked vs other)
-    - edited answer → SFT example, plus pairs of (edit vs each candidate the human didn't pick)
-    - tie with no edit → no training signal, just context for the Observer
-    """
     project_or_404(s, project_id)
-    if body.choice not in ("a", "b", "tie", "both_bad"):
-        raise HTTPException(422, "choice must be a, b, tie or both_bad")
-    if body.choice == "both_bad" and not body.edited_answer.strip() and not body.critique.strip():
-        raise HTTPException(422, "When both are bad, write a better answer or a critique")
-    fb = Feedback(project_id=project_id, **body.model_dump())
-    s.add(fb)
-    s.commit()
-    s.refresh(fb)
-
-    pairs, sft = 0, 0
-    cands = {"a": body.candidate_a, "b": body.candidate_b}
-    edited = body.edited_answer.strip()
-
-    def pair(chosen: str, rejected: str) -> None:
-        nonlocal pairs
-        if chosen.strip() and rejected.strip() and chosen.strip() != rejected.strip():
-            s.add(
-                PreferencePair(
-                    project_id=project_id,
-                    prompt=body.prompt,
-                    system=body.system,
-                    chosen=chosen,
-                    rejected=rejected,
-                    source="human",
-                    feedback_id=fb.id,
-                )
-            )
-            pairs += 1
-
-    if edited:
-        rejected_side = [k for k in cands if k != body.choice] if body.choice in ("a", "b") else list(cands)
-        for k in rejected_side:
-            pair(edited, cands[k])
-        msgs = [{"role": "user", "content": body.prompt}, {"role": "assistant", "content": edited}]
-        if body.system:
-            msgs.insert(0, {"role": "system", "content": body.system})
-        s.add(SftExample(project_id=project_id, messages=msgs, source="feedback", feedback_id=fb.id))
-        sft += 1
-    elif body.choice in ("a", "b"):
-        other = "b" if body.choice == "a" else "a"
-        pair(cands[body.choice], cands[other])
-    s.commit()
-    return {"feedback_id": fb.id, "preference_pairs": pairs, "sft_examples": sft}
+    try:
+        return record_feedback(project_id, **body.model_dump())
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @router.get("/feedback")

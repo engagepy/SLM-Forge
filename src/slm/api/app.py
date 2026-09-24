@@ -10,11 +10,12 @@ from fastapi.staticfiles import StaticFiles
 
 from slm import __version__
 from slm.agents import actions  # noqa: F401  (registers agent job handlers)
-from slm.api import routes_agents, routes_feedback, routes_projects, routes_system
+from slm.api import routes_agents, routes_feedback, routes_projects, routes_studio, routes_system
 from slm.config import PROJECT_ROOT
 from slm.db import engine
 from slm.train import jobs  # noqa: F401  (registers training job handlers)
 from slm.train.worker import worker
+from slm.tuner.session import on_job_finished
 
 WEB_DIST = PROJECT_ROOT / "web" / "dist"
 
@@ -22,6 +23,7 @@ WEB_DIST = PROJECT_ROOT / "web" / "dist"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     engine()  # create tables
+    worker.on_finish(on_job_finished)  # finished long jobs wake the Tuner
     worker.start()
     yield
 
@@ -35,8 +37,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    for r in (routes_system, routes_projects, routes_feedback, routes_agents):
+    for r in (routes_system, routes_projects, routes_feedback, routes_agents, routes_studio):
         app.include_router(r.router)
+    app.include_router(routes_studio.sessions_router)
 
     if WEB_DIST.exists():
         app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")

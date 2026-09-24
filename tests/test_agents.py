@@ -212,3 +212,37 @@ def test_approving_synthesis_submits_a_job_and_rejection_is_final(session, proje
     assert job.kind == "synthesize" and job.config["proposal_id"] == prop.id
     with pytest.raises(ValueError):
         actions.execute(prop.id)  # already approved
+
+
+def test_manual_prepare_closes_pending_dataprep_suggestion(session, project, tmp_path, monkeypatch):
+    from slm.agents.base import create_proposal
+    from slm.train import jobs
+    from slm.train.worker import JobContext
+
+    raw = tmp_path / "raw.jsonl"
+    raw.write_text("\n".join(json.dumps({"q": f"question {i}", "a": f"answer number {i}"}) for i in range(8)))
+    ds = Dataset(project_id=project.id, name="qa", source="upload", raw_path=str(raw), columns=["q", "a"])
+    session.add(ds)
+    session.commit()
+    prop = create_proposal(
+        project.id, "prep", "prepare_dataset", "Prepare qa", "", {"dataset_id": ds.id, "mapping": {}}
+    )
+    other = create_proposal(
+        project.id, "prep", "prepare_dataset", "Prepare other", "", {"dataset_id": 999, "mapping": {}}
+    )
+
+    job = Job(
+        project_id=project.id,
+        kind="prepare_dataset",
+        config={"dataset_id": ds.id, "mapping": {"format": "instruction", "prompt": "q", "response": "a"}},
+    )
+    session.add(job)
+    session.commit()
+    ctx = JobContext(job, worker=None)
+    jobs.prepare_dataset_job(ctx)
+
+    session.expire_all()
+    assert session.get(Proposal, prop.id).status == "executed"
+    assert session.get(Proposal, prop.id).result["dataset_version_id"] == ctx.result["dataset_version_id"]
+    assert session.get(Proposal, other.id).status == "pending"  # other datasets untouched
+    assert ctx.result["n_train"] >= 1 and ctx.result["kept"] == 8

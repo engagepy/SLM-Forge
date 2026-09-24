@@ -1,5 +1,6 @@
 // Small, consistent building blocks. Everything reads colours from the tokens in index.css.
-import { type ButtonHTMLAttributes, type ReactNode, useId, useState } from "react";
+import { type ButtonHTMLAttributes, createContext, type ReactNode, useCallback, useContext, useId, useRef, useState } from "react";
+import { Link } from "react-router";
 
 export function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
@@ -356,4 +357,81 @@ export function MemoryBar({ est }: { est: { weights_gb: number; trainable_gb: nu
       </div>
     </div>
   );
+}
+
+// ── Toasts ───────────────────────────────────────────────────────────────────
+
+export interface ToastInput {
+  tone?: "good" | "bad" | "info";
+  title: string;
+  body?: string;
+  action?: { label: string; to: string };
+}
+
+interface ToastItem extends ToastInput {
+  id: number;
+}
+
+const ToastContext = createContext<(t: ToastInput) => void>(() => {});
+
+export function useToast() {
+  return useContext(ToastContext);
+}
+
+/** Brief, stacked notifications (bottom-right). Failures stay until dismissed. */
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [items, setItems] = useState<ToastItem[]>([]);
+  const nextId = useRef(1);
+  const dismiss = useCallback((id: number) => setItems((xs) => xs.filter((x) => x.id !== id)), []);
+  const push = useCallback(
+    (t: ToastInput) => {
+      const id = nextId.current++;
+      setItems((xs) => [...xs.slice(-3), { ...t, id }]);
+      if (t.tone !== "bad") setTimeout(() => dismiss(id), 7000);
+    },
+    [dismiss],
+  );
+  const bar = { good: "bg-good", bad: "bg-bad", info: "bg-info" };
+  return (
+    <ToastContext.Provider value={push}>
+      {children}
+      <div className="pointer-events-none fixed right-4 bottom-4 z-50 flex w-80 flex-col gap-2" aria-live="polite">
+        {items.map((t) => (
+          <div key={t.id} className="pointer-events-auto flex overflow-hidden rounded-xl border border-line bg-panel shadow-lg shadow-black/30">
+            <span className={cx("w-1 shrink-0", bar[t.tone ?? "info"])} />
+            <div className="min-w-0 flex-1 px-3 py-2.5">
+              <div className="flex items-start gap-2">
+                <p className="flex-1 text-[13px] font-medium">{t.title}</p>
+                <button className="text-faint hover:text-fg" onClick={() => dismiss(t.id)} aria-label="Dismiss">
+                  ×
+                </button>
+              </div>
+              {t.body && <p className="mt-0.5 text-xs text-muted">{t.body}</p>}
+              {t.action && (
+                <Link to={t.action.to} onClick={() => dismiss(t.id)} className="mt-1.5 inline-block text-xs font-medium text-accent hover:underline">
+                  {t.action.label} →
+                </Link>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+}
+
+/** Briefly highlight an element (by DOM id) after scrolling it into view. */
+export function useSpotlight(): [string | null, (domId: string) => void] {
+  const [active, setActive] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const spotlight = useCallback((domId: string) => {
+    setActive(domId);
+    // Wait a frame so newly rendered rows exist before scrolling.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => document.getElementById(domId)?.scrollIntoView({ behavior: "smooth", block: "center" })),
+    );
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setActive(null), 2500);
+  }, []);
+  return [active, spotlight];
 }

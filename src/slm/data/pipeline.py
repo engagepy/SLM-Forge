@@ -10,6 +10,7 @@ from slm.config import get_settings
 from slm.data import clean as cleaning
 from slm.data import format as fmt
 from slm.data import split as splitting
+from slm.data.length import Measurer, fit_to_length
 from slm.data.scout_tools import read_raw
 from slm.db import Dataset, DatasetVersion, PreferencePair, SftExample, engine
 
@@ -35,7 +36,9 @@ def map_rows(rows: list[dict], mapping: dict) -> tuple[list[dict], int, list[str
 def preview_mapping(dataset: Dataset, mapping: dict, n: int = 3) -> dict:
     rows = read_raw(Path(dataset.raw_path), limit=50)
     mapped, failed, errors = map_rows(rows, mapping)
-    return {"records": mapped[:n], "failed": failed, "sampled": len(rows), "errors": errors}
+    # Show text as training will see it: after encoding repair and normalisation.
+    records = [cleaning.normalise_record(r) for r in mapped[:n]]
+    return {"records": records, "failed": failed, "sampled": len(rows), "errors": errors}
 
 
 def _next_version_dir(project_id: int, name: str) -> Path:
@@ -59,14 +62,15 @@ def _finalise(
     valid_frac: float,
     test_frac: float,
     seed: int,
+    measurer: "Measurer | None" = None,
 ) -> DatasetVersion:
     splits = splitting.split_records(records, valid_frac=valid_frac, test_frac=test_frac, seed=seed)
     dest = _next_version_dir(project_id, name)
     counts = splitting.write_splits(splits, dest)
-    stats: dict = {}
-    if model_path:
-        tok = load_tokenizer(model_path)
-        stats = splitting.token_stats(splitting.token_lengths(splits["train"], tok), max_seq_length)
+    if measurer is None:
+        measurer = Measurer(load_tokenizer(model_path) if model_path else None)
+    # Always measured, so the length problem is visible even before a base model is chosen.
+    stats = splitting.token_stats(measurer.lengths(splits["train"]), max_seq_length) | {"estimated": measurer.estimated}
     with Session(engine()) as s:
         v = DatasetVersion(
             project_id=project_id,
@@ -104,14 +108,29 @@ def prepare(
         extra, ids = feedback_sft_records(dataset.project_id)
         mapped.extend(extra)
         mapping = mapping | {"feedback_example_ids": ids}
+    rules = rules or cleaning.CleaningRules()
     kept, report = cleaning.clean(mapped, rules)
     if failed:
         report.dropped["mapping_failed"] += failed
-    report_d = report.to_dict() | {"rules": asdict(rules or cleaning.CleaningRules())}
+    # Fit examples to the sequence length here, not by the trainer's silent truncation.
+    measurer = Measurer(load_tokenizer(model_path) if model_path else None)
+    kept, fit = fit_to_length(kept, max_seq_length, rules.long_examples, measurer)
+    if fit.get("dropped"):
+        report.dropped["too_long_for_max_seq_length"] += fit["dropped"]
+    report_d = report.to_dict() | {"rules": asdict(rules), "length": fit}
+    report_d["kept"] = len(kept)
     if errors:
         report_d["mapping_errors"] = errors
     if len(kept) < 3:
-        raise ValueError(f"Only {len(kept)} usable records after cleaning: {report_d['dropped']}")
+        raise ValueError(
+            f"Only {len(kept)} usable records: {report_d['dropped']}. "
+            + (
+                f"{fit['too_long_percent']}% of examples are longer than max_seq_length={max_seq_length} "
+                f"(typical length {fit['lengths'].get('p50')} tokens); raise max_seq_length or choose shorter data."
+                if fit.get("too_long")
+                else ""
+            )
+        )
     return _finalise(
         dataset.project_id,
         kept,
@@ -125,6 +144,7 @@ def prepare(
         valid_frac=valid_frac,
         test_frac=test_frac,
         seed=seed,
+        measurer=measurer,
     )
 
 

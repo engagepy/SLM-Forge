@@ -174,6 +174,41 @@ class AgentEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=now)
 
 
+class TunerMessage(SQLModel, table=True):
+    """The visible Studio transcript. (The agent's own memory lives in its SDK session.)"""
+
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    role: str  # user | assistant | event | tool
+    content: str = ""
+    meta: dict = json_field()  # tool name/args/summary, event details
+    created_at: datetime = Field(default_factory=now)
+
+
+class StudioState(SQLModel, table=True):
+    """What the Studio canvas is focused on, as set by the Tuner."""
+
+    project_id: int = Field(foreign_key="project.id", primary_key=True)
+    stage: str = "goal"  # goal | model | data | train | evaluate | refine | export
+    note: str = ""  # one line the Tuner wants on the canvas right now
+    comparisons: list = json_field([])  # A/B tasks waiting for the human
+    samples: list = json_field([])  # recent model outputs the Tuner showed
+    autopilot: bool = True  # the Tuner keeps going on its own until the model is exported
+    completed: bool = False  # set by the Tuner's finish_project
+    stalled_nudges: int = 0  # autopilot nudges in a row that made no progress
+    updated_at: datetime = Field(default_factory=now)
+
+
+class UserProfile(SQLModel, table=True):
+    """What the Tuner has learned about the person using this Mac, across all their projects."""
+
+    id: int | None = Field(default=None, primary_key=True)  # one local user: id 1
+    level: str = "unknown"  # unknown | beginner | intermediate | expert
+    level_evidence: str = ""  # why the Tuner thinks so, in its words
+    notes: list = json_field([])  # [{id, kind, text, project_id, created_at}]
+    updated_at: datetime = Field(default_factory=now)
+
+
 _engine = None
 
 
@@ -187,7 +222,33 @@ def engine():
             connect_args={"check_same_thread": False},
         )
         SQLModel.metadata.create_all(_engine)
+        _add_missing_columns(_engine)
     return _engine
+
+
+def _add_missing_columns(eng) -> None:
+    """create_all() makes new tables but never alters existing ones. Add columns introduced after
+    a table was first created (additive only, with the model's default), so older workspaces keep
+    working without a migration tool."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(eng)
+    with eng.begin() as conn:
+        for table in SQLModel.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in existing:
+                    continue
+                default = col.default.arg if col.default is not None and not callable(col.default.arg) else None
+                sql_default = (
+                    ""
+                    if default is None
+                    else f" DEFAULT {int(default) if isinstance(default, bool) else repr(default)}"
+                )
+                col_type = col.type.compile(eng.dialect)
+                conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col_type}{sql_default}'))
 
 
 def set_engine(new_engine) -> None:

@@ -131,7 +131,7 @@ export default function ExportPage() {
                   <span className="ml-auto text-[11px] text-faint">{fmt.ago(e.created_at)}</span>
                 </div>
                 <div className="font-mono text-[11px] text-muted">{e.path}</div>
-                <pre className="rounded-md bg-bg px-3 py-2 font-mono text-[11.5px] text-muted">
+                <pre className="overflow-x-auto rounded-md bg-bg px-3 py-2 font-mono text-[11.5px] text-muted">
                   mlx_lm.generate --model {e.path} --prompt "Hello"
                 </pre>
               </li>

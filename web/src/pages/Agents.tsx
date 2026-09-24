@@ -40,7 +40,7 @@ export default function AgentsPage() {
         </div>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_380px]">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
         <div className="space-y-4">
           <h2 className="text-[13px] font-semibold">Waiting for you ({pending.length})</h2>
           {pending.length ? (

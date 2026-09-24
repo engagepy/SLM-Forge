@@ -15,10 +15,25 @@ const Home = lazy(() => import("./pages/Home"));
 const ModelPage = lazy(() => import("./pages/Model"));
 const OverviewPage = lazy(() => import("./pages/Overview"));
 const Playground = lazy(() => import("./pages/Playground"));
+const Studio = lazy(() => import("./pages/Studio"));
 const TrainPage = lazy(() => import("./pages/Train"));
 
 export default function App() {
   useJobsFeed();
+  return (
+    <Suspense fallback={<Spinner className="m-6" />}>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        {/* The Studio is the main experience: full window, no sidebar. */}
+        <Route path="/p/:projectId" element={<Studio />} />
+        <Route path="/p/:projectId/*" element={<AdvancedLayout />} />
+      </Routes>
+    </Suspense>
+  );
+}
+
+/** The detailed manual screens, reachable from the Studio's "Advanced" link. */
+function AdvancedLayout() {
   return (
     <div className="flex h-full">
       <Sidebar />
@@ -26,10 +41,7 @@ export default function App() {
         <StatusBar />
         <main className="min-h-0 flex-1 overflow-y-auto">
           <Suspense fallback={<Spinner className="m-6" />}>
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/p/:projectId/*" element={<ProjectShell />} />
-            </Routes>
+            <ProjectShell />
           </Suspense>
         </main>
       </div>
@@ -42,7 +54,7 @@ function ProjectShell() {
   useProjectFeed(projectId);
   return (
     <Routes>
-      <Route index element={<OverviewPage />} />
+      <Route path="overview" element={<OverviewPage />} />
       <Route path="model" element={<ModelPage />} />
       <Route path="data" element={<DataPage />} />
       <Route path="train" element={<TrainPage />} />
@@ -56,7 +68,7 @@ function ProjectShell() {
 }
 
 const STEPS = [
-  { to: "", label: "Overview", end: true },
+  { to: "overview", label: "Overview", end: true },
   { to: "model", label: "Base model", n: 1 },
   { to: "data", label: "Data", n: 2 },
   { to: "train", label: "Train", n: 3 },
@@ -83,11 +95,14 @@ function Sidebar() {
 
       {Number.isFinite(projectId) && overview.data && (
         <nav className="px-2">
-          <div className="truncate px-2 pb-2 text-[11px] font-medium uppercase tracking-wide text-faint">{overview.data.project.name}</div>
+          <NavLink to={`/p/${projectId}`} className="mb-3 flex items-center gap-2 rounded-lg bg-accent-soft px-2 py-1.5 text-[13px] font-medium text-accent">
+            ✦ Back to the Studio
+          </NavLink>
+          <div className="truncate px-2 pb-2 text-[11px] font-medium uppercase tracking-wide text-faint">{overview.data.project.name} · advanced</div>
           {STEPS.map((s) => (
             <NavLink
               key={s.to}
-              to={`/p/${projectId}${s.to ? `/${s.to}` : ""}`}
+              to={`/p/${projectId}/${s.to}`}
               end={s.end}
               className={({ isActive }) =>
                 cx(

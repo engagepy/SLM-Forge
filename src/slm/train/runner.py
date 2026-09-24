@@ -117,6 +117,14 @@ class Cancelled(Exception):
     pass
 
 
+# Warnings the trainer repeats once per batch; logged once with a count instead.
+_NOISY = [(re.compile(r"^\[WARNING\] Some sequences are longer than \d+ tokens"), "sequence truncated")]
+
+
+def _noise_key(line: str) -> str | None:
+    return next((key for pattern, key in _NOISY if pattern.search(line)), None)
+
+
 def run_process(
     cmd: list[str],
     *,
@@ -162,12 +170,22 @@ def run_process(
                 time.sleep(0.5)
 
         threading.Thread(target=watch, daemon=True).start()
+        repeats: dict[str, int] = {}
         for raw in proc.stdout:
             # Progress bars redraw with \r; keep only the final state of each line.
             line = raw.rstrip("\n").split("\r")[-1]
+            if (key := _noise_key(line)) is not None:
+                repeats[key] = repeats.get(key, 0) + 1
+                if repeats[key] > 1:
+                    continue  # show the first occurrence only; summarised at the end
             log.write(line + "\n")
             log.flush()
             on_line(line)
+        for key, n in repeats.items():
+            if n > 1:
+                summary = f"[{n - 1} more '{key}' warnings suppressed]"
+                log.write(summary + "\n")
+                on_line(summary)
         code = proc.wait()
         if cancelled.is_set():
             raise Cancelled()

@@ -23,7 +23,10 @@ export default function Playground() {
   const [error, setError] = useState<unknown>(null);
   const abort = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
-  useEffect(() => bottom.current?.scrollIntoView({ block: "end" }), [messages]);
+  // Block body: scrollIntoView() now returns a Promise in Chrome, and an effect must not return one.
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: "end" });
+  }, [messages]);
 
   const effectiveSystem = system ?? ov?.project.system_prompt ?? "";
 
@@ -75,7 +78,7 @@ export default function Playground() {
   ];
 
   return (
-    <div className="grid h-full lg:grid-cols-[1fr_320px]">
+    <div className="grid h-full lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className="flex min-h-0 flex-col">
         <div className="flex-1 space-y-4 overflow-y-auto p-6">
           {!messages.length && (

@@ -18,6 +18,7 @@ class CleaningRules:
     drop_garbled: bool = True  # runs of U+FFFD, the mark of broken decoding
     require_assistant: bool = True
     drop_identical_pairs: bool = True  # preference rows where chosen == rejected
+    long_examples: str = "auto"  # beyond max_seq_length: auto | drop | split | keep (see data/length.py)
 
 
 @dataclass
@@ -74,7 +75,7 @@ def _texts(rec: dict) -> list[str]:
     return [rec.get("prompt", ""), rec.get("chosen", ""), rec.get("rejected", "")]
 
 
-def _normalise_record(rec: dict) -> dict:
+def normalise_record(rec: dict) -> dict:
     if "messages" in rec:
         return {"messages": [{**m, "content": normalise_text(m["content"])} for m in rec["messages"]]}
     return {k: normalise_text(v) if isinstance(v, str) else v for k, v in rec.items()}
@@ -117,7 +118,7 @@ def clean(records: list[dict], rules: CleaningRules | None = None) -> tuple[list
     seen: set[str] = set()
     kept = []
     for rec in records:
-        rec = _normalise_record(rec)
+        rec = normalise_record(rec)
         if reason := _reject_reason(rec, rules):
             report.dropped[reason] += 1
             continue

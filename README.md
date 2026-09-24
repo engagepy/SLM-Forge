@@ -1,15 +1,39 @@
 # SLM Forge
 
-Build your own small language model on a Mac. Pick a Hugging Face model that fits your
-hardware, let agents find and prepare training data, fine-tune it with
-[MLX](https://github.com/ml-explore/mlx), then improve it with your own feedback:
+Build your own small language model on a Mac, by talking to an agent.
+
+Describe what the model should do in one sentence. That's the only input needed. The **Tuner**,
+a GPT-6 Luna agent built on the OpenAI Agents SDK, runs everything on autopilot. It picks the
+smallest base model that can do the job (preferring ones already on your Mac), finds or writes
+training data, cleans it, fine-tunes with [MLX](https://github.com/ml-explore/mlx), tests the
+result, has GPT-6 review and correct the model's answers, refines with that feedback, and exports
+the model. It explains each decision in plain language as it goes. You can steer it at any time
+by typing, judge answers yourself if you want to, or pause autopilot.
 
 ```
-base model → data (agents + you) → SFT → compare answers → DPO → … → export
+You ──chat──▶ Tuner (GPT-6 Luna) ──tools──▶ models · data · training · evaluation · export
+                     │                                   (all local, on Apple Silicon)
+                     └──▶ live canvas: every stage rendered as it happens
 ```
 
-Everything trains locally on Apple Silicon. Only the agents call out to an LLM: OpenAI by
-default (via the OpenAI Agents SDK), or Claude, or a local Ollama model.
+Training and inference run locally on Apple Silicon. Only the agents call out to an LLM.
+
+## The Studio
+
+The main screen is split in two:
+
+- **Left: the Tuner.** A conversation that streams token by token. The agent's actions appear
+  as compact steps ("26 steps · searched datasets ×17…"). It never waits for you: when a turn
+  ends and nothing is running, autopilot tells it to carry on, and a finished job wakes it to
+  interpret the result. Autopilot stops when the Tuner calls `finish_project`, or pauses itself
+  (and says so) after two nudges without progress. There's an on/off switch in the top bar.
+- **Right: the live canvas.** A stage rail (Goal → Model → Data → Train → Evaluate → Refine →
+  Export) above cards that fill in as the work happens: the chosen model with its memory
+  footprint, training sets with cleaning stats, live loss curves, before/after answers, A/B
+  comparisons you judge with one click, and the exported model. The console underneath streams
+  the agent's tool calls and the running job's output.
+
+The previous hands-on screens are still there under **Advanced** in the Studio's top bar.
 
 ## Quick start
 
@@ -17,7 +41,7 @@ Requirements: an Apple Silicon Mac, [uv](https://docs.astral.sh/uv/) and Node 20
 
 ```bash
 uv sync                                   # Python deps (MLX, mlx-lm, mlx-lm-lora, FastAPI…)
-cp .env.example .env                      # then add OPENAI_API_KEY
+cp .env.example .env                      # then add OPENAI_API_KEY (the Tuner uses gpt-6-luna)
 (cd web && npm install && npm run build)  # web UI
 uv run slm serve                          # → http://127.0.0.1:8000
 ```
@@ -59,12 +83,39 @@ Set `SLM_AGENT_PROVIDER` in `.env` to choose which LLM runs the agents:
 
 | Provider | Key | How it runs |
 |---|---|---|
-| `openai` (default) | `OPENAI_API_KEY` | Tool-using agents run on the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) `Runner`; structured outputs use the Responses API with strict JSON schemas. The model defaults to the SDK's default (`SLM_OPENAI_MODEL` overrides it). Traces appear in the OpenAI dashboard unless `SLM_OPENAI_TRACING=false`. |
+| `openai` (default) | `OPENAI_API_KEY` | `gpt-6-luna` (`SLM_OPENAI_MODEL` overrides). The Tuner and tool-using agents run on the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) with streaming and persistent session memory; structured outputs use the Responses API with strict JSON schemas. Traces appear in the OpenAI dashboard unless `SLM_OPENAI_TRACING=false`. |
 | `claude` | `ANTHROPIC_API_KEY` | Anthropic SDK, with adaptive thinking and server-side refusal fallback. |
 | `ollama` | none | A local model. Fully offline, but it competes with training for memory and writes weaker synthetic data. |
 
 Every provider exposes the same two calls, and every tool call is logged the same way, so
 agents and the UI don't care which one is behind them.
+
+## How the Tuner works
+
+- **One agent, 23 tools** (`src/slm/tuner/`) wrapping the tested platform code: `get_status`,
+  `find_base_models`, `choose_base_model`, `search_datasets`, `prepare_dataset`,
+  `generate_synthetic_examples`, `start_training`, `try_model`, `ask_user_to_compare`,
+  `export_model` and more. Quick jobs (imports, data prep, synthesis) are awaited inside the
+  tool; long ones (downloads, training, export) return at once, and the finished job wakes the
+  Tuner with a `[Job update]` turn.
+- **Its instructions carry what running this platform taught us:** learning rate 1e-4 is safe
+  and 2e-4 diverged; near-duplicates make validation loss meaningless; `max_seq_length` must
+  cover the data's p95 tokens; when public data is poor, write a seed set with the teacher model.
+- **When no clean public dataset fits**, the Tuner has GPT-6 write one (150–200 examples in the
+  goal's style), reviews a sample, approves it, and trains on it.
+- **AI feedback instead of human clicks:** `ai_review_answers` has the local model answer each
+  prompt twice, and GPT-6 picks the better answer, writes the ideal one and critiques the flaws.
+  Each verdict becomes a DPO preference pair and, where the model was wrong, a corrected SFT
+  example. Human A/B judging is still available when you ask for it.
+- **Smallest model that does the job:** 0.5–1.5B for narrow tasks, up to 3B for explanations,
+  bigger only when evaluation shows it's needed. Models already in the local Hugging Face cache
+  are listed first and registered instantly, with no re-download.
+- **Turns run on one long-lived event loop.** The SDK's shared OpenAI client binds to the first
+  loop it runs on, so a fresh `asyncio.run()` per turn fails with "Event loop is closed". Tools
+  run in worker threads so blocking work never stalls the stream. Messages that arrive mid-turn
+  (from you, a job, or finished comparisons) batch into the next turn.
+- **Memory:** the SDK's `SQLiteSession` keeps the agent's context across turns and server
+  restarts; the visible transcript is stored separately.
 
 ## Architecture
 

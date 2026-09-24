@@ -17,7 +17,7 @@ export default function TrainPage() {
     queryFn: () => api.get<Job[]>(`/api/jobs?project_id=${projectId}&kind=sft,dpo&limit=50`),
   });
   return (
-    <div className="grid h-full lg:grid-cols-[260px_1fr]">
+    <div className="grid h-full lg:grid-cols-[260px_minmax(0,1fr)]">
       <aside className="border-b border-line lg:border-r lg:border-b-0">
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-[13px] font-semibold">Runs</span>

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 
 import { api, type Job, type MetricPoint, type Overview, type SystemStatus } from "./api";
+import { type ToastInput, useToast } from "./ui";
 
 export function useProjectId(): number {
   return Number(useParams().projectId);
@@ -43,6 +44,7 @@ function useEventSource(url: string | null, onEvent: (type: string, data: Record
 /** Keep job lists and dependent views fresh as any job changes status. */
 export function useJobsFeed() {
   const qc = useQueryClient();
+  const toast = useToast();
   useEventSource(
     "/api/stream/jobs",
     (_t, ev) => {
@@ -50,8 +52,9 @@ export function useJobsFeed() {
       qc.invalidateQueries({ queryKey: ["system"] });
       const status = ev.status as string;
       if (status === "succeeded" || status === "failed") {
+        toast(jobToast(ev as unknown as Job));
         // A finished job can create datasets, versions, checkpoints, examples or proposals.
-        for (const k of ["overview", "datasets", "exports", "examples", "proposals", "models-local"]) {
+        for (const k of ["overview", "datasets", "exports", "examples", "proposals", "models-local", "studio"]) {
           qc.invalidateQueries({ queryKey: [k] });
         }
       }
@@ -98,7 +101,9 @@ export function useLiveJob(jobId: number | null): LiveJob {
   });
 
   // Reset when switching jobs, then seed from the snapshot.
-  useEffect(() => setLive({ metrics: [], log: [], progress: null }), [jobId]);
+  useEffect(() => {
+    setLive({ metrics: [], log: [], progress: null });
+  }, [jobId]);
 
   useEventSource(
     jobId != null ? `/api/jobs/${jobId}/stream` : null,
@@ -135,4 +140,95 @@ export async function waitForJob(jobId: number, onTick?: (j: Job) => void): Prom
     if (["succeeded", "failed", "cancelled"].includes(job.status)) return job;
     await new Promise((r) => setTimeout(r, 1000));
   }
+}
+
+const JOB_LABEL: Record<string, string> = {
+  download: "Model downloaded",
+  import_dataset: "Dataset imported",
+  prepare_dataset: "Data prepared",
+  sft: "Fine-tuning finished",
+  dpo: "Preference round finished",
+  fuse: "Adapter fused",
+  export: "Model exported",
+  agent_scout: "DataScout finished",
+  agent_prep: "DataPrep suggested a mapping",
+  agent_observer: "Observer finished",
+  synthesize: "Synthetic examples ready",
+};
+
+const JOB_NAME: Record<string, string> = {
+  download: "Download",
+  import_dataset: "Import",
+  prepare_dataset: "Data preparation",
+  sft: "Fine-tuning",
+  dpo: "Preference round",
+  fuse: "Fuse",
+  export: "Export",
+  agent_scout: "DataScout",
+  agent_prep: "DataPrep",
+  agent_observer: "Observer",
+  synthesize: "Synthesis",
+};
+
+const JOB_PAGE: Record<string, string> = {
+  download: "data",
+  import_dataset: "data",
+  prepare_dataset: "data",
+  agent_prep: "data",
+  agent_scout: "data",
+  sft: "train",
+  dpo: "train",
+  export: "export",
+  agent_observer: "agents",
+  synthesize: "feedback",
+};
+
+/** Turn a finished job into a one-glance summary with a link to its result. */
+export function jobToast(job: Job): ToastInput {
+  const base = job.project_id != null ? `/p/${job.project_id}` : "";
+  const r = job.result as Record<string, unknown>;
+  const page = JOB_PAGE[job.kind];
+  const to = !base || !page ? undefined : ["sft", "dpo"].includes(job.kind) ? `${base}/train/${job.id}` : `${base}/${page}`;
+  if (job.status === "failed") {
+    return {
+      tone: "bad",
+      title: `${JOB_NAME[job.kind] ?? job.kind} failed`,
+      body: job.error.slice(0, 180),
+      action: to ? { label: "Open", to } : undefined,
+    };
+  }
+  let body = "";
+  let label = "Open";
+  switch (job.kind) {
+    case "import_dataset":
+      body = `${Number(r.rows).toLocaleString()} rows. Next: map the columns.`;
+      label = "Map it";
+      break;
+    case "prepare_dataset":
+      body =
+        r.n_train != null
+          ? `${Number(r.n_train).toLocaleString()} training examples (kept ${Number(r.kept).toLocaleString()} of ${Number(r.input_rows).toLocaleString()}).`
+          : "Ready to train on.";
+      label = "View";
+      break;
+    case "sft":
+    case "dpo": {
+      const m = (r.metrics ?? {}) as Record<string, number>;
+      const warn = (r.warnings as { code: string }[] | undefined)?.length;
+      body = `val loss ${m.val_loss ?? "?"} · peak ${m.peak_mem_gb ?? "?"} GB${warn ? ` · ${warn} warning${warn > 1 ? "s" : ""}` : ""}`;
+      label = "See the run";
+      break;
+    }
+    case "export":
+      body = `${r.size_gb} GB · runs on ${r.min_ram_gb} GB+ Macs`;
+      break;
+    case "synthesize":
+      body = `${r.saved} examples waiting for your review.`;
+      label = "Review";
+      break;
+    case "agent_prep":
+      label = "See it";
+      break;
+  }
+  return { tone: "good", title: JOB_LABEL[job.kind] ?? `${job.kind} finished`, body, action: to ? { label, to } : undefined };
 }

@@ -18,9 +18,7 @@ router = APIRouter(prefix="/api", tags=["system"])
 
 def _agent_model(s) -> str:
     if s.agent_provider == "openai":
-        from agents.models import get_default_model
-
-        return s.openai_model or get_default_model()
+        return s.openai_model
     return s.claude_model if s.agent_provider == "claude" else s.ollama_model
 
 
@@ -103,3 +101,45 @@ def local_estimate(model_id: int, s: Session = SessionDep) -> dict:
         raise HTTPException(404)
     shape = manage.read_shape(rec.local_path)
     return hardware.estimate_inference(shape).to_dict()
+
+
+# ── the user profile the Tuner keeps ────────────────────────────────────────
+
+
+@router.get("/profile")
+def get_profile() -> dict:
+    from slm import profile
+
+    return profile.get().model_dump(mode="json")
+
+
+class LevelIn(BaseModel):
+    level: str
+
+
+@router.post("/profile/level")
+def set_profile_level(body: LevelIn) -> dict:
+    """The user correcting the Tuner's read of their level."""
+    from slm import profile
+
+    try:
+        return profile.set_level(body.level, "set by you").model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@router.delete("/profile/notes/{note_id}")
+def forget_note(note_id: str) -> dict:
+    from slm import profile
+
+    if not profile.forget(note_id):
+        raise HTTPException(404, "no such note")
+    return profile.get().model_dump(mode="json")
+
+
+@router.post("/profile/reset")
+def reset_profile() -> dict:
+    from slm import profile
+
+    profile.reset()
+    return profile.get().model_dump(mode="json")

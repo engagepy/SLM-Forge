@@ -3,6 +3,7 @@
 import csv
 import itertools
 import json
+import re
 from pathlib import Path
 
 import httpx
@@ -21,31 +22,71 @@ def _license_from(tags: list[str] | None, card: dict | None) -> str:
     return "unknown"
 
 
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "the",
+    "of",
+    "for",
+    "to",
+    "in",
+    "on",
+    "with",
+    "dataset",
+    "datasets",
+    "data",
+    "english",
+    "question",
+    "questions",
+    "answer",
+    "answering",
+    "qa",
+    "set",
+    "corpus",
+    "high",
+    "quality",
+}
+
+
+def _row(d) -> dict:
+    tags = d.tags or []
+    return {
+        "id": d.id,
+        "downloads": d.downloads or 0,
+        "likes": d.likes or 0,
+        "license": _license_from(tags, d.card_data.to_dict() if d.card_data else None),
+        "gated": bool(d.gated),
+        "size": next((t.split(":", 1)[1] for t in tags if t.startswith("size_categories:")), ""),
+        "tasks": [t.split(":", 1)[1] for t in tags if t.startswith("task_categories:")],
+        "languages": [t.split(":", 1)[1] for t in tags if t.startswith("language:")][:5],
+        "description": (d.description or "")[:400],
+    }
+
+
 def search_datasets(query: str, limit: int = 15) -> list[dict]:
+    """Search Hub datasets. The Hub only substring-matches dataset *names*, so a multi-word query
+    like "recipe question answering" matches nothing. We also search each meaningful keyword, then
+    rank by how many keywords appear in a dataset's name and description, then by downloads."""
     api = HfApi()
-    rows = api.list_datasets(
-        search=query,
-        sort="downloads",
-        limit=limit,
-        expand=["downloads", "likes", "tags", "cardData", "gated", "description"],
-    )
-    out = []
-    for d in rows:
-        tags = d.tags or []
-        out.append(
-            {
-                "id": d.id,
-                "downloads": d.downloads or 0,
-                "likes": d.likes or 0,
-                "license": _license_from(tags, d.card_data.to_dict() if d.card_data else None),
-                "gated": bool(d.gated),
-                "size": next((t.split(":", 1)[1] for t in tags if t.startswith("size_categories:")), ""),
-                "tasks": [t.split(":", 1)[1] for t in tags if t.startswith("task_categories:")],
-                "languages": [t.split(":", 1)[1] for t in tags if t.startswith("language:")][:5],
-                "description": (d.description or "")[:400],
-            }
-        )
-    return out
+    words = [w for w in re.findall(r"[a-z0-9]+", query.lower()) if w not in _STOPWORDS and len(w) > 2]
+    terms = list(dict.fromkeys([query.strip(), *words[:4]]))
+    found: dict[str, object] = {}
+    for term in terms:
+        for d in api.list_datasets(
+            search=term,
+            sort="downloads",
+            limit=40,  # wide per-keyword net; relevance ranking below does the narrowing
+            expand=["downloads", "likes", "tags", "cardData", "gated", "description"],
+        ):
+            found.setdefault(d.id, d)
+
+    def relevance(d) -> tuple[int, int]:
+        text = f"{d.id} {d.description or ''}".lower()
+        return sum(w in text for w in words), d.downloads or 0
+
+    ranked = sorted(found.values(), key=relevance, reverse=True)
+    return [_row(d) for d in ranked[:limit]]
 
 
 def dataset_card(repo_id: str, max_chars: int = 6000) -> str:

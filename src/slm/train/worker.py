@@ -71,6 +71,11 @@ class JobWorker:
         self._cancel_requested: set[int] = set()
         self._running: dict[str, int | None] = {"gpu": None, "io": None, "agent": None}
         self._started = False
+        self._finish_hooks: list[Callable[[Job], None]] = []
+
+    def on_finish(self, fn: Callable[[Job], None]) -> None:
+        """Call `fn(job)` after any job reaches a terminal status (e.g. to wake the Tuner)."""
+        self._finish_hooks.append(fn)
 
     def register(self, kind: str) -> Callable[[Handler], Handler]:
         def deco(fn: Handler) -> Handler:
@@ -197,6 +202,11 @@ class JobWorker:
             s.commit()
             s.refresh(job)
             self._publish_status(job)
+        for hook in self._finish_hooks:
+            try:
+                hook(job)
+            except Exception:  # a hook must never break the worker
+                traceback.print_exc()
 
 
 worker = JobWorker()

@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { api, fmt, type Dataset, type DatasetVersion, type Mapping, type Proposal } from "../api";
 import ProposalCard from "../components/ProposalCard";
 import { useProjectId, waitForJob } from "../hooks";
-import { Badge, Button, Card, Collapsible, cx, Empty, ErrorNote, Field, Input, NumberField, Select, Spinner, Toggle } from "../ui";
+import { Badge, Button, Card, Collapsible, cx, Empty, ErrorNote, Field, Input, NumberField, Select, Spinner, Toggle, useSpotlight } from "../ui";
 
 export default function DataPage() {
   const projectId = useProjectId();
@@ -15,7 +15,17 @@ export default function DataPage() {
   });
   const [selected, setSelected] = useState<number | null>(null);
   const datasets = data.data?.datasets ?? [];
+  const versions = data.data?.versions ?? [];
   const current = datasets.find((d) => d.id === selected) ?? datasets[0];
+  const [spot, spotlight] = useSpotlight();
+
+  // Whatever produced it (your click, an approved proposal, an agent), bring new work into view.
+  useArrivals(datasets, data.isSuccess, (d) => {
+    setSelected(d.id);
+    spotlight("dataset-editor");
+  });
+  useArrivals(versions, data.isSuccess, (v) => spotlight(`version-${v.id}`));
+  const latest = versions.find((v) => v.kind === "sft");
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-6">
@@ -27,6 +37,27 @@ export default function DataPage() {
         </p>
       </div>
 
+      {latest && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-good/40 bg-good-soft px-4 py-3">
+          <span className="grid size-6 place-items-center rounded-full bg-good text-xs font-bold text-white">✓</span>
+          <div className="min-w-0 flex-1 text-[13px]">
+            <span className="font-medium">Data ready: v{latest.id}</span>
+            <span className="text-muted">
+              {" "}
+              · {latest.n_train.toLocaleString()} training examples · p95 {latest.token_stats.p95 ?? "?"} tokens
+            </span>
+          </div>
+          <Button size="sm" variant="ghost" onClick={() => spotlight(`version-${latest.id}`)}>
+            View
+          </Button>
+          <Link to={`/p/${projectId}/train?version=${latest.id}`}>
+            <Button size="sm" variant="primary">
+              Next: train on it →
+            </Button>
+          </Link>
+        </div>
+      )}
+
       <div className="grid gap-5 lg:grid-cols-2">
         <ScoutPanel projectId={projectId} />
         <div className="space-y-5">
@@ -37,7 +68,7 @@ export default function DataPage() {
 
       <Card title="Raw datasets" subtitle="Pick one to map and prepare" pad={false}>
         {datasets.length ? (
-          <div className="grid lg:grid-cols-[260px_1fr]">
+          <div className="grid lg:grid-cols-[260px_minmax(0,1fr)]">
             <ul className="border-b border-line lg:border-r lg:border-b-0">
               {datasets.map((d) => (
                 <li key={d.id}>
@@ -53,7 +84,9 @@ export default function DataPage() {
                 </li>
               ))}
             </ul>
-            {current && <MappingEditor key={current.id} dataset={current} projectId={projectId} />}
+            <div id="dataset-editor" className={cx("min-w-0 scroll-mt-4 transition-shadow", spot === "dataset-editor" && "ring-2 ring-accent ring-inset")}>
+              {current && <MappingEditor key={current.id} dataset={current} projectId={projectId} onPrepared={(id) => spotlight(`version-${id}`)} />}
+            </div>
           </div>
         ) : (
           <div className="p-4">
@@ -62,7 +95,7 @@ export default function DataPage() {
         )}
       </Card>
 
-      <Versions versions={data.data?.versions ?? []} projectId={projectId} />
+      <Versions versions={versions} projectId={projectId} spot={spot} />
     </div>
   );
 }
@@ -239,7 +272,7 @@ function HubSearch({ projectId }: { projectId: number }) {
                     <div className="text-[11px] text-muted">
                       columns: <span className="font-mono">{prev.data.columns.join(", ")}</span>
                     </div>
-                    <pre className="max-h-40 overflow-auto rounded-md bg-bg p-2 font-mono text-[11px] text-muted">
+                    <pre className="max-h-40 overflow-auto rounded-md bg-bg p-2 whitespace-pre-wrap break-words font-mono text-[11px] text-muted">
                       {JSON.stringify(prev.data.rows.slice(0, 2), null, 2)}
                     </pre>
                     <div className="flex items-end gap-2">
@@ -277,12 +310,12 @@ const FORMAT_FIELDS: Record<string, { key: string; label: string; required?: boo
   ],
 };
 
-function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: number }) {
+function MappingEditor({ dataset, projectId, onPrepared }: { dataset: Dataset; projectId: number; onPrepared: (versionId: number) => void }) {
   const qc = useQueryClient();
   const initial = dataset.suggested_mapping.format === "unknown" ? ({ format: "instruction" } as Mapping) : dataset.suggested_mapping;
   const [mapping, setMapping] = useState<Mapping>(initial);
   const [system, setSystem] = useState("");
-  const [rules, setRules] = useState({ min_chars: 2, max_chars: 20000, dedupe: true });
+  const [rules, setRules] = useState({ min_chars: 2, max_chars: 20000, dedupe: true, long_examples: "auto" });
   const [maxSeq, setMaxSeq] = useState(1024);
   const [includeFeedback, setIncludeFeedback] = useState(false);
   const full: Mapping = system ? ({ ...mapping, system: `=${system}` } as Mapping) : mapping;
@@ -312,13 +345,16 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
       });
       const job = await waitForJob(job_id, (j) => setPrepStatus(j.status));
       if (job.status !== "succeeded") throw new Error(job.error || `Prepare ${job.status}`);
+      return job.result as { dataset_version_id: number; n_train?: number; kept?: number; input_rows?: number };
     },
     onSettled: () => {
       setPrepStatus(null);
       qc.invalidateQueries({ queryKey: ["datasets", projectId] });
       qc.invalidateQueries({ queryKey: ["overview", projectId] });
     },
+    onSuccess: (r) => onPrepared(r.dataset_version_id),
   });
+  const [applied, setApplied] = useState(false);
   const askPrep = useMutation({
     mutationFn: () => api.post(`/api/projects/${projectId}/agents/prep`, { dataset_id: dataset.id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["proposals", projectId] }),
@@ -337,6 +373,8 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
     setSystem(sys?.startsWith("=") ? sys.slice(1) : "");
     const r = (p.payload as { rules?: Partial<typeof rules> }).rules ?? {};
     setRules({ ...rules, ...r });
+    setApplied(true);
+    requestAnimationFrame(() => document.getElementById(`preview-${dataset.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
   };
 
   const fields = FORMAT_FIELDS[mapping.format] ?? [];
@@ -367,8 +405,8 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
                 .map(([k, v]) => `${k}: ${v}`)
                 .join(" · ")}
             </span>
-            <Button size="sm" variant="primary" className="ml-auto" onClick={() => applySuggestion(suggestion)}>
-              Use this mapping
+            <Button size="sm" variant={applied ? "good" : "primary"} className="ml-auto" onClick={() => applySuggestion(suggestion)}>
+              {applied ? "✓ Applied" : "Use this mapping"}
             </Button>
           </div>
           {suggestion.rationale && <p className="mt-1.5 text-xs leading-relaxed text-muted">{suggestion.rationale}</p>}
@@ -400,7 +438,7 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
         </Field>
       )}
 
-      <div>
+      <div id={`preview-${dataset.id}`} className="scroll-mt-4">
         <div className="mb-1 flex items-center gap-2 text-xs text-muted">
           Preview
           {preview.data && !missing.length && (
@@ -421,7 +459,7 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
             , or ask DataPrep.
           </div>
         ) : (
-          <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-bg p-3 font-mono text-[11px] leading-relaxed text-muted">
+          <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-bg p-3 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted">
             {preview.data ? (preview.data.records.length ? JSON.stringify(preview.data.records.slice(0, 2), null, 2) : "No rows mapped.") : "…"}
           </pre>
         )}
@@ -432,7 +470,19 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
         <div className="grid gap-3 md:grid-cols-4">
           <NumberField label="Min answer length" hint="chars" value={rules.min_chars} onChange={(v) => v != null && setRules({ ...rules, min_chars: v })} min={0} />
           <NumberField label="Max record length" hint="chars" value={rules.max_chars} onChange={(v) => v && setRules({ ...rules, max_chars: v })} step={1000} />
-          <NumberField label="Max sequence length" hint="for token stats" value={maxSeq} onChange={(v) => v && setMaxSeq(v)} step={128} min={64} />
+          <NumberField label="Max sequence length" hint="tokens" value={maxSeq} onChange={(v) => v && setMaxSeq(v)} step={128} min={64} />
+          <Field label="Longer examples" hint="than max length">
+            <Select
+              value={rules.long_examples}
+              onChange={(v) => setRules({ ...rules, long_examples: v })}
+              options={[
+                { value: "auto", label: "Auto: drop Q&A, split text" },
+                { value: "drop", label: "Drop them" },
+                { value: "split", label: "Split raw text into windows" },
+                { value: "keep", label: "Keep (trainer cuts endings)" },
+              ]}
+            />
+          </Field>
           <div className="space-y-2 pt-5">
             <Toggle label="Remove duplicates" checked={rules.dedupe} onChange={(v) => setRules({ ...rules, dedupe: v })} />
             <Toggle label="Add approved feedback examples" checked={includeFeedback} onChange={setIncludeFeedback} />
@@ -441,14 +491,28 @@ function MappingEditor({ dataset, projectId }: { dataset: Dataset; projectId: nu
       </Collapsible>
 
       <ErrorNote error={prepare.error} />
-      <Button variant="primary" disabled={!ok} loading={prepare.isPending} onClick={() => prepare.mutate()}>
-        {prepare.isPending ? `Preparing (${prepStatus ?? "queued"})…` : "Clean, split and tokenise"}
-      </Button>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="primary" disabled={!ok} loading={prepare.isPending} onClick={() => prepare.mutate()}>
+          {prepare.isPending ? `Preparing (${prepStatus ?? "queued"})…` : "Clean, split and tokenise"}
+        </Button>
+        {prepare.isPending && <span className="text-xs text-muted">Tokenising every record; large datasets take a minute.</span>}
+        {prepare.data && !prepare.isPending && (
+          <>
+            <span className="text-[13px] text-good">
+              ✓ Prepared v{prepare.data.dataset_version_id}
+              {prepare.data.n_train != null && `: ${prepare.data.n_train.toLocaleString()} training examples`}
+            </span>
+            <Link to={`/p/${projectId}/train?version=${prepare.data.dataset_version_id}`}>
+              <Button size="sm">Train on it →</Button>
+            </Link>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-function Versions({ versions, projectId }: { versions: DatasetVersion[]; projectId: number }) {
+function Versions({ versions, projectId, spot }: { versions: DatasetVersion[]; projectId: number; spot: string | null }) {
   const [open, setOpen] = useState<number | null>(null);
   const sample = useQuery({
     queryKey: ["version-sample", open],
@@ -473,7 +537,11 @@ function Versions({ versions, projectId }: { versions: DatasetVersion[]; project
           {versions.map((v) => {
             const dropped = Object.entries(v.cleaning_report.dropped ?? {});
             return (
-              <tr key={v.id} className="border-b border-line align-top last:border-0">
+              <tr
+                key={v.id}
+                id={`version-${v.id}`}
+                className={cx("border-b border-line align-top transition-colors duration-700 last:border-0", spot === `version-${v.id}` && "bg-good-soft")}
+              >
                 <td className="px-4 py-2">
                   <div className="font-mono text-[12px]">v{v.id}</div>
                   <div className="text-[11px] text-faint">{fmt.ago(v.created_at)}</div>
@@ -508,10 +576,30 @@ function Versions({ versions, projectId }: { versions: DatasetVersion[]; project
         </tbody>
       </table>
       {open != null && (
-        <pre className="max-h-72 overflow-auto border-t border-line bg-bg p-4 font-mono text-[11px] text-muted">
+        <pre className="max-h-72 overflow-auto border-t border-line bg-bg p-4 whitespace-pre-wrap break-words font-mono text-[11px] text-muted">
           {sample.data ? JSON.stringify(sample.data.records, null, 2) : "Loading…"}
         </pre>
       )}
     </Card>
   );
+}
+
+/** Call `onNew` for items that appear after the first successful load (not for what was
+ * already there). `loaded` distinguishes "still loading" from "loaded, and empty". */
+function useArrivals<T extends { id: number }>(items: T[], loaded: boolean, onNew: (item: T) => void) {
+  const seen = useRef<Set<number> | null>(null);
+  const cb = useRef(onNew);
+  cb.current = onNew;
+  useEffect(() => {
+    if (seen.current === null) {
+      if (loaded) seen.current = new Set(items.map((i) => i.id));
+      return;
+    }
+    for (const item of items) {
+      if (!seen.current.has(item.id)) {
+        seen.current.add(item.id);
+        cb.current(item);
+      }
+    }
+  }, [items, loaded]);
 }

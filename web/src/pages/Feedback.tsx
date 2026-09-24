@@ -26,7 +26,7 @@ export default function FeedbackPage() {
           answer also creates a supervised example. The Observer reads your critiques and decides what to generate next.
         </p>
       </div>
-      <div className="grid gap-5 lg:grid-cols-[1fr_300px]">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
         <Compare projectId={projectId} systemPrompt={ov?.project.system_prompt ?? ""} />
         <SidePanel projectId={projectId} />
       </div>
@@ -302,7 +302,7 @@ function ReviewQueue({ projectId }: { projectId: number }) {
     >
       <ul className="divide-y divide-line">
         {pairs.map((p) => (
-          <li key={`p${p.id}`} className="grid gap-3 p-4 md:grid-cols-[1fr_1fr_1fr_auto]">
+          <li key={`p${p.id}`} className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
             <div className="text-[13px]">
               <Badge tone="accent">pair</Badge>
               <p className="mt-1 whitespace-pre-wrap">{p.prompt}</p>
@@ -313,7 +313,7 @@ function ReviewQueue({ projectId }: { projectId: number }) {
           </li>
         ))}
         {sft.map((s) => (
-          <li key={`s${s.id}`} className="grid gap-3 p-4 md:grid-cols-[1fr_2fr_auto]">
+          <li key={`s${s.id}`} className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
             <div className="text-[13px]">
               <Badge tone="info">SFT</Badge>
               <p className="mt-1 whitespace-pre-wrap">{s.messages.find((m) => m.role === "user")?.content}</p>
