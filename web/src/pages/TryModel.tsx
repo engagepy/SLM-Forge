@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
@@ -7,6 +7,64 @@ import ChatComposer from "../components/ChatComposer";
 import Markdown from "../components/Markdown";
 import { useChatStream, useStudio } from "../hooks";
 import { Badge, CodeBlock, cx, ErrorNote, Select, Spinner } from "../ui";
+
+/** Things to try: on-goal inputs and one the model should answer with its empty or negative
+ * result. Used ones stay, ticked, until all four are used and four fresh ones replace them. */
+function Suggestions({
+  chips,
+  busy,
+  onPick,
+  onRefresh,
+  error,
+}: {
+  chips: Chip[];
+  busy: boolean;
+  onPick: (c: Chip) => void;
+  onRefresh: () => void;
+  error: unknown;
+}) {
+  return (
+    <div className="border-t border-line px-4 pt-2.5 pb-1">
+      <div className="flex items-center gap-2 text-[11px] text-faint">
+        <span>Try these</span>
+        <span className="text-faint/70">· grey ones should get the empty or negative answer</span>
+        <button className="ml-auto hover:text-fg" onClick={onRefresh} disabled={busy}>
+          {busy ? "…" : "new suggestions"}
+        </button>
+      </div>
+      <ErrorNote error={error} />
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {chips.map((c) => (
+          <button
+            key={c.text}
+            onClick={() => !c.used && onPick(c)}
+            disabled={busy || c.used}
+            title={c.expect ? `Expect: ${c.expect}` : undefined}
+            className={cx(
+              "max-w-full truncate rounded-full border px-3 py-1 text-left text-[12px] transition",
+              c.used
+                ? "border-line text-faint line-through opacity-60"
+                : c.kind === "should-not"
+                  ? "border-dashed border-line bg-panel-2/60 text-muted hover:border-accent/50 hover:text-fg"
+                  : "border-line bg-panel text-muted hover:border-accent/50 hover:text-fg",
+            )}
+          >
+            {c.used ? "✓ " : ""}
+            {c.text}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A suggested input: on-goal, or one the model should answer with its empty/negative result. */
+interface Chip {
+  text: string;
+  kind: "on-goal" | "should-not";
+  expect: string;
+  used: boolean;
+}
 
 const CREATIVITY = [
   { value: "0.3", label: "Focused" },
@@ -33,8 +91,30 @@ export default function TryModel() {
     reset();
   }, [chosen?.job_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The Tuner's own test questions make good first things to ask.
-  const starters = [...new Set((project.data?.samples ?? []).filter((x) => x.target !== "base").map((x) => x.prompt))].slice(0, 4);
+  // Suggestions: the project's own test questions first (free), then four fresh ones from the
+  // teacher model each time all four have been used. Used ones stay visible, marked.
+  const [chips, setChips] = useState<Chip[]>([]);
+  const [seeded, setSeeded] = useState(false);
+  const suggest = useMutation({
+    mutationFn: (used: string[]) => api.post<{ prompts: Chip[] }>(`/api/projects/${projectId}/try/prompts`, { used }),
+    onSuccess: (r) => setChips(r.prompts.map((c) => ({ ...c, used: false }))),
+  });
+  const usedTexts = () => chips.filter((c) => c.used).map((c) => c.text);
+  useEffect(() => {
+    if (seeded || !project.data) return;
+    const own = project.data.project.test_questions ?? [];
+    const fromSamples = [...new Set((project.data.samples ?? []).map((x) => x.prompt))];
+    const first = [...new Set([...own, ...fromSamples])].slice(0, 4);
+    setSeeded(true);
+    if (first.length) setChips(first.map((text) => ({ text, kind: "on-goal", expect: "", used: false })));
+    else suggest.mutate([]);
+  }, [project.data, seeded]); // eslint-disable-line react-hooks/exhaustive-deps
+  const useChip = (c: Chip) => {
+    send(c.text);
+    const next = chips.map((x) => (x.text === c.text ? { ...x, used: true } : x));
+    setChips(next);
+    if (next.every((x) => x.used)) suggest.mutate(next.map((x) => x.text));
+  };
 
   const send = (text: string) =>
     chosen &&
@@ -94,19 +174,6 @@ export default function TryModel() {
                   <p className="mt-1 text-[13px] text-muted">
                     This is your finished model, running from its folder on this Mac. Nothing leaves your computer.
                   </p>
-                  {starters.length > 0 && (
-                    <div className="mt-5 flex flex-wrap justify-center gap-2">
-                      {starters.map((q) => (
-                        <button
-                          key={q}
-                          onClick={() => send(q)}
-                          className="rounded-full border border-line bg-panel px-3 py-1.5 text-left text-[12.5px] text-muted hover:border-accent/50 hover:text-fg"
-                        >
-                          {q}
-                        </button>
-                      ))}
-                    </div>
-                  )}
                 </div>
               )}
               {messages.map((m, i) => (
@@ -129,6 +196,7 @@ export default function TryModel() {
               <ErrorNote error={chat.error} />
               <div ref={chat.bottom} />
             </div>
+            <Suggestions chips={chips} busy={busy || suggest.isPending} onPick={useChip} onRefresh={() => suggest.mutate(usedTexts())} error={suggest.error} />
             <ChatComposer
               busy={busy}
               onSend={send}

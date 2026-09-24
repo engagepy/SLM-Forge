@@ -128,6 +128,9 @@ agents and the UI don't care which one is behind them.
   checkpoint on them with `evaluate_model` (GPT-6 grades each answer 0–10 against the goal). The
   scores sit on the Evaluate card, the export is the best-scoring checkpoint (`serve_checkpoint`
   rolls back if the latest run made things worse), and DPO isn't attempted under 30 pairs.
+- **Try it keeps you testing:** four suggested inputs sit above the message box, three on-goal at
+  varied difficulty and one that should get the model's empty or negative answer (dashed). Used ones
+  stay ticked; once all four are used, GPT-6 writes four fresh ones scoped to the goal.
 - **Exports work with no flags.** The project's system prompt is built into the exported model's
   chat template, so `mlx_lm.generate --model <folder> --prompt "…"` (or any loader) behaves like
   the app. Exports made before this show a `--system-prompt` in their command instead.

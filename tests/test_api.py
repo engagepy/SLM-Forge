@@ -95,3 +95,33 @@ def test_openapi_lists_all_route_groups(client):
     for p in ("/api/system", "/api/projects/{project_id}/compare", "/api/proposals/{proposal_id}/approve",
               "/api/jobs/{job_id}/stream", "/api/projects/{project_id}/train/presets"):  # fmt: skip
         assert p in paths
+
+
+def test_try_prompts_are_scoped_and_skip_used_ones(client, session, project):
+    from slm.agents.provider import FakeProvider, set_provider
+
+    set_provider(
+        FakeProvider(
+            json_responses=[
+                {
+                    "prompts": [
+                        {"text": "How long do I boil an egg?", "kind": "on-goal", "expect": "a time in minutes"},
+                        {"text": "How long do I boil an egg?", "kind": "on-goal", "expect": "dup"},
+                        {
+                            "text": "What's the weather today?",
+                            "kind": "should-not",
+                            "expect": "says it only does cooking",
+                        },
+                        {"text": "Rest a steak how long?", "kind": "other", "expect": "minutes"},
+                        {"text": "Extra beyond four", "kind": "on-goal", "expect": "x"},
+                        {"text": "Sixth", "kind": "on-goal", "expect": "x"},
+                    ]
+                }
+            ]
+        )
+    )
+    r = client.post(f"/api/projects/{project.id}/try/prompts", json={"used": ["how long do I boil an egg?"]}).json()
+    texts = [p["text"] for p in r["prompts"]]
+    assert "How long do I boil an egg?" not in texts  # already used (case-insensitive)
+    assert len(r["prompts"]) <= 4 and r["prompts"][0]["kind"] == "should-not"
+    assert r["prompts"][1]["kind"] == "on-goal"  # unknown kinds fall back to on-goal

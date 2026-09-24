@@ -79,6 +79,68 @@ def generate(project_id: int, body: GenerateIn, s: Session = SessionDep):
     return EventSourceResponse(iterate_in_threadpool(_stream_events([(None, messages, body.params, where)])))
 
 
+SUGGEST_SYSTEM = """You write test inputs for a small language model that was fine-tuned for one specific
+job. Someone is trying the finished model and wants inputs that show whether it really does the
+job. Write exactly four, each under 160 characters, in the form a real user would type:
+- three ON-GOAL inputs of varied difficulty (easy, typical, tricky), the kind of thing the model is
+  for, phrased differently from the ones already used;
+- one input where the CORRECT behaviour is to produce the empty/negative result the system prompt
+  defines (or to say it can't help): off-topic text, a greeting, or a near-miss that mentions the
+  domain without meeting the condition. Set kind="should-not".
+Never repeat or lightly rephrase an input from the list already used. For each, say in a few words
+what a correct answer looks like (expect)."""
+
+SUGGEST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "prompts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["on-goal", "should-not"]},
+                    "expect": {"type": "string"},
+                },
+                "required": ["text", "kind", "expect"],
+            },
+        }
+    },
+    "required": ["prompts"],
+}
+
+
+class SuggestIn(BaseModel):
+    used: list[str] = []
+
+
+@router.post("/try/prompts")
+def suggest_prompts(project_id: int, body: SuggestIn, s: Session = SessionDep) -> dict:
+    """Four fresh inputs for trying the model: three on-goal, one that should yield the empty or
+    negative result. Written by the teacher model from the goal and system prompt (one API call)."""
+    from slm.agents.provider import get_provider
+
+    p = project_or_404(s, project_id)
+    used = [u.strip() for u in body.used if u.strip()][-40:]
+    user = (
+        f"Goal: {p.goal}\nSystem prompt the model runs with: {p.system_prompt or '(none)'}\n\n"
+        f"Already used (don't repeat):\n" + ("\n".join(f"- {u}" for u in used) or "- (none)")
+    )
+    try:
+        out = get_provider().json(SUGGEST_SYSTEM, user, SUGGEST_SCHEMA)
+    except Exception as e:
+        raise HTTPException(502, f"Couldn't write suggestions: {e}") from e
+    seen = {u.lower() for u in used}
+    prompts = []
+    for it in out.get("prompts", []):
+        text = str(it.get("text", "")).strip()
+        if text and text.lower() not in seen:
+            seen.add(text.lower())
+            kind = "should-not" if it.get("kind") == "should-not" else "on-goal"
+            prompts.append({"text": text[:200], "kind": kind, "expect": str(it.get("expect", ""))[:120]})
+    return {"prompts": prompts[:4]}
+
+
 class CompareIn(BaseModel):
     prompt: str
     system: str | None = None
