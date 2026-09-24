@@ -18,10 +18,10 @@ class Settings(BaseSettings):
     agent_provider: Literal["openai", "claude", "ollama"] = "openai"
     openai_model: str = "gpt-6-luna"  # all agentic work: the Tuner and the helper agents
     openai_tracing: bool = True  # send agent traces to the OpenAI dashboard
-    # USD per million tokens, for the usage meter (SLM_OPENAI_PRICE_INPUT etc.). Unset: usage.DEFAULT_PRICES.
-    openai_price_input: float | None = None
-    openai_price_cached: float | None = None
-    openai_price_output: float | None = None
+    # The spend meter reads OpenAI's Costs API, which needs an organisation admin key; the project
+    # id narrows it to the project the API key belongs to. Both also accepted unprefixed in .env.
+    openai_admin_key: str | None = None
+    openai_project_id: str | None = None
     claude_model: str = "claude-opus-5"
     ollama_model: str = "qwen2.5:7b-instruct"
     ollama_url: str = "http://localhost:11434"
@@ -80,7 +80,12 @@ def get_settings() -> Settings:
 
     s = Settings()
     # pydantic-settings only maps SLM_-prefixed names; accept the standard key names too.
-    for field, name in (("openai_api_key", "OPENAI_API_KEY"), ("anthropic_api_key", "ANTHROPIC_API_KEY")):
+    for field, name in (
+        ("openai_api_key", "OPENAI_API_KEY"),
+        ("anthropic_api_key", "ANTHROPIC_API_KEY"),
+        ("openai_admin_key", "OPENAI_ADMIN_KEY"),
+        ("openai_project_id", "OPENAI_PROJECT_ID"),
+    ):
         if getattr(s, field) is None:
             setattr(s, field, os.environ.get(name) or _dotenv_value(name))
     return s

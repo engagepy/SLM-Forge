@@ -1,117 +1,102 @@
-"""A running meter of what the project spends on the OpenAI API.
+"""What the OpenAI account has spent, read from OpenAI's Costs API.
 
-OpenAI's billing endpoints need an admin key, which the app doesn't have, so it meters itself:
-every call we make returns token counts, we know the model, and the price per token is a setting.
-Totals are per project (the Tuner's turns, judging, writing examples) and all-time.
+The figure comes from OpenAI, not from counting tokens. The Costs API needs an organisation
+admin key (`OPENAI_ADMIN_KEY`; the project key in OPENAI_API_KEY lacks the `api.usage.read`
+scope), returns daily buckets in USD, and can be narrowed to one OpenAI project
+(`OPENAI_PROJECT_ID`). OpenAI updates it with a lag of a few hours, so the meter is a read of the
+account, refreshed every ten minutes, not a live counter. Other providers: not yet.
 """
 
-from contextlib import contextmanager
-from contextvars import ContextVar
+import threading
+import time
+from datetime import UTC, datetime, timedelta
 
-from sqlmodel import Session, func, select
+import httpx
 
 from slm.config import get_settings
-from slm.db import ApiUsage, engine
-from slm.events import bus
 
-# USD per million tokens, when SLM_OPENAI_PRICE_* isn't set. Check them against your plan.
-DEFAULT_PRICES = {"input": 2.0, "cached": 0.5, "output": 8.0}
+COSTS_URL = "https://api.openai.com/v1/organization/costs"
+CACHE_SECONDS = 600
 
-_scope: ContextVar[tuple[int | None, str]] = ContextVar("usage_scope", default=(None, "other"))
-
-
-@contextmanager
-def scope(project_id: int | None, purpose: str):
-    """Attribute every API call made inside to this project and purpose."""
-    token = _scope.set((project_id, purpose))
-    try:
-        yield
-    finally:
-        _scope.reset(token)
+_cache: dict = {}
+_lock = threading.Lock()
 
 
-def prices() -> dict:
-    s = get_settings()
-    return {
-        "input": s.openai_price_input if s.openai_price_input is not None else DEFAULT_PRICES["input"],
-        "cached": s.openai_price_cached if s.openai_price_cached is not None else DEFAULT_PRICES["cached"],
-        "output": s.openai_price_output if s.openai_price_output is not None else DEFAULT_PRICES["output"],
-        "configured": s.openai_price_input is not None,
-    }
-
-
-def cost_usd(input_tokens: int, output_tokens: int, cached_tokens: int = 0) -> float:
-    p = prices()
-    fresh = max(0, input_tokens - cached_tokens)
-    return (fresh * p["input"] + cached_tokens * p["cached"] + output_tokens * p["output"]) / 1_000_000
-
-
-def record(
-    model: str,
-    input_tokens: int,
-    output_tokens: int,
-    *,
-    cached_tokens: int = 0,
-    requests: int = 1,
-    project_id: int | None = None,
-    purpose: str | None = None,
-) -> ApiUsage:
-    """Store one call (or one agent run) and tell the UI the meter moved."""
-    scoped_pid, scoped_purpose = _scope.get()
-    row = ApiUsage(
-        project_id=scoped_pid if project_id is None else project_id,
-        model=model,
-        purpose=purpose or scoped_purpose,
-        requests=requests,
-        input_tokens=int(input_tokens or 0),
-        cached_input_tokens=int(cached_tokens or 0),
-        output_tokens=int(output_tokens or 0),
-        cost_usd=cost_usd(int(input_tokens or 0), int(output_tokens or 0), int(cached_tokens or 0)),
-    )
-    with Session(engine()) as s:
-        s.add(row)
-        s.commit()
-        s.refresh(row)
-    bus.publish("jobs", {"type": "usage", "project_id": row.project_id})
-    return row
-
-
-def masked_key() -> str | None:
-    k = get_settings().openai_api_key
+def _masked(k: str | None) -> str | None:
     if not k:
         return None
     return f"{k[:7]}…{k[-4:]}" if len(k) > 14 else "•••"
 
 
-def _totals(s: Session, *where) -> dict:
-    row = s.exec(
-        select(
-            func.coalesce(func.sum(ApiUsage.requests), 0),
-            func.coalesce(func.sum(ApiUsage.input_tokens), 0),
-            func.coalesce(func.sum(ApiUsage.cached_input_tokens), 0),
-            func.coalesce(func.sum(ApiUsage.output_tokens), 0),
-            func.coalesce(func.sum(ApiUsage.cost_usd), 0.0),
-        ).where(*where)
-    ).one()
+def _fetch_costs(admin_key: str, start: datetime, project_id: str | None) -> list[dict]:
+    """Daily cost buckets from `start` (UTC) to now, following pagination."""
+    buckets, page = [], None
+    params: dict = {"start_time": int(start.timestamp()), "bucket_width": "1d", "limit": 180}
+    if project_id:
+        params["project_ids[]"] = project_id
+    with httpx.Client(timeout=20, headers={"Authorization": f"Bearer {admin_key}"}) as client:
+        while True:
+            r = client.get(COSTS_URL, params=params | ({"page": page} if page else {}))
+            if r.status_code != 200:
+                try:
+                    detail = r.json().get("error", {})
+                    detail = detail.get("message", detail) if isinstance(detail, dict) else detail
+                except ValueError:
+                    detail = r.text[:200]
+                raise RuntimeError(f"OpenAI Costs API: {r.status_code}: {detail}")
+            body = r.json()
+            buckets.extend(body.get("data", []))
+            if not body.get("has_more") or not body.get("next_page"):
+                return buckets
+            page = body["next_page"]
+
+
+def _bucket_usd(bucket: dict) -> float:
+    return sum(float((res.get("amount") or {}).get("value") or 0) for res in bucket.get("results", []))
+
+
+def _read(now: datetime) -> dict:
+    s = get_settings()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start = min(month_start, now - timedelta(days=30))
+    buckets = _fetch_costs(s.openai_admin_key, start, s.openai_project_id)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    days = {datetime.fromtimestamp(b["start_time"], UTC): _bucket_usd(b) for b in buckets}
+
+    def since(t: datetime) -> float:
+        return round(sum(v for d, v in days.items() if d >= t), 2)
+
     return {
-        "requests": int(row[0]),
-        "input_tokens": int(row[1]),
-        "cached_input_tokens": int(row[2]),
-        "output_tokens": int(row[3]),
-        "cost_usd": round(float(row[4]), 4),
+        "today_usd": round(days.get(today, 0.0), 2),
+        "month_to_date_usd": since(month_start),
+        "last_7_days_usd": since(today - timedelta(days=6)),
+        "last_30_days_usd": since(today - timedelta(days=29)),
+        "daily": [{"date": d.date().isoformat(), "usd": round(v, 2)} for d, v in sorted(days.items())][-30:],
     }
 
 
-def summary(project_id: int | None = None) -> dict:
-    """What the meter reads: this project (if given), all projects, and how the cost is estimated."""
-    with Session(engine()) as s:
-        out = {"key": masked_key(), "model": get_settings().openai_model, "prices": prices(), "all_time": _totals(s)}
-        if project_id is not None:
-            out["project"] = _totals(s, ApiUsage.project_id == project_id)
-            by = s.exec(
-                select(ApiUsage.purpose, func.sum(ApiUsage.cost_usd), func.sum(ApiUsage.requests))
-                .where(ApiUsage.project_id == project_id)
-                .group_by(ApiUsage.purpose)
-            ).all()
-            out["project"]["by_purpose"] = {p: {"cost_usd": round(float(c), 4), "requests": int(n)} for p, c, n in by}
-    return out
+def spend(refresh: bool = False) -> dict:
+    """The meter's reading, cached for CACHE_SECONDS. Never raises: errors are part of the reading."""
+    s = get_settings()
+    out = {
+        "provider": "openai",
+        "configured": bool(s.openai_admin_key),
+        "key": _masked(s.openai_api_key),
+        "project_id": s.openai_project_id,
+        "model": s.openai_model,
+    }
+    if not s.openai_admin_key:
+        return out | {"setup": "Set OPENAI_ADMIN_KEY in .env (an organisation admin key from platform.openai.com)."}
+    with _lock:
+        fresh = _cache.get("at", 0) > time.time() - CACHE_SECONDS
+        if not refresh and fresh and "reading" in _cache:
+            return out | _cache["reading"]
+        try:
+            reading = _read(datetime.now(UTC)) | {
+                "as_of": datetime.now(UTC).isoformat(timespec="seconds"),
+                "error": None,
+            }
+        except Exception as e:  # a bad key, no scope, network: the UI shows why
+            reading = {"error": str(e)[:300], "as_of": datetime.now(UTC).isoformat(timespec="seconds")}
+        _cache.update(at=time.time(), reading=reading)
+        return out | reading

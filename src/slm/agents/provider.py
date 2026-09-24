@@ -270,11 +270,6 @@ class OpenAIProvider:
             )
         except openai.OpenAIError as e:
             raise self._wrap_errors(e) from e
-        if u := getattr(resp, "usage", None):
-            from slm import usage
-
-            cached = getattr(getattr(u, "input_tokens_details", None), "cached_tokens", 0) or 0
-            usage.record(self.model, u.input_tokens, u.output_tokens, cached_tokens=cached)
         if not resp.output_text:
             raise ProviderError("OpenAI returned no structured output (refused or empty).")
         return json.loads(resp.output_text)

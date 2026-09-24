@@ -19,7 +19,6 @@ from agents import Runner, SQLiteSession
 from agents.exceptions import MaxTurnsExceeded
 from sqlmodel import Session, select
 
-from slm import usage
 from slm.agents.provider import OpenAIProvider
 from slm.config import get_settings
 from slm.db import (
@@ -194,8 +193,6 @@ class Tuner:
                 if ev.type == "raw_response_event" and getattr(ev.data, "type", "") == "response.output_text.delta":
                     segment.append(ev.data.delta)
                     _publish(pid, {"type": "delta", "text": ev.data.delta})
-                elif ev.type == "raw_response_event" and getattr(ev.data, "type", "") == "response.completed":
-                    _record_response(pid, ev.data.response)  # meter each model call as it lands
                 elif ev.type == "run_item_stream_event" and ev.name == "tool_called":
                     flush()  # text before a tool call is its own message
                     raw = ev.item.raw_item
@@ -228,19 +225,6 @@ class Tuner:
             self._runs.pop(pid, None)
             _publish(pid, {"type": "turn_end"})
             canvas_changed(pid)
-
-
-def _record_response(pid: int, response) -> None:
-    """Meter one model call of a turn, the moment it completes. Per call rather than per turn, so a
-    long turn shows on the meter as it runs and a killed server loses nothing."""
-    u = getattr(response, "usage", None)
-    if u is None:
-        return
-    cached = getattr(getattr(u, "input_tokens_details", None), "cached_tokens", 0) or 0
-    usage.record(
-        getattr(response, "model", None) or get_settings().openai_model, u.input_tokens, u.output_tokens,
-        cached_tokens=cached, project_id=pid, purpose="tuner",
-    )  # fmt: skip
 
 
 tuner = Tuner()

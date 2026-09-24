@@ -1,96 +1,99 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { api } from "../api";
 import { cx } from "../ui";
 
-interface Totals {
-  requests: number;
-  input_tokens: number;
-  cached_input_tokens: number;
-  output_tokens: number;
-  cost_usd: number;
-  by_purpose?: Record<string, { cost_usd: number; requests: number }>;
-}
-
-export interface Usage {
+export interface Spend {
+  provider: "openai";
+  configured: boolean;
   key: string | null;
+  project_id: string | null;
   model: string;
-  prices: { input: number; cached: number; output: number; configured: boolean };
-  all_time: Totals;
-  project?: Totals;
+  setup?: string;
+  error?: string | null;
+  as_of?: string;
+  today_usd?: number;
+  month_to_date_usd?: number;
+  last_7_days_usd?: number;
+  last_30_days_usd?: number;
+  daily?: { date: string; usd: number }[];
 }
 
-const PURPOSE: Record<string, string> = {
-  tuner: "Tuner turns",
-  synthesize: "writing examples",
-  review: "AI review",
-  evaluate: "scoring",
-  agents: "helper agents",
-  other: "other",
-};
+export const usd = (n: number | undefined) => (n == null ? "—" : `$${n.toFixed(2)}`);
 
-export const usd = (n: number) => (n < 0.01 && n > 0 ? "<$0.01" : `$${n.toFixed(2)}`);
-const tokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-
-/** The OpenAI meter; refreshed by the jobs feed's `usage` events. */
-export function useUsage(projectId?: number) {
-  return useQuery({
-    queryKey: ["usage", projectId ?? "all"],
-    queryFn: () => api.get<Usage>(`/api/usage${projectId != null ? `?project_id=${projectId}` : ""}`),
-  });
+/** The account's spend, from OpenAI's Costs API; the server caches it for ten minutes. */
+export function useSpend() {
+  return useQuery({ queryKey: ["usage"], queryFn: () => api.get<Spend>("/api/usage"), refetchInterval: 600_000 });
 }
 
-/** A pill with what this project (or everything) has cost so far; click for the breakdown. */
-export default function UsageMeter({ projectId, className }: { projectId?: number; className?: string }) {
-  const { data } = useUsage(projectId);
+/** A pill with what the OpenAI account has spent; click for the breakdown or to refresh. */
+export default function UsageMeter({ className }: { className?: string }) {
+  const { data } = useSpend();
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   if (!data) return null;
-  const t = data.project ?? data.all_time;
+  const ok = data.configured && !data.error;
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      qc.setQueryData(["usage"], await api.get<Spend>("/api/usage?refresh=true"));
+    } finally {
+      setRefreshing(false);
+    }
+  };
   return (
     <div className={cx("relative", className)}>
       <button
         onClick={() => setOpen(!open)}
-        title="OpenAI usage so far (estimated from token counts)"
+        title="OpenAI spend, read from your account"
         className="flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs text-muted hover:text-fg"
       >
-        <span className="text-faint">API</span>
-        <span className="num font-medium text-fg">{usd(t.cost_usd)}</span>
-        <span className="num text-faint">· {tokens(t.input_tokens + t.output_tokens)} tokens</span>
+        <span className="text-faint">OpenAI</span>
+        {ok ? (
+          <>
+            <span className="num font-medium text-fg">{usd(data.month_to_date_usd)}</span>
+            <span className="num text-faint">this month · {usd(data.today_usd)} today</span>
+          </>
+        ) : (
+          <span className={data.error ? "text-warn" : "text-faint"}>{data.error ? "can't read spend" : "spend not set up"}</span>
+        )}
       </button>
       {open && (
         <div className="absolute right-0 z-20 mt-1.5 w-72 rounded-xl border border-line bg-panel p-3 text-xs shadow-lg">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold">{data.project ? "This project" : "All projects"}</span>
-            <span className="num text-[15px] font-semibold">{usd(t.cost_usd)}</span>
-          </div>
-          <div className="num mt-1 text-faint">
-            {t.requests} requests · {tokens(t.input_tokens)} in ({tokens(t.cached_input_tokens)} cached) · {tokens(t.output_tokens)} out
-          </div>
-          {t.by_purpose && Object.keys(t.by_purpose).length > 0 && (
-            <ul className="mt-2 space-y-0.5 border-t border-line pt-2">
-              {Object.entries(t.by_purpose)
-                .sort((a, b) => b[1].cost_usd - a[1].cost_usd)
-                .map(([p, v]) => (
-                  <li key={p} className="flex justify-between">
-                    <span className="text-muted">{PURPOSE[p] ?? p}</span>
-                    <span className="num">{usd(v.cost_usd)}</span>
+          {ok ? (
+            <>
+              <ul className="space-y-1">
+                {(
+                  [
+                    ["Today", data.today_usd],
+                    ["This month", data.month_to_date_usd],
+                    ["Last 7 days", data.last_7_days_usd],
+                    ["Last 30 days", data.last_30_days_usd],
+                  ] as [string, number | undefined][]
+                ).map(([label, n]) => (
+                  <li key={label} className="flex justify-between">
+                    <span className="text-muted">{label}</span>
+                    <span className="num font-medium">{usd(n)}</span>
                   </li>
                 ))}
-            </ul>
+              </ul>
+              <div className="mt-2 flex items-center justify-between border-t border-line pt-2 text-[11px] text-faint">
+                <span>{data.project_id ? `project ${data.project_id}` : "whole organisation"} · as of {data.as_of?.slice(11, 16)} UTC</span>
+                <button onClick={refresh} className="hover:text-fg" disabled={refreshing}>
+                  {refreshing ? "…" : "refresh"}
+                </button>
+              </div>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
+                From OpenAI's Costs API; OpenAI posts costs with a lag of a few hours. Key in use {data.key} · {data.model}
+              </p>
+            </>
+          ) : data.error ? (
+            <p className="leading-relaxed text-warn">{data.error}</p>
+          ) : (
+            <p className="leading-relaxed text-muted">{data.setup}</p>
           )}
-          {data.project && (
-            <div className="mt-2 flex justify-between border-t border-line pt-2">
-              <span className="text-muted">All projects</span>
-              <span className="num">{usd(data.all_time.cost_usd)}</span>
-            </div>
-          )}
-          <div className="mt-2 border-t border-line pt-2 text-[11px] leading-relaxed text-faint">
-            Key {data.key ?? "not set"} · {data.model}
-            <br />
-            Estimated at ${data.prices.input}/{data.prices.cached}/${data.prices.output} per 1M tokens (in / cached / out)
-            {!data.prices.configured && ". Set SLM_OPENAI_PRICE_INPUT, _CACHED and _OUTPUT in .env to match your plan."}
-          </div>
         </div>
       )}
     </div>
