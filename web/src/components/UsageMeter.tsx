@@ -8,7 +8,8 @@ export interface Spend {
   provider: "openai";
   configured: boolean;
   key: string | null;
-  project_id: string | null;
+  project_id?: string | null;
+  project_name?: string | null;
   model: string;
   setup?: string;
   error?: string | null;
@@ -80,7 +81,9 @@ export default function UsageMeter({ className }: { className?: string }) {
                 ))}
               </ul>
               <div className="mt-2 flex items-center justify-between border-t border-line pt-2 text-[11px] text-faint">
-                <span>{data.project_id ? `project ${data.project_id}` : "whole organisation"} · as of {data.as_of?.slice(11, 16)} UTC</span>
+                <span>
+                  {data.project_id ? `project ${data.project_name || data.project_id}` : "whole organisation"} · as of {data.as_of?.slice(11, 16)} UTC
+                </span>
                 <button onClick={refresh} className="hover:text-fg" disabled={refreshing}>
                   {refreshing ? "…" : "refresh"}
                 </button>

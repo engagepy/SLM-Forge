@@ -31,9 +31,11 @@ def test_without_an_admin_key_the_meter_says_how_to_set_it_up(monkeypatch, clien
 def test_spend_sums_openai_cost_buckets_for_today_month_and_weeks(monkeypatch, client):
     s = get_settings()
     monkeypatch.setattr(s, "openai_admin_key", "sk-admin-test")
-    monkeypatch.setattr(s, "openai_project_id", "proj_abc")
+    monkeypatch.setattr(s, "openai_project_id", None)
     monkeypatch.setattr(s, "openai_api_key", "sk-proj-abcdefghijklmnop1234")
     usage._cache.clear()
+    # The key's project is found from the admin endpoints, not typed in.
+    monkeypatch.setattr(usage, "_find_project", lambda admin, key: {"id": "proj_abc", "name": "SLM Forge"})
     now = datetime.now(UTC)
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     calls = []
@@ -53,7 +55,8 @@ def test_spend_sums_openai_cost_buckets_for_today_month_and_weeks(monkeypatch, c
         v for d, v in ((0, 1.25), (1, 0.5), (6, 2.0), (10, 4.0)) if today - timedelta(days=d) >= month_start
     )
     assert out["month_to_date_usd"] == round(expected_month, 2)
-    assert out["key"] == "sk-proj…1234" and out["project_id"] == "proj_abc" and out["error"] is None
+    assert out["key"] == "sk-proj…1234" and out["project_id"] == "proj_abc" and out["project_name"] == "SLM Forge"
+    assert out["error"] is None
     # Cached: a second read within ten minutes doesn't call OpenAI again; refresh=true does.
     client.get("/api/usage")
     assert len(calls) == 1
@@ -61,8 +64,22 @@ def test_spend_sums_openai_cost_buckets_for_today_month_and_weeks(monkeypatch, c
     assert len(calls) == 2
 
 
+def test_an_ambiguous_or_unlisted_key_falls_back_to_the_whole_organisation(monkeypatch, client):
+    s = get_settings()
+    monkeypatch.setattr(s, "openai_admin_key", "sk-admin-test")
+    monkeypatch.setattr(s, "openai_project_id", None)
+    monkeypatch.setattr(s, "openai_api_key", "sk-proj-abcdefghijklmnop1234")
+    usage._cache.clear()
+    monkeypatch.setattr(usage, "_find_project", lambda admin, key: None)
+    seen = []
+    monkeypatch.setattr(usage, "_fetch_costs", lambda admin, start, pid: seen.append(pid) or [])
+    out = client.get("/api/usage").json()
+    assert seen == [None] and out["project_id"] is None and out["month_to_date_usd"] == 0
+
+
 def test_a_refused_key_shows_as_an_error_not_a_crash(monkeypatch, client):
     monkeypatch.setattr(get_settings(), "openai_admin_key", "sk-admin-bad")
+    monkeypatch.setattr(usage, "_find_project", lambda admin, key: None)
     usage._cache.clear()
 
     def refuse(admin_key, start, project_id):

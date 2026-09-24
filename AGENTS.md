@@ -80,8 +80,9 @@ src/slm/
   hardware.py      chip/RAM detect, memory estimators, max_params_for_budget
   sessions.py      machine-wide overview (capacity + per-project state), stop_project, resume_project
   profile.py       user level + notes, prompt_section() injected into Tuner instructions
-  usage.py         spend meter: OpenAI Costs API (needs OPENAI_ADMIN_KEY; OPENAI_PROJECT_ID filters),
-                   10-minute cache, never raises; GET /api/usage
+  usage.py         spend meter: OpenAI Costs API (needs OPENAI_ADMIN_KEY), narrowed to the key's own
+                   project (detected via the admin key list; OPENAI_PROJECT_ID overrides), 10-minute
+                   cache, never raises; GET /api/usage
   feedback.py      record_feedback → preference pairs + SFT examples (used by API and AI judge)
   models/          hub.py (search, fit verdict), manage.py (download local-first, HF cache scan)
   data/            scout_tools (HF search/preview/import), format (column mapping), clean,

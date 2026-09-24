@@ -131,8 +131,9 @@ agents and the UI don't care which one is behind them.
 - **A spend meter, read from OpenAI.** The pill in the Studio bar and the sidebar shows what the
   OpenAI account has spent today and this month, straight from OpenAI's Costs API (no token
   counting). It needs an organisation admin key in `.env` (`OPENAI_ADMIN_KEY`; the project key
-  can't read costs), and `OPENAI_PROJECT_ID` narrows it to your OpenAI project. OpenAI updates the
-  figure with a lag of a few hours; the meter refreshes every ten minutes. OpenAI only, for now.
+  can't read costs). It finds the OpenAI project your key belongs to by itself (`OPENAI_PROJECT_ID`
+  overrides). OpenAI updates the figure with a lag of a few hours; the meter refreshes every ten
+  minutes. OpenAI only, for now.
 - **AI feedback instead of human clicks:** `ai_review_answers` has the local model answer each
   prompt twice, and GPT-6 picks the better answer, writes the ideal one and critiques the flaws.
   Each verdict becomes a DPO preference pair and, where the model was wrong, a corrected SFT
