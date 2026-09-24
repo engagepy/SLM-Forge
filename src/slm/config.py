@@ -68,7 +68,9 @@ class Settings(BaseSettings):
 
 
 def _dotenv_value(name: str) -> str | None:
-    env_file = PROJECT_ROOT / ".env"
+    import os
+
+    env_file = Path(os.environ.get("SLM_DOTENV") or PROJECT_ROOT / ".env")  # tests point it at nothing
     if not env_file.exists():
         return None
     for line in env_file.read_text().splitlines():

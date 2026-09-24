@@ -3,8 +3,13 @@ import tempfile
 
 import pytest
 
-# Isolate every test run from the real workspace before slm modules read settings.
+# Isolate every test run from the real workspace, the real HF cache and the real keys before slm
+# modules read settings: a test must never see a downloaded model, a key or the user's .env.
 os.environ["SLM_WORKSPACE"] = tempfile.mkdtemp(prefix="slm-test-")
+os.environ["HF_HOME"] = tempfile.mkdtemp(prefix="slm-test-hf-")
+os.environ["SLM_DOTENV"] = "/nonexistent/.env"
+for _key in ("OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_PROJECT_ID", "ANTHROPIC_API_KEY"):
+    os.environ.pop(_key, None)
 
 from sqlalchemy.pool import StaticPool  # noqa: E402
 from sqlmodel import Session, create_engine  # noqa: E402

@@ -1,6 +1,7 @@
 """End-to-end smoke test of the training loop, no UI or agents.
 
-download → prepare SFT data → SFT → generate → preference pairs → DPO → export → reload
+download → prepare SFT data → SFT → a second SFT that resumes the adapter → generate →
+preference pairs → DPO → export (system prompt baked in, quantized when the base is bf16) → reload
 
     uv run python scripts/smoke.py [--model mlx-community/Qwen2.5-0.5B-Instruct-4bit]
 
@@ -21,7 +22,7 @@ os.environ.setdefault("SLM_WORKSPACE", tempfile.mkdtemp(prefix="slm-smoke-"))
 from sqlmodel import Session, select  # noqa: E402
 
 from slm.config import get_settings  # noqa: E402
-from slm.db import Dataset, Job, Metric, PreferencePair, Project, engine  # noqa: E402
+from slm.db import Checkpoint, Dataset, Job, Metric, PreferencePair, Project, engine  # noqa: E402
 from slm.inference.engine import SamplingParams  # noqa: E402
 from slm.inference.engine import engine as infer  # noqa: E402
 from slm.train import jobs  # noqa: E402,F401  (registers handlers)
@@ -37,6 +38,9 @@ PIRATE = [
     ("Tell me about the moon.", "The moon be the lantern o' the night sky, guidin' ships across the waves, arr!"),
     ("Why is the sky blue?", "Arr, the sunlight scatters in the air, an' the blue bits scatter most, matey!"),
 ]
+
+
+SYSTEM = "You are a pirate. Answer every question in pirate speak, in one or two sentences."
 
 
 def wait(job_id: int, timeout: float = 1800) -> Job:
@@ -69,7 +73,7 @@ def main() -> None:
     worker.start()
 
     with Session(engine()) as s:
-        p = Project(name="smoke", goal="Answer like a pirate", base_model=args.model)
+        p = Project(name="smoke", goal="Answer like a pirate", base_model=args.model, system_prompt=SYSTEM)
         s.add(p)
         s.commit()
         s.refresh(p)
@@ -96,7 +100,13 @@ def main() -> None:
             "prepare_dataset",
             {
                 "dataset_id": ds.id,
-                "mapping": {"format": "instruction", "prompt": "instruction", "response": "output"},
+                # Every example carries the system prompt the export will bake in.
+                "mapping": {
+                    "format": "instruction",
+                    "prompt": "instruction",
+                    "response": "output",
+                    "system": "=" + SYSTEM,
+                },
                 "max_seq_length": 256,
             },
             pid,
@@ -108,7 +118,7 @@ def main() -> None:
     train = {
         "iters": args.sft_iters,
         "batch_size": 4,
-        "learning_rate": 2e-4,
+        "learning_rate": 1e-4,  # 2e-4 has diverged on these models
         "lora_rank": 8,
         "num_layers": 8,
         "max_seq_length": 256,
@@ -127,6 +137,18 @@ def main() -> None:
     print(f"  parsed {len(metrics)} train metrics; loss {first:.3f} → {last:.3f}; result={sft.result['metrics']}")
     assert last < first, "SFT loss did not decrease"
 
+    print("3b. SFT again: resumes the served adapter instead of fusing a copy")
+    again = {"train": train | {"iters": max(10, args.sft_iters // 4)}, "dataset_version_id": vid}
+    sft2 = wait(worker.submit("sft", again, pid).id)
+    cfg2 = (Path(sft2.log_path).parent / "config.yaml").read_text()
+    assert "resume_adapter_file" in cfg2, "the second run did not resume the first adapter"
+    assert not (Path(sft2.log_path).parent / "fused").exists(), "a fused copy was written between rounds"
+    with Session(engine()) as s:
+        ck = s.exec(select(Checkpoint).where(Checkpoint.job_id == sft2.id)).one()
+        parent = s.get(Checkpoint, ck.parent_id)
+    assert parent is not None and parent.job_id == sft.id, "lineage: the second run must descend from the first"
+    print(f"  checkpoint {ck.id} ← {parent.id}; result={sft2.result['metrics']}")
+
     print("4. generate with adapter")
     with Session(engine()) as s:
         p = s.get(Project, pid)
@@ -141,10 +163,9 @@ def main() -> None:
     ]
     with Session(engine()) as s:
         for q in prompts:
-            a, stats = infer.generate([{"role": "user", "content": q}], params, **where)
-            b, _ = infer.generate(
-                [{"role": "user", "content": q}], params.model_copy(update={"temperature": 1.3, "seed": 7}), **where
-            )
+            msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": q}]  # as trained
+            a, stats = infer.generate(msgs, params, **where)
+            b, _ = infer.generate(msgs, params.model_copy(update={"temperature": 1.3, "seed": 7}), **where)
             print(f"  Q: {q}\n  A: {a[:100]!r}  ({stats['tokens_per_sec']} tok/s)")
             # Pretend the human prefers the first candidate.
             s.add(PreferencePair(project_id=pid, prompt=q, chosen=a or "Arr!", rejected=b or "No."))
@@ -169,16 +190,19 @@ def main() -> None:
     assert dm, "no DPO metrics parsed"
     print(f"  parsed {len(dm)} DPO metrics; result={dpo.result['metrics']}")
 
-    print("6. export")
-    exp = wait(
-        worker.submit("export", {"name": "smoke-pirate", "sampling": params.model_dump(exclude_none=True)}, pid).id
-    )
+    print("6. export (quantized to 4-bit unless the base already is)")
+    export = {"name": "smoke-pirate", "quantize_bits": 4, "sampling": params.model_dump(exclude_none=True)}
+    exp = wait(worker.submit("export", export, pid).id)
     print(f"  {exp.result}")
+    assert exp.result["system_prompt_built_in"], "the system prompt was not baked into the chat template"
+    exported_cfg = json.loads((Path(exp.result["path"]) / "config.json").read_text())
+    assert exported_cfg.get("quantization"), "export is not quantized"
 
-    print("7. reload exported model")
+    print("7. reload the exported model with no system prompt: the baked one must apply")
     out, _ = infer.generate([{"role": "user", "content": "Who are you?"}], params, model_path=exp.result["path"])
     print(f"  {out[:120]!r}")
     assert out.strip(), "exported model produced no text"
+    infer.shutdown()
     print("\nPASS")
 
 

@@ -44,6 +44,39 @@ class ScriptedModel(Model):
         raise NotImplementedError
 
 
+class StreamingScriptedModel(ScriptedModel):
+    """The same scripted turns, streamed the way Runner.run_streamed consumes them: a text delta per
+    message, then the completed response that carries the turn's output items."""
+
+    async def stream_response(self, system_instructions, input, model_settings, tools, *args, **kwargs):
+        from openai.types.responses import Response, ResponseCompletedEvent, ResponseTextDeltaEvent
+
+        self.seen_tools = [t.name for t in tools]
+        turn = self.turns.pop(0)
+        seq = 0
+        for i, item in enumerate(turn):
+            if isinstance(item, ResponseOutputMessage):
+                yield ResponseTextDeltaEvent(
+                    type="response.output_text.delta", delta=item.content[0].text, item_id=item.id,
+                    content_index=0, output_index=i, logprobs=[], sequence_number=seq,
+                )  # fmt: skip
+                seq += 1
+        yield ResponseCompletedEvent(
+            type="response.completed",
+            sequence_number=seq,
+            response=Response(
+                id="resp",
+                created_at=0,
+                model="scripted",
+                object="response",
+                output=turn,
+                parallel_tool_calls=False,
+                tool_choice="auto",
+                tools=[],
+            ),  # fmt: skip
+        )
+
+
 @pytest.fixture
 def openai_settings(monkeypatch):
     s = get_settings()

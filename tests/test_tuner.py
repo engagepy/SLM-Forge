@@ -963,3 +963,96 @@ def test_export_tool_rejects_bad_quantize_bits_before_proposing(project):
     from slm.tuner import confirm
 
     assert not confirm.pending(project.id)  # nothing was proposed
+
+
+# ── the turn loop: send → _drain → _turn, on the Tuner's own thread ─────────
+
+
+def _wait_idle(pid: int, timeout: float = 20) -> None:
+    import time
+
+    deadline = time.time() + timeout
+    while tuner.is_busy(pid):
+        assert time.time() < deadline, "the turn never ended"
+        time.sleep(0.05)
+
+
+def _transcript(session, pid: int) -> list[TunerMessage]:
+    session.expire_all()
+    return session.exec(select(TunerMessage).where(TunerMessage.project_id == pid).order_by(TunerMessage.id)).all()
+
+
+def test_a_turn_records_the_tool_call_and_the_answer_in_order(session, project, monkeypatch):
+    from test_openai_provider import StreamingScriptedModel, _call, _text
+
+    monkeypatch.setattr(tuner, "model_override", StreamingScriptedModel([
+        [_call("set_stage", {"stage": "data", "note": "Looking for data"}, 1)],
+        [_text("Found some data.")],
+    ]))  # fmt: skip
+    tuner.send(project.id, "hello")
+    _wait_idle(project.id)
+    rows = _transcript(session, project.id)
+    assert [(r.role, r.content) for r in rows] == [
+        ("user", "hello"),
+        ("tool", "set_stage"),
+        ("assistant", "Found some data."),
+    ]
+    assert rows[1].meta["status"] == "done" and rows[1].meta["args"] == {"stage": "data", "note": "Looking for data"}
+    assert session.get(StudioState, project.id).stage == "data"
+
+
+def test_autopilot_nudges_twice_without_progress_then_pauses_itself(session, project, monkeypatch):
+    from test_openai_provider import StreamingScriptedModel, _text
+
+    session.add(StudioState(project_id=project.id, autopilot=True))
+    session.commit()
+    model = StreamingScriptedModel(
+        [[_text("Thinking.")], [_text("Still thinking.")], [_text("Hmm.")], [_text("never asked")]]
+    )
+    monkeypatch.setattr(tuner, "model_override", model)
+    tuner.send(project.id, "go")
+    _wait_idle(project.id)
+    rows = _transcript(session, project.id)
+    assert len(model.turns) == 1  # three turns: the user's, then two autopilot nudges
+    assert sum(1 for r in rows if r.meta.get("autopilot")) == 2
+    assert rows[-1].meta.get("autopilot_paused") and "paused" in rows[-1].content
+    st = session.get(StudioState, project.id)
+    assert st.autopilot is False and st.stalled_nudges == 0
+
+
+def test_too_many_steps_pause_the_tuner_instead_of_crashing(session, project, monkeypatch):
+    from test_openai_provider import StreamingScriptedModel, _call
+
+    turns = [[_call("set_stage", {"stage": "data", "note": f"step {i}"}, i)] for i in range(45)]
+    monkeypatch.setattr(tuner, "model_override", StreamingScriptedModel(turns))
+    tuner.send(project.id, "loop forever")
+    _wait_idle(project.id, timeout=60)
+    rows = _transcript(session, project.id)
+    assert "paused after many steps" in rows[-1].content and rows[-1].role == "event"
+    assert sum(1 for r in rows if r.role == "tool") == 40  # max_turns
+
+
+def test_halt_cancels_the_turn_while_a_tool_is_running(session, project, monkeypatch):
+    import threading
+
+    from test_openai_provider import StreamingScriptedModel, _call, _text
+
+    started, release = threading.Event(), threading.Event()
+
+    def slow_overview():
+        started.set()
+        release.wait(10)
+        return {"sessions": [], "capacity": {"gpu_running": None}}
+
+    monkeypatch.setattr(tools.status, "overview", slow_overview)
+    monkeypatch.setattr(
+        tuner, "model_override", StreamingScriptedModel([[_call("machine_overview", {}, 1)], [_text("never")]])
+    )
+    tuner.send(project.id, "what is the machine doing?")
+    assert started.wait(15)
+    tuner.halt(project.id)
+    release.set()
+    _wait_idle(project.id)
+    rows = _transcript(session, project.id)
+    assert tuner.is_halted(project.id)
+    assert not any(r.role == "assistant" for r in rows)  # the cancelled turn never answered
