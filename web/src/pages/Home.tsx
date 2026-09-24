@@ -1,12 +1,12 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 
 import { api, type Project } from "../api";
 import ProfilePanel from "../components/ProfilePanel";
 import { sessionDetail, useSessions } from "../components/SessionsSidebar";
 import { useSystem } from "../hooks";
-import { Badge, Button, ErrorNote, TextArea } from "../ui";
+import { Badge, Button, ErrorNote, LinkButton, TextArea } from "../ui";
 
 // Small, characterful goals: what a tiny model does well and people enjoy trying.
 const EXAMPLES = [
@@ -49,16 +49,8 @@ export default function Home() {
                     <span className="text-[13px] font-medium">{s.name}</span>
                     <Badge tone={s.state === "queued" || s.state === "waiting" ? "warn" : "info"}>{s.state === "waiting" ? "needs you" : s.state}</Badge>
                     <span className="ml-auto flex gap-2">
-                      <Link to={`/p/${s.project_id}/overview`}>
-                        <Button size="sm" variant="ghost">
-                          Advanced
-                        </Button>
-                      </Link>
-                      <Link to={`/p/${s.project_id}`}>
-                        <Button size="sm" variant="primary">
-                          Open →
-                        </Button>
-                      </Link>
+                      <LinkButton to={`/p/${s.project_id}/overview`} size="sm" variant="ghost">Advanced</LinkButton>
+                      <LinkButton to={`/p/${s.project_id}`} size="sm" variant="primary">Open →</LinkButton>
                     </span>
                   </div>
                   <p className="mt-1 text-xs text-muted">{sessionDetail(s)}</p>
@@ -132,16 +124,8 @@ export default function Home() {
                     <div className="truncate text-[13px] font-medium">{s.name}</div>
                     <div className="truncate text-xs text-muted">{s.goal}</div>
                   </div>
-                  <Link to={`/p/${s.project_id}`}>
-                    <Button size="sm" variant="ghost">
-                      Studio
-                    </Button>
-                  </Link>
-                  <Link to={`/p/${s.project_id}/try`}>
-                    <Button size="sm" variant="primary">
-                      ▶ Try it
-                    </Button>
-                  </Link>
+                  <LinkButton to={`/p/${s.project_id}`} size="sm" variant="ghost">Studio</LinkButton>
+                  <LinkButton to={`/p/${s.project_id}/try`} size="sm" variant="primary">▶ Try it</LinkButton>
                 </li>
               ))}
             </ul>

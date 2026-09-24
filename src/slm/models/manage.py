@@ -65,9 +65,14 @@ def download(repo_id: str, log=print, local_only: bool = False) -> ModelRecord:
 
 
 def local_path_for(repo_id: str) -> str | None:
+    """Where a registered model's files are, or None when it was never downloaded or its folder has
+    since gone (the HF cache is shared, so another tool may have cleared it): then it isn't on this
+    Mac, whatever the row says."""
     with Session(engine()) as s:
         rec = s.exec(select(ModelRecord).where(ModelRecord.repo_id == repo_id)).first()
-        return rec.local_path if rec else None
+    if rec and (Path(rec.local_path) / "config.json").exists():
+        return rec.local_path
+    return None
 
 
 def serving_path(project) -> str | None:

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { useParams } from "react-router";
 
 import {
   api,
@@ -9,6 +9,7 @@ import {
   fmt,
   isActive,
   type Job,
+  JOB_KIND,
   type PendingAction,
   runCommand,
   type Sample,
@@ -18,11 +19,12 @@ import {
   type TunerMessage,
 } from "../api";
 import { MetricChart } from "../components/Charts";
+import ChatComposer from "../components/ChatComposer";
 import JobLog from "../components/JobLog";
 import Markdown from "../components/Markdown";
 import MetricsBar from "../components/MetricsBar";
-import { runProgress, useLiveJob, useStudio, useSystem } from "../hooks";
-import { Badge, Button, CodeBlock, cx, ErrorNote, MemoryBar, ProgressBar, Spinner, StatusBadge, TextArea } from "../ui";
+import { invalidate, runProgress, useLiveJob, useStudio, useSystem, useTunerStream } from "../hooks";
+import { Badge, Bubble, Button, CodeBlock, cx, ErrorNote, LinkButton, MemoryBar, ProgressBar, SectionLabel, Spinner, StatusBadge, TextArea } from "../ui";
 
 const STAGE_LABEL: Record<Stage, string> = {
   goal: "Goal",
@@ -81,51 +83,24 @@ const QUIET_TOOLS = new Set(["get_status", "set_stage"]);
 
 export default function Studio() {
   const projectId = Number(useParams().projectId);
-  const qc = useQueryClient();
   const snapshot = useStudio(projectId);
   const messages = useQuery({
     queryKey: ["tuner-messages", projectId],
     queryFn: () => api.get<TunerMessage[]>(`/api/projects/${projectId}/tuner/messages`),
   });
-  const [streaming, setStreaming] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  // Live stream from the Tuner: tokens, tool activity, new messages, canvas changes.
-  useEffect(() => {
-    const es = new EventSource(`/api/projects/${projectId}/tuner/stream`);
-    const on = (type: string, fn: (d: Record<string, unknown>) => void) =>
-      es.addEventListener(type, (e) => fn(JSON.parse((e as MessageEvent).data)));
-    on("turn_start", () => setBusy(true));
-    on("turn_end", () => {
-      setBusy(false);
-      setStreaming("");
-    });
-    on("delta", (d) => setStreaming((s) => s + String(d.text)));
-    on("message", (d) => {
-      const m = d.message as TunerMessage;
-      if (m.role === "assistant") setStreaming("");
-      qc.setQueryData<TunerMessage[]>(["tuner-messages", projectId], (old = []) => {
-        const i = old.findIndex((x) => x.id === m.id);
-        if (i === -1) return [...old, m];
-        const copy = [...old];
-        copy[i] = m;
-        return copy;
-      });
-    });
-    on("canvas", () => qc.invalidateQueries({ queryKey: ["studio", projectId] }));
-    return () => es.close();
-  }, [projectId, qc]);
+  const { streaming, busy, setBusy } = useTunerStream(projectId);
 
   // Opening a project never starts anything: the Tuner only begins from an explicit action
   // (creating the project on Home, or the Start button below).
   useEffect(() => {
     if (snapshot.data) setBusy((b) => b || snapshot.data!.tuner_busy);
-  }, [snapshot.data]);
+  }, [snapshot.data, setBusy]);
 
   return (
     <div className="flex h-full flex-col">
       <TopBar snapshot={snapshot.data} />
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-2">
+      {/* Side by side from lg; stacked on a phone, each half scrolling on its own. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-2 lg:grid-rows-1">
         <Chat
           projectId={projectId}
           messages={messages.data ?? []}
@@ -173,31 +148,22 @@ function Chat({
   busy: boolean;
   pending: PendingAction | null;
 }) {
-  const [input, setInput] = useState("");
   const { data: sys } = useSystem();
   const send = useMutation({
     // pending_id: a plain "yes" confirms only the card the user was looking at.
     mutationFn: (text: string) => api.post(`/api/projects/${projectId}/tuner/message`, { text, pending_id: pending?.id ?? null }),
-    onError: (_e, text) => setInput(text), // the message comes back so it isn't lost
   });
   const bottom = useRef<HTMLDivElement>(null);
   // Block body: scrollIntoView() now returns a Promise in Chrome, and an effect must not return one.
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [messages.length, streaming]);
-
-  const submit = (text: string) => {
-    const t = text.trim();
-    if (!t || send.isPending) return;
-    setInput("");
-    send.mutate(t);
-  };
   const visible = messages.filter(
     (m) => !(m.role === "tool" && QUIET_TOOLS.has(m.meta.name ?? "")) && !m.meta.kickoff && !m.meta.autopilot,
   );
 
   return (
-    <section className="flex min-h-0 flex-col border-r border-line">
+    <section className="flex min-h-0 min-w-0 flex-col border-b border-line lg:border-r lg:border-b-0">
       <div className="flex items-center gap-2 border-b border-line px-5 py-2.5">
         <span className="grid size-7 place-items-center rounded-full bg-accent-soft text-sm">✦</span>
         <div>
@@ -218,10 +184,10 @@ function Chat({
           Array.isArray(item) ? <ToolGroup key={item[0].id} steps={item} /> : <ChatItem key={item.id} m={item} />,
         )}
         {streaming && (
-          <div className="max-w-[88%] rounded-2xl rounded-tl-sm border border-line bg-panel px-4 py-3 text-[14px] leading-relaxed">
+          <Bubble role="assistant">
             <Markdown text={streaming} />
             <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-accent align-middle" />
-          </div>
+          </Bubble>
         )}
         {busy && !streaming && (
           <div className="flex items-center gap-2 text-xs text-faint">
@@ -231,40 +197,24 @@ function Chat({
         <div ref={bottom} />
       </div>
 
-      <div className="border-t border-line p-4">
-        {pending && <ConfirmCard projectId={projectId} action={pending} />}
-        <ErrorNote error={send.error} />
-        <form
-          className="flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit(input);
-          }}
-        >
-          <TextArea
-            rows={2}
-            className="flex-1"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submit(input);
-              }
-            }}
-            placeholder={
-              pending
-                ? "Say yes, or tell the Tuner what to change…"
-                : busy
-                  ? "The Tuner is building your model. Type anything to steer it."
-                  : "Type to steer the Tuner (optional)…"
-            }
-          />
-          <Button type="submit" variant="primary" disabled={!input.trim() || send.isPending} loading={send.isPending}>
-            Send
-          </Button>
-        </form>
-      </div>
+      {(pending || send.error) && (
+        <div className="border-t border-line px-4 pt-4">
+          {pending && <ConfirmCard projectId={projectId} action={pending} />}
+          <ErrorNote error={send.error} />
+        </div>
+      )}
+      <ChatComposer
+        busy={busy}
+        sending={send.isPending}
+        onSend={(text) => send.mutateAsync(text)}
+        placeholder={
+          pending
+            ? "Say yes, or tell the Tuner what to change…"
+            : busy
+              ? "The Tuner is building your model. Type anything to steer it."
+              : "Type to steer the Tuner (optional)…"
+        }
+      />
     </section>
   );
 }
@@ -315,9 +265,7 @@ function StartTuner({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
   const start = useMutation({
     mutationFn: () => api.post(`/api/projects/${projectId}/tuner/start`),
-    onSuccess: () => {
-      for (const k of ["studio", "sessions"]) qc.invalidateQueries({ queryKey: [k] });
-    },
+    onSuccess: () => invalidate(qc, "studio", "sessions"),
   });
   return (
     <div className="rounded-xl border border-line bg-panel p-4 text-[13px] text-muted">
@@ -347,9 +295,7 @@ function ConfirmCard({ projectId, action }: { projectId: number; action: Pending
       setAsking(false);
       setWhy("");
     },
-    onSettled: () => {
-      for (const k of ["studio", "sessions"]) qc.invalidateQueries({ queryKey: [k] });
-    },
+    onSettled: () => invalidate(qc, "studio", "sessions"),
   });
   const facts = actionFacts(action);
   return (
@@ -434,17 +380,12 @@ function actionFacts(a: PendingAction): string[] {
 }
 
 function ChatItem({ m }: { m: TunerMessage }) {
-  if (m.role === "user")
-    return (
-      <div className="flex justify-end">
-        <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-accent px-4 py-2.5 text-[14px] text-white">{m.content}</div>
-      </div>
-    );
+  if (m.role === "user") return <Bubble role="user">{m.content}</Bubble>;
   if (m.role === "assistant")
     return (
-      <div className="max-w-[88%] rounded-2xl rounded-tl-sm border border-line bg-panel px-4 py-3 text-[14px] leading-relaxed">
+      <Bubble role="assistant">
         <Markdown text={m.content} />
-      </div>
+      </Bubble>
     );
   if (m.role === "tool") {
     const running = m.meta.status === "running";
@@ -465,8 +406,7 @@ function eventLabel(m: TunerMessage): string {
   if (m.meta.error || m.meta.autopilot_paused) return m.content;
   const job = m.content.match(/^\[Job update\] (\w+) job (\d+) (\w+)/);
   if (job) {
-    const kind = { download: "Download", sft: "Training run", dpo: "Preference round", export: "Export" }[job[1]] ?? job[1];
-    return `— ${kind} ${job[3]} —`;
+    return `— ${JOB_KIND[job[1]]?.name ?? job[1]} ${job[3]} —`;
   }
   if (m.content.startsWith("[Feedback]")) return "— You finished judging the answers —";
   if (m.meta.confirmed) return m.meta.error ? m.content : "— You said go ahead —";
@@ -504,15 +444,15 @@ function Canvas({ snapshot: s, messages }: { snapshot: Snapshot; messages: Tuner
     return () => clearTimeout(t);
   }, [s.stage, activeJob?.id]);
   return (
-    <section className="flex min-h-0 flex-col bg-bg">
+    <section className="flex min-h-0 min-w-0 flex-col bg-bg">
       <div className="border-b border-line px-5 py-3">
-        <ol className="flex items-center gap-1">
+        <ol className="flex items-center gap-1 overflow-x-auto">
           {STAGES.map((st, i) => (
             <li key={st} className="flex flex-1 items-center gap-1">
               <button
                 onClick={() => document.getElementById(`stage-${st}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
                 className={cx(
-                  "flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium transition",
+                  "flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium whitespace-nowrap transition",
                   // A finished stage shows its tick even when it's the current one (e.g. Export at the end).
                   st === s.stage && !done[st] ? "bg-accent text-white" : done[st] ? "text-good" : "text-faint",
                   st === s.stage && done[st] && "bg-good-soft",
@@ -567,9 +507,9 @@ function DoneBanner({ s }: { s: Snapshot }) {
         Keep improving
       </Button>
       {!!s.exports.length && (
-        <Link to={`/p/${s.project.id}/try`} className="shrink-0 rounded-md bg-good px-3 py-1 font-medium text-white hover:brightness-110">
+        <LinkButton to={`/p/${s.project.id}/try`} variant="good" size="sm" className="shrink-0">
           Try your model →
-        </Link>
+        </LinkButton>
       )}
     </div>
   );
@@ -596,18 +536,18 @@ function GoalView({ s }: { s: Snapshot }) {
   return (
     <dl className="space-y-2 text-[13px]">
       <div>
-        <dt className="text-[11px] uppercase tracking-wide text-faint">Model purpose</dt>
+        <dt><SectionLabel>Model purpose</SectionLabel></dt>
         <dd>{s.project.goal || "The Tuner will fill this in as you talk."}</dd>
       </div>
       {s.project.system_prompt && (
         <div>
-          <dt className="text-[11px] uppercase tracking-wide text-faint">System prompt</dt>
+          <dt><SectionLabel>System prompt</SectionLabel></dt>
           <dd className="font-mono text-xs text-muted">{s.project.system_prompt}</dd>
         </div>
       )}
       {Object.keys(s.project.plan ?? {}).length > 0 && (
         <div>
-          <dt className="text-[11px] uppercase tracking-wide text-faint">The Tuner's plan (say so in the chat to change it)</dt>
+          <dt><SectionLabel>The Tuner's plan (say so in the chat to change it)</SectionLabel></dt>
           <dd>
             <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
               {Object.entries(s.project.plan).map(([k, v]) => (
@@ -622,8 +562,10 @@ function GoalView({ s }: { s: Snapshot }) {
       )}
       {s.project.test_questions?.length > 0 && (
         <div>
-          <dt className="text-[11px] uppercase tracking-wide text-faint">
-            Test set · {s.project.test_questions.length} cases, {s.project.test_questions.filter((q) => q.expected).length} with an expected output
+          <dt>
+            <SectionLabel>
+              Test set · {s.project.test_questions.length} cases, {s.project.test_questions.filter((q) => q.expected).length} with an expected output
+            </SectionLabel>
           </dt>
           <dd>
             <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-xs text-muted">
@@ -653,7 +595,7 @@ function ModelView({ s }: { s: Snapshot }) {
         {s.model.downloaded ? <Badge tone="good">on this Mac</Badge> : download ? <Badge tone="info">downloading…</Badge> : <Badge>not downloaded</Badge>}
       </div>
       {s.model.params != null && (
-        <div className="grid grid-cols-4 gap-2 text-xs">
+        <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
           <Fact label="Parameters" value={fmt.params(s.model.params)} />
           <Fact label="Precision" value={`${s.model.bits}-bit`} />
           <Fact label="On disk" value={fmt.gb(s.model.size_gb)} />
@@ -684,7 +626,7 @@ function DataView({ s }: { s: Snapshot }) {
           {d.license && <Badge tone={/mit|apache|cc-by|cc0/i.test(d.license) ? "good" : "neutral"}>{d.license}</Badge>}
         </div>
       ))}
-      {prepping && <Progress label={{ import_dataset: "Importing rows", prepare_dataset: "Cleaning and tokenising", synthesize: "Writing examples with GPT-6" }[prepping.kind] ?? "Working"} />}
+      {prepping && <Progress label={JOB_KIND[prepping.kind]?.doing ?? "Working"} />}
       {s.versions.map((v) => {
         const dropped = Object.entries(v.cleaning_report?.dropped ?? {});
         return (
@@ -693,7 +635,7 @@ function DataView({ s }: { s: Snapshot }) {
               <span className="font-medium">Training set v{v.id}</span>
               <Badge tone={v.kind === "dpo" ? "accent" : "info"}>{v.kind === "dpo" ? "preferences" : "examples"}</Badge>
             </div>
-            <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
               <Fact label="Train" value={v.n_train.toLocaleString()} />
               <Fact label="Validation" value={v.n_valid.toLocaleString()} />
               <Fact label="Typical length" value={v.token_stats?.p50 ? `${v.token_stats.p50} tok` : "–"} />
@@ -720,7 +662,7 @@ function TrainView({ s }: { s: Snapshot }) {
       <LiveRun jobId={current.id} />
       {runs.length > 1 && (
         <div className="space-y-1">
-          <div className="text-[11px] uppercase tracking-wide text-faint">Earlier runs</div>
+          <SectionLabel>Earlier runs</SectionLabel>
           {runs.slice(1, 6).map((j) => (
             <div key={j.id} className="flex items-center gap-2 text-xs text-muted">
               <Badge tone={j.kind === "dpo" ? "accent" : "info"}>{j.kind.toUpperCase()}</Badge>
@@ -751,7 +693,7 @@ function LiveRun({ jobId }: { jobId: number }) {
         </span>
       </div>
       <ProgressBar pct={pct} failed={job.status === "failed"} />
-      <div className="grid grid-cols-4 gap-2 text-xs">
+      <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
         <Fact label="Train loss" value={fmt.num(last?.loss)} />
         <Fact label="Val loss" value={fmt.num(lastVal?.loss)} />
         {isDpo ? <Fact label="Prefers chosen" value={last?.accuracy != null ? `${Math.round(last.accuracy * 100)}%` : "–"} /> : <Fact label="Tokens/sec" value={last ? String(Math.round(last.tokens_per_sec)) : "–"} />}
@@ -918,7 +860,7 @@ function RefineView({ s }: { s: Snapshot }) {
     <div className="space-y-3">
       {reviews.length > 0 && (
         <div className="space-y-2">
-          <div className="text-[11px] uppercase tracking-wide text-faint">Reviewed by GPT-6 · each verdict becomes training signal</div>
+          <SectionLabel>Reviewed by GPT-6 · each verdict becomes training signal</SectionLabel>
           {reviews.map((c) => (
             <details key={c.id} className="group rounded-lg border border-line p-2.5">
               <summary className="flex cursor-pointer list-none items-center gap-2 text-xs">
@@ -963,12 +905,9 @@ function ExportView({ s }: { s: Snapshot }) {
             <span className="font-medium">{e.path.split("/").pop()}</span>
             <Badge>{fmt.gb(e.size_gb)}</Badge>
             <Badge tone="good">runs on {e.min_ram_gb} GB+ Macs</Badge>
-            <Link
-              to={`/p/${s.project.id}/try?export=${e.job_id}`}
-              className="ml-auto rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white hover:brightness-110"
-            >
+            <LinkButton to={`/p/${s.project.id}/try?export=${e.job_id}`} variant="primary" size="sm" className="ml-auto">
               ▶ Try it
-            </Link>
+            </LinkButton>
           </div>
           <CodeBlock text={runCommand(e, s.project.system_prompt)} />
           {!e.system_prompt_built_in && s.project.system_prompt && (
@@ -983,7 +922,7 @@ function ExportView({ s }: { s: Snapshot }) {
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md bg-panel-2/60 px-2 py-1.5">
-      <div className="text-[10px] uppercase tracking-wide text-faint">{label}</div>
+      <SectionLabel className="text-[10px]">{label}</SectionLabel>
       <div className="num text-[13px]">{value}</div>
     </div>
   );

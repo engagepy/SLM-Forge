@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { api, DEFAULT_SAMPLING, postStream, type PreferencePair, type SamplingParams, type SftExample } from "../api";
 import SamplingControls from "../components/SamplingControls";
 import { useOverview, useProjectId, followJob } from "../hooks";
-import { Badge, Button, Card, Collapsible, cx, Empty, ErrorNote, Field, Spinner, Stat, TextArea } from "../ui";
+import { Badge, Button, Card, Collapsible, cx, Empty, ErrorNote, Field, LinkButton, Spinner, Stat, TextArea } from "../ui";
 
 type Choice = "a" | "b" | "tie" | "both_bad";
 
@@ -252,9 +252,7 @@ function SidePanel({ projectId }: { projectId: number }) {
         )}
       </Card>
       {(c?.pairs_ready ?? 0) >= 3 && (
-        <Link to={`/p/${projectId}/train`}>
-          <Button className="w-full">Run a DPO round now →</Button>
-        </Link>
+        <LinkButton to={`/p/${projectId}/train`} className="w-full">Run a DPO round now →</LinkButton>
       )}
     </div>
   );

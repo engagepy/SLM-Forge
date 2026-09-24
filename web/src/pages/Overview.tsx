@@ -4,7 +4,7 @@ import { Link } from "react-router";
 
 import { api, fmt, isServing, type Job, type Project } from "../api";
 import { useOverview, useProjectId } from "../hooks";
-import { Badge, Button, Card, cx, Field, StatusBadge, TextArea } from "../ui";
+import { Badge, Button, Card, cx, Field, LinkButton, StatusBadge, TextArea } from "../ui";
 
 export default function OverviewPage() {
   const projectId = useProjectId();
@@ -34,9 +34,7 @@ export default function OverviewPage() {
           <p className="mt-1 max-w-2xl text-[13px] text-muted">{project.goal}</p>
         </div>
         {next && (
-          <Link to={`/p/${projectId}/${next.to}`}>
-            <Button variant="primary">Next: {next.label.split(" (")[0].toLowerCase()} →</Button>
-          </Link>
+          <LinkButton to={`/p/${projectId}/${next.to}`} variant="primary">Next: {next.label.split(" (")[0].toLowerCase()} →</LinkButton>
         )}
       </div>
 

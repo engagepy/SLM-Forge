@@ -27,7 +27,7 @@ interface Inventory {
   };
 }
 
-const size = (gb: number) => (gb < 1 ? `${Math.round(gb * 1024)} MB` : fmt.gb(gb));
+const size = fmt.size;
 
 /** Everything the app keeps on this Mac, and the buttons that give the space back. */
 export default function StoragePage() {

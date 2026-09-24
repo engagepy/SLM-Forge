@@ -7,7 +7,7 @@ import { MetricChart } from "../components/Charts";
 import JobLog from "../components/JobLog";
 import TrainControls from "../components/TrainControls";
 import { runProgress, useLiveJob, useOverview, useProjectId } from "../hooks";
-import { Badge, Button, Card, cx, Empty, ErrorNote, Field, MemoryBar, ProgressBar, Select, Stat, StatusBadge } from "../ui";
+import { Badge, Button, Card, cx, Empty, ErrorNote, Field, LinkButton, MemoryBar, ProgressBar, Select, Stat, StatusBadge } from "../ui";
 
 export default function TrainPage() {
   const projectId = useProjectId();
@@ -21,11 +21,7 @@ export default function TrainPage() {
       <aside className="border-b border-line lg:border-r lg:border-b-0">
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-[13px] font-semibold">Runs</span>
-          <Link to={`/p/${projectId}/train`}>
-            <Button size="sm" variant={jobId ? "secondary" : "primary"}>
-              New run
-            </Button>
-          </Link>
+          <LinkButton to={`/p/${projectId}/train`} size="sm" variant={jobId ? "secondary" : "primary"}>New run</LinkButton>
         </div>
         <ul>
           {runs.data?.map((j) => (
@@ -113,7 +109,7 @@ function Launcher({ projectId }: { projectId: number }) {
 
   if (ov && !ov.base_model_downloaded) {
     return (
-      <Empty title="Choose a base model first" action={<Link to={`/p/${projectId}/model`}><Button variant="primary">Pick a model →</Button></Link>}>
+      <Empty title="Choose a base model first" action={<LinkButton to={`/p/${projectId}/model`} variant="primary">Pick a model →</LinkButton>}>
         Training needs a downloaded base model.
       </Empty>
     );
@@ -276,11 +272,7 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
           </Button>
         )}
         {job.status === "succeeded" && (
-          <Link to={`/p/${projectId}/playground`} className="ml-auto">
-            <Button size="sm" variant="primary">
-              Try it in the playground →
-            </Button>
-          </Link>
+          <LinkButton to={`/p/${projectId}/playground`} size="sm" variant="primary" className="ml-auto">Try it in the playground →</LinkButton>
         )}
       </div>
 

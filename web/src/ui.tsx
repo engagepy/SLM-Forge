@@ -38,6 +38,26 @@ export function Card({
 }
 
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "good";
+type Size = "sm" | "md";
+
+const buttonStyles: Record<Variant, string> = {
+  primary: "bg-accent text-white hover:brightness-110 border-transparent",
+  secondary: "bg-panel-2 text-fg border-line hover:border-line-strong",
+  ghost: "bg-transparent text-muted border-transparent hover:text-fg hover:bg-panel-2",
+  danger: "bg-bad-soft text-bad border-transparent hover:brightness-110",
+  good: "bg-good-soft text-good border-transparent hover:brightness-110",
+};
+
+/** The classes a button (or a link that looks like one) wears. */
+export function buttonClass(variant: Variant = "secondary", size: Size = "md", className?: string) {
+  return cx(
+    "inline-flex items-center justify-center gap-1.5 rounded-lg border font-medium transition",
+    "disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent",
+    size === "sm" ? "h-7 px-2.5 text-xs" : "h-8.5 px-3.5 text-[13px]",
+    buttonStyles[variant],
+    className,
+  );
+}
 
 export function Button({
   variant = "secondary",
@@ -47,30 +67,56 @@ export function Button({
   children,
   disabled,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md"; loading?: boolean }) {
-  const styles: Record<Variant, string> = {
-    primary: "bg-accent text-white hover:brightness-110 border-transparent",
-    secondary: "bg-panel-2 text-fg border-line hover:border-line-strong",
-    ghost: "bg-transparent text-muted border-transparent hover:text-fg hover:bg-panel-2",
-    danger: "bg-bad-soft text-bad border-transparent hover:brightness-110",
-    good: "bg-good-soft text-good border-transparent hover:brightness-110",
-  };
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size; loading?: boolean }) {
   return (
-    <button
-      className={cx(
-        "inline-flex items-center justify-center gap-1.5 rounded-lg border font-medium transition",
-        "disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent",
-        size === "sm" ? "h-7 px-2.5 text-xs" : "h-8.5 px-3.5 text-[13px]",
-        styles[variant],
-        className,
-      )}
-      disabled={disabled || loading}
-      {...rest}
-    >
+    <button className={buttonClass(variant, size, className)} disabled={disabled || loading} {...rest}>
       {loading && <Spinner />}
       {children}
     </button>
   );
+}
+
+/** A route link styled as a button (a button inside a link is invalid HTML and reads badly to screen readers). */
+export function LinkButton({
+  to,
+  variant = "secondary",
+  size = "md",
+  className,
+  children,
+}: {
+  to: string;
+  variant?: Variant;
+  size?: Size;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Link to={to} className={buttonClass(variant, size, className)}>
+      {children}
+    </Link>
+  );
+}
+
+/** One chat message: the person's on the right, the model's or the Tuner's on the left. */
+export function Bubble({ role, children, className }: { role: "user" | "assistant"; children: ReactNode; className?: string }) {
+  return (
+    <div className={cx("flex", role === "user" ? "justify-end" : "justify-start")}>
+      <div
+        className={cx(
+          "max-w-[85%] min-w-0 rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed break-words",
+          role === "user" ? "rounded-tr-sm bg-accent text-white whitespace-pre-wrap" : "rounded-tl-sm border border-line bg-panel",
+          className,
+        )}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** The small uppercase heading above a group of facts. */
+export function SectionLabel({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cx("text-[11px] font-medium uppercase tracking-wide text-faint", className)}>{children}</div>;
 }
 
 export function ProgressBar({ pct, failed = false }: { pct: number; failed?: boolean }) {

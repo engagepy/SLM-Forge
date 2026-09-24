@@ -4,7 +4,7 @@ import { Link, NavLink, useMatch } from "react-router";
 
 import { api } from "../api";
 import UsageMeter from "./UsageMeter";
-import { IDLE_POLL_MS } from "../hooks";
+import { IDLE_POLL_MS, invalidate } from "../hooks";
 import { Badge, cx, Spinner } from "../ui";
 
 interface SessionJob {
@@ -101,9 +101,10 @@ export default function SessionsSidebar() {
     }
   };
 
-  if (collapsed) {
-    return (
-      <aside className="flex w-12 shrink-0 flex-col items-center gap-2 border-r border-line bg-panel py-3">
+  // Below lg only the rail fits; from lg the full sidebar shows unless the user collapsed it.
+  return (
+    <>
+      <aside className={cx("flex w-12 shrink-0 flex-col items-center gap-2 border-r border-line bg-panel py-3", !collapsed && "lg:hidden")}>
         <Link to="/" className="grid size-7 place-items-center rounded-lg bg-accent text-sm font-bold text-white" title="Home">
           ▲
         </Link>
@@ -121,11 +122,7 @@ export default function SessionsSidebar() {
           </NavLink>
         ))}
       </aside>
-    );
-  }
-
-  return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-line bg-panel">
+      <aside className={cx("hidden w-64 shrink-0 flex-col border-r border-line bg-panel", !collapsed && "lg:flex")}>
       <div className="flex items-center gap-2 px-4 pt-4 pb-3">
         <Link to="/" className="flex items-center gap-2">
           <span className="grid size-7 place-items-center rounded-lg bg-accent text-sm font-bold text-white">▲</span>
@@ -154,7 +151,8 @@ export default function SessionsSidebar() {
       </div>
 
       {data && <MachinePanel c={data.capacity} />}
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -168,7 +166,7 @@ function SessionRow({ s, active }: { s: SessionItem; active: boolean }) {
         : api.post(`/api/sessions/${s.project_id}/stop`, { cancel_jobs: action === "stop" }),
     onSuccess: () => {
       setMenu(false);
-      for (const k of ["sessions", "studio", "jobs"]) qc.invalidateQueries({ queryKey: [k] });
+      invalidate(qc, "sessions", "studio", "jobs");
     },
   });
   const st = STATE[s.state];

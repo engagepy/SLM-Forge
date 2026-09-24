@@ -1,13 +1,21 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 
-import { api, isActive, type Job, type MetricPoint, type Overview, postStream, type Snapshot, type SystemStatus } from "./api";
+import { api, isActive, type Job, JOB_KIND, type MetricPoint, type Overview, postStream, type Snapshot, type SystemStatus, type TunerMessage } from "./api";
 import { type ToastInput, useToast } from "./ui";
 
 export function useProjectId(): number {
   return Number(useParams().projectId);
 }
+
+/** Refetch several query families at once. */
+export function invalidate(qc: QueryClient, ...keys: string[]) {
+  for (const k of keys) qc.invalidateQueries({ queryKey: [k] });
+}
+
+// What a finished job touches: it can create datasets, versions, checkpoints, examples or proposals.
+export const AFTER_JOB = ["overview", "datasets", "exports", "examples", "proposals", "studio", "sessions"];
 
 // Pushed updates (the jobs feed) cover every change of state; polling only refreshes live numbers
 // while something runs, plus a slow safety net when idle.
@@ -94,19 +102,14 @@ export function useJobsFeed() {
     (type, ev) => {
       if (type === "tuner") {
         // A Tuner started or stopped thinking somewhere: only the sessions list shows that.
-        qc.invalidateQueries({ queryKey: ["sessions"] });
+        invalidate(qc, "sessions");
         return;
       }
-      qc.invalidateQueries({ queryKey: ["jobs"] });
-      qc.invalidateQueries({ queryKey: ["system"] });
-      qc.invalidateQueries({ queryKey: ["sessions"] });
+      invalidate(qc, "jobs", "system", "sessions");
       const status = ev.status as string;
       if (status === "succeeded" || status === "failed") {
         toast(jobToast(ev as unknown as Job));
-        // A finished job can create datasets, versions, checkpoints, examples or proposals.
-        for (const k of ["overview", "datasets", "exports", "examples", "proposals", "studio", "sessions"]) {
-          qc.invalidateQueries({ queryKey: [k] });
-        }
+        invalidate(qc, ...AFTER_JOB);
       }
     },
     ["status", "tuner"],
@@ -212,56 +215,17 @@ export async function followJob(jobId: number, what: string, onStatus: (status: 
   return job;
 }
 
-const JOB_LABEL: Record<string, string> = {
-  download: "Model downloaded",
-  import_dataset: "Dataset imported",
-  prepare_dataset: "Data prepared",
-  sft: "Fine-tuning finished",
-  dpo: "Preference round finished",
-  export: "Model exported",
-  agent_scout: "DataScout finished",
-  agent_prep: "DataPrep suggested a mapping",
-  agent_observer: "Observer finished",
-  synthesize: "Synthetic examples ready",
-};
-
-const JOB_NAME: Record<string, string> = {
-  download: "Download",
-  import_dataset: "Import",
-  prepare_dataset: "Data preparation",
-  sft: "Fine-tuning",
-  dpo: "Preference round",
-  fuse: "Fuse",
-  export: "Export",
-  agent_scout: "DataScout",
-  agent_prep: "DataPrep",
-  agent_observer: "Observer",
-  synthesize: "Synthesis",
-};
-
-const JOB_PAGE: Record<string, string> = {
-  download: "data",
-  import_dataset: "data",
-  prepare_dataset: "data",
-  agent_prep: "data",
-  agent_scout: "data",
-  sft: "train",
-  dpo: "train",
-  export: "export",
-  agent_observer: "agents",
-  synthesize: "feedback",
-};
-
 /** Turn a finished job into a one-glance summary with a link to its result. */
 function jobToast(job: Job): ToastInput {
   const base = job.project_id != null ? `/p/${job.project_id}` : "";
   const r = job.result as Record<string, unknown>;
-  const page = JOB_PAGE[job.kind];
+  const kind = JOB_KIND[job.kind];
+  const page = kind?.page;
   const to = !base || !page ? undefined : ["sft", "dpo"].includes(job.kind) ? `${base}/train/${job.id}` : `${base}/${page}`;
   if (job.status === "failed") {
     return {
       tone: "bad",
-      title: `${JOB_NAME[job.kind] ?? job.kind} failed`,
+      title: `${kind?.name ?? job.kind} failed`,
       body: job.error.slice(0, 180),
       action: to ? { label: "Open", to } : undefined,
     };
@@ -299,7 +263,38 @@ function jobToast(job: Job): ToastInput {
       label = "See it";
       break;
   }
-  return { tone: "good", title: JOB_LABEL[job.kind] ?? `${job.kind} finished`, body, action: to ? { label, to } : undefined };
+  return { tone: "good", title: kind?.done ?? `${job.kind} finished`, body, action: to ? { label, to } : undefined };
+}
+
+/** The Tuner's live stream for a project: tokens as they arrive, tool activity, new or updated
+ * messages, and canvas changes. Messages land in the ["tuner-messages", id] query. */
+export function useTunerStream(projectId: number) {
+  const qc = useQueryClient();
+  const [streaming, setStreaming] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEventSource(
+    `/api/projects/${projectId}/tuner/stream`,
+    (type, d) => {
+      if (type === "turn_start") setBusy(true);
+      else if (type === "turn_end") {
+        setBusy(false);
+        setStreaming("");
+      } else if (type === "delta") setStreaming((s) => s + String(d.text));
+      else if (type === "message") {
+        const m = d.message as TunerMessage;
+        if (m.role === "assistant") setStreaming("");
+        qc.setQueryData<TunerMessage[]>(["tuner-messages", projectId], (old = []) => {
+          const i = old.findIndex((x) => x.id === m.id);
+          if (i === -1) return [...old, m];
+          const copy = [...old];
+          copy[i] = m;
+          return copy;
+        });
+      } else if (type === "canvas") qc.invalidateQueries({ queryKey: ["studio", projectId] });
+    },
+    ["turn_start", "turn_end", "delta", "message", "canvas"],
+  );
+  return { streaming, busy, setBusy };
 }
 
 // ── chatting with a local model ─────────────────────────────────────────────

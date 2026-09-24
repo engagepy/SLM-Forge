@@ -42,10 +42,11 @@ def studio_snapshot(project_id: int, s: Session = SessionDep) -> dict:
     st = studio_state(s, project_id)
     model = None
     if p.base_model:
-        rec = s.exec(select(ModelRecord).where(ModelRecord.repo_id == p.base_model)).first()
-        model = {"repo_id": p.base_model, "downloaded": rec is not None}
-        if rec:
-            shape = manage.read_shape(rec.local_path)
+        path = manage.local_path_for(p.base_model)  # None when the files are gone, whatever the row says
+        model = {"repo_id": p.base_model, "downloaded": path is not None}
+        if path:
+            rec = s.exec(select(ModelRecord).where(ModelRecord.repo_id == p.base_model)).one()
+            shape = manage.read_shape(path)
             est = hardware.estimate_inference(shape)
             model |= {
                 "params": rec.params,

@@ -6,7 +6,7 @@ import { api, DEFAULT_SAMPLING, type ExportRow, fmt, runCommand } from "../api";
 import ChatComposer from "../components/ChatComposer";
 import Markdown from "../components/Markdown";
 import { useChatStream, useStudio } from "../hooks";
-import { Badge, CodeBlock, cx, ErrorNote, Select, Spinner } from "../ui";
+import { Badge, Bubble, CodeBlock, cx, ErrorNote, SectionLabel, Select, Spinner } from "../ui";
 
 /** Things to try: on-goal inputs and one the model should answer with its empty or negative
  * result. Used ones stay, ticked, until all four are used and four fresh ones replace them. */
@@ -167,8 +167,8 @@ export default function TryModel() {
           </Link>
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_300px]">
-          <div className="flex min-h-0 flex-col">
+        <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-1">
+          <div className="flex min-h-0 min-w-0 flex-col">
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-5">
               {!chosen.on_disk && (
                 <p className="rounded-lg border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-warn">
@@ -191,21 +191,14 @@ export default function TryModel() {
                 </div>
               )}
               {messages.map((m, i) => (
-                <div key={i} className={cx("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-                  <div
-                    className={cx(
-                      "max-w-[85%] rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed",
-                      m.role === "user" ? "rounded-tr-sm bg-accent text-white whitespace-pre-wrap" : "rounded-tl-sm border border-line bg-panel",
-                    )}
-                  >
-                    {m.role === "user" ? m.content : m.content ? <Markdown text={m.content} /> : busy && i === messages.length - 1 ? <Spinner className="size-3" /> : null}
-                    {m.stats && (
-                      <div className="num mt-1.5 text-[11px] text-faint">
-                        {m.stats.tokens_per_sec} tokens/s{m.stats.finish_reason === "length" && " · stopped at the length limit"}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <Bubble key={i} role={m.role}>
+                  {m.role === "user" ? m.content : m.content ? <Markdown text={m.content} /> : busy && i === messages.length - 1 ? <Spinner className="size-3" /> : null}
+                  {m.stats && (
+                    <div className="num mt-1.5 text-[11px] text-faint">
+                      {m.stats.tokens_per_sec} tokens/s{m.stats.finish_reason === "length" && " · stopped at the length limit"}
+                    </div>
+                  )}
+                </Bubble>
               ))}
               <ErrorNote error={chat.error} />
               <div ref={chat.bottom} />
@@ -224,9 +217,9 @@ export default function TryModel() {
             />
           </div>
 
-          <aside className="space-y-5 overflow-y-auto border-l border-line p-4 text-[13px]">
+          <aside className="max-h-56 min-w-0 space-y-5 overflow-y-auto border-t border-line p-4 text-[13px] lg:max-h-none lg:border-t-0 lg:border-l">
             <div>
-              <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-faint">Answers</div>
+              <SectionLabel className="mb-1.5">Answers</SectionLabel>
               <div className="flex rounded-lg border border-line p-0.5">
                 {CREATIVITY.map((c) => (
                   <button
@@ -244,12 +237,12 @@ export default function TryModel() {
             </div>
             {project.data?.project.system_prompt && (
               <div>
-                <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">Built-in instructions</div>
+                <SectionLabel className="mb-1">Built-in instructions</SectionLabel>
                 <p className="text-xs text-muted">{project.data.project.system_prompt}</p>
               </div>
             )}
             <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-faint">Use it outside SLM Forge</div>
+              <SectionLabel className="mb-1">Use it outside SLM Forge</SectionLabel>
               <p className="text-xs text-muted">The model is a folder you can copy to any Apple Silicon Mac with {chosen.min_ram_gb} GB or more.</p>
               <CodeBlock className="mt-2" label="Folder" text={chosen.path} />
               <CodeBlock className="mt-2" label="Ask it in Terminal" text={`pip install mlx-lm && ${runCommand(chosen, project.data?.project.system_prompt ?? "")}`} />

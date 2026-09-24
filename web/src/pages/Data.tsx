@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { api, fmt, type Dataset, type DatasetVersion, type Mapping, type Proposal } from "../api";
 import ProposalCard from "../components/ProposalCard";
 import { useProjectId, followJob } from "../hooks";
-import { Badge, Button, Card, Collapsible, cx, Empty, ErrorNote, Field, Input, NumberField, Select, Spinner, Toggle, useSpotlight } from "../ui";
+import { Badge, Button, Card, Collapsible, cx, Empty, ErrorNote, Field, Input, LinkButton, NumberField, Select, Spinner, Toggle, useSpotlight } from "../ui";
 
 export default function DataPage() {
   const projectId = useProjectId();
@@ -50,11 +50,7 @@ export default function DataPage() {
           <Button size="sm" variant="ghost" onClick={() => spotlight(`version-${latest.id}`)}>
             View
           </Button>
-          <Link to={`/p/${projectId}/train?version=${latest.id}`}>
-            <Button size="sm" variant="primary">
-              Next: train on it →
-            </Button>
-          </Link>
+          <LinkButton to={`/p/${projectId}/train?version=${latest.id}`} size="sm" variant="primary">Next: train on it →</LinkButton>
         </div>
       )}
 
@@ -499,9 +495,7 @@ function MappingEditor({ dataset, projectId, onPrepared }: { dataset: Dataset; p
               ✓ Prepared v{prepare.data.dataset_version_id}
               {prepare.data.n_train != null && `: ${prepare.data.n_train.toLocaleString()} training examples`}
             </span>
-            <Link to={`/p/${projectId}/train?version=${prepare.data.dataset_version_id}`}>
-              <Button size="sm">Train on it →</Button>
-            </Link>
+            <LinkButton to={`/p/${projectId}/train?version=${prepare.data.dataset_version_id}`} size="sm">Train on it →</LinkButton>
           </>
         )}
       </div>
@@ -562,9 +556,7 @@ function Versions({ versions, projectId, spot }: { versions: DatasetVersion[]; p
                     {open === v.id ? "Hide" : "Sample"}
                   </Button>
                   {v.kind === "sft" && (
-                    <Link to={`/p/${projectId}/train?version=${v.id}`}>
-                      <Button size="sm">Train →</Button>
-                    </Link>
+                    <LinkButton to={`/p/${projectId}/train?version=${v.id}`} size="sm">Train →</LinkButton>
                   )}
                 </td>
               </tr>

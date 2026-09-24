@@ -470,9 +470,28 @@ export async function postStream(
   }
 }
 
+/** Everything the UI says about a kind of job: its name, what it did when it finished, what it's
+ * doing meanwhile, and the Advanced page that shows its result. One table, so the toast, the
+ * chat's event lines and the canvas agree. */
+export const JOB_KIND: Record<string, { name: string; done: string; doing: string; page?: string }> = {
+  download: { name: "Download", done: "Model downloaded", doing: "Downloading", page: "data" },
+  import_dataset: { name: "Import", done: "Dataset imported", doing: "Importing rows", page: "data" },
+  prepare_dataset: { name: "Data preparation", done: "Data prepared", doing: "Cleaning and tokenising", page: "data" },
+  synthesize: { name: "Synthesis", done: "Synthetic examples ready", doing: "Writing examples with GPT-6", page: "feedback" },
+  sft: { name: "Training run", done: "Fine-tuning finished", doing: "Training", page: "train" },
+  dpo: { name: "Preference round", done: "Preference round finished", doing: "Refining", page: "train" },
+  fuse: { name: "Fuse", done: "Adapters fused", doing: "Fusing" },
+  export: { name: "Export", done: "Model exported", doing: "Exporting", page: "export" },
+  agent_scout: { name: "DataScout", done: "DataScout finished", doing: "Scouting", page: "data" },
+  agent_prep: { name: "DataPrep", done: "DataPrep suggested a mapping", doing: "Planning", page: "data" },
+  agent_observer: { name: "Observer", done: "Observer finished", doing: "Observing", page: "agents" },
+};
+
 export const fmt = {
   params: (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)}B` : `${Math.round(n / 1e6)}M`),
   gb: (n: number | undefined) => (n == null ? "–" : `${n.toFixed(n < 10 ? 2 : 1)} GB`),
+  /** Disk sizes: MB below a gigabyte, so small parts don't read as "0.00 GB". */
+  size: (gb: number) => (gb < 1 ? `${Math.round(gb * 1024)} MB` : fmt.gb(gb)),
   num: (n: number | undefined, digits = 3) => (n == null || Number.isNaN(n) ? "–" : Number(n.toFixed(digits)).toString()),
   compact: (n: number) => Intl.NumberFormat("en", { notation: "compact" }).format(n),
   ago: (iso: string | null | undefined) => {

@@ -7,7 +7,7 @@ import { useSystem } from "../hooks";
 import { Badge, cx, Popover } from "../ui";
 import UsageMeter from "./UsageMeter";
 
-const size = (gb: number) => (gb < 1 ? `${Math.round(gb * 1024)} MB` : fmt.gb(gb));
+const size = fmt.size;
 
 const PART_LABEL: Record<string, string> = {
   models: "downloaded models",

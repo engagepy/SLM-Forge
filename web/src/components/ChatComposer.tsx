@@ -2,9 +2,12 @@ import { useState } from "react";
 
 import { Button, TextArea } from "../ui";
 
-/** The message box under a chat: Enter sends, Shift+Enter adds a line, Stop while it streams. */
+/** The message box under a chat: Enter sends, Shift+Enter adds a line. With `onStop` there is a
+ * Stop button while it streams; with `onClear` a clear button. If `onSend` returns a promise that
+ * rejects, the text comes back so it isn't lost. */
 export default function ChatComposer({
   busy,
+  sending = false,
   onSend,
   onStop,
   onClear,
@@ -15,9 +18,10 @@ export default function ChatComposer({
   autoFocus,
 }: {
   busy: boolean;
-  onSend: (text: string) => void;
-  onStop: () => void;
-  onClear: () => void;
+  sending?: boolean;
+  onSend: (text: string) => void | Promise<unknown>;
+  onStop?: () => void;
+  onClear?: () => void;
   clearLabel?: string;
   canClear?: boolean;
   disabled?: boolean;
@@ -26,9 +30,10 @@ export default function ChatComposer({
 }) {
   const [input, setInput] = useState("");
   const send = () => {
-    if (!input.trim() || busy || disabled) return;
-    onSend(input);
+    const text = input.trim();
+    if (!text || sending || disabled || (busy && onStop)) return;
     setInput("");
+    Promise.resolve(onSend(text)).catch(() => setInput(text));
   };
   return (
     <form
@@ -53,18 +58,20 @@ export default function ChatComposer({
         placeholder={placeholder}
       />
       <div className="flex flex-col gap-1.5">
-        {busy ? (
+        {busy && onStop ? (
           <Button type="button" variant="danger" onClick={onStop}>
             Stop
           </Button>
         ) : (
-          <Button type="submit" variant="primary" disabled={!input.trim() || disabled}>
+          <Button type="submit" variant="primary" disabled={!input.trim() || disabled} loading={sending}>
             Send
           </Button>
         )}
-        <Button type="button" variant="ghost" size="sm" onClick={onClear} disabled={busy || !canClear}>
-          {clearLabel}
-        </Button>
+        {onClear && (
+          <Button type="button" variant="ghost" size="sm" onClick={onClear} disabled={busy || !canClear}>
+            {clearLabel}
+          </Button>
+        )}
       </div>
     </form>
   );

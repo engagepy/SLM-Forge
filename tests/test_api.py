@@ -167,3 +167,19 @@ def test_cancelling_a_finished_job_says_so(client, session):
 def test_the_export_route_rejects_bad_quantize_bits(client, project):
     r = client.post(f"/api/projects/{project.id}/export", json={"quantize_bits": 5})
     assert r.status_code in (409, 422)  # 409 when no model is downloaded yet, 422 for the bits
+
+
+def test_a_base_model_whose_files_are_gone_counts_as_not_downloaded(client, session, tmp_path):
+    # Regression: the HF cache had been cleared outside the app; the ModelRecord row stayed and the
+    # Studio snapshot answered 500 (read_shape on a missing config.json) until the project was deleted.
+    from slm.db import ModelRecord
+    from slm.models import manage
+
+    gone = tmp_path / "snapshot"
+    gone.mkdir()
+    session.add(ModelRecord(repo_id="org/gone", local_path=str(gone)))
+    session.commit()
+    pid = _project(client, base_model="org/gone")
+    assert manage.local_path_for("org/gone") is None
+    snap = client.get(f"/api/projects/{pid}/studio")
+    assert snap.status_code == 200 and snap.json()["model"] == {"repo_id": "org/gone", "downloaded": False}
