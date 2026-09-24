@@ -260,6 +260,7 @@ class Tuner:
                         _publish(pid, {"type": "message", "message": m.model_dump(mode="json")})
                     _publish(pid, {"type": "tool_end", "output": output[:500]})
             flush()
+            await trim_session(session)
         except MaxTurnsExceeded:
             flush()
             save_message(pid, "event", "The Tuner paused after many steps. Say “continue” to carry on.")
@@ -272,6 +273,26 @@ class Tuner:
             self._runs.pop(pid, None)
             _publish(pid, {"type": "turn_end"})
             canvas_changed(pid)
+
+
+# The SDK session is the agent's memory: every message, tool call and output of the project. Left
+# alone it grows past the context window after a few rounds, and every turn re-sends all of it.
+MAX_SESSION_ITEMS = 240
+
+
+async def trim_session(session: SQLiteSession, keep: int = MAX_SESSION_ITEMS) -> None:
+    """Keep the first user message (the goal) and the most recent items. The cut lands on a user
+    message so a tool call never loses its output, which the Responses API rejects."""
+    items = await session.get_items()
+    if len(items) <= keep:
+        return
+    tail = items[-keep:]
+    start = next((i for i, it in enumerate(tail) if it.get("role") == "user"), None)
+    if start is None:
+        return
+    head = [items[0]] if items[0].get("role") == "user" else []
+    await session.clear_session()
+    await session.add_items(head + tail[start:])
 
 
 tuner = Tuner()

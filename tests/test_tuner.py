@@ -934,3 +934,29 @@ def test_a_run_with_no_parsed_metrics_is_flagged(project):
     assert [w["code"] for w in _warnings(ctx)] == ["no_metrics"]
     ctx.result = {}
     assert _warnings(ctx) == []  # nothing ran: nothing to flag
+
+
+def test_the_tuner_memory_is_trimmed_at_a_user_message_boundary(tmp_path):
+    # The SDK session grew without bound: each turn re-sent the whole project history.
+    from agents import SQLiteSession
+
+    from slm.tuner.session import MAX_SESSION_ITEMS, trim_session
+
+    s = SQLiteSession("p", tmp_path / "s.db")
+    items = [{"role": "user", "content": "[New project] the goal"}]
+    for i in range(150):
+        items += [
+            {"role": "user", "content": f"u{i}"},
+            {"type": "function_call", "call_id": f"c{i}", "name": "get_status", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": f"c{i}", "output": "{}"},
+            {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]},
+        ]
+    asyncio.run(s.add_items(items))
+    asyncio.run(trim_session(s))
+    kept = asyncio.run(s.get_items())
+    assert len(kept) <= MAX_SESSION_ITEMS + 1 < len(items)
+    assert kept[0]["content"] == "[New project] the goal" and kept[1]["role"] == "user"
+    calls = {it["call_id"] for it in kept if it.get("type") == "function_call"}
+    assert all(it["call_id"] in calls for it in kept if it.get("type") == "function_call_output")
+    asyncio.run(trim_session(s))
+    assert len(asyncio.run(s.get_items())) == len(kept)  # a second pass changes nothing

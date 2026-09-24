@@ -20,7 +20,13 @@ export interface SystemStatus {
     inference_blocked: string | null;
   };
   inference: { loaded: { model_path: string; adapter_path: string | null } | null; blocked: string | null };
-  agents: { provider: string; model: string; key_configured: boolean; key_env: string | null };
+  agents: {
+    provider: string;
+    model: string;
+    key_configured: boolean;
+    key_env: string | null;
+    tuner: { ready: boolean; key_env: string; model: string };
+  };
   workspace: string;
   disk: {
     total_gb: number;

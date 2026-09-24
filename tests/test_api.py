@@ -125,3 +125,14 @@ def test_try_prompts_are_scoped_and_skip_used_ones(client, session, project):
     assert "How long do I boil an egg?" not in texts  # already used (case-insensitive)
     assert len(r["prompts"]) <= 4 and r["prompts"][0]["kind"] == "should-not"
     assert r["prompts"][1]["kind"] == "on-goal"  # unknown kinds fall back to on-goal
+
+
+def test_system_reports_the_tuner_needs_openai_whatever_the_provider(client, monkeypatch):
+    # Regression: SLM_AGENT_PROVIDER=claude reported "configured" while every Tuner turn failed.
+    from slm.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "agent_provider", "ollama")
+    monkeypatch.setattr(get_settings(), "openai_api_key", None)
+    agents = client.get("/api/system").json()["agents"]
+    assert agents["key_configured"] is True  # ollama needs no key
+    assert agents["tuner"] == {"ready": False, "key_env": "OPENAI_API_KEY", "model": get_settings().openai_model}

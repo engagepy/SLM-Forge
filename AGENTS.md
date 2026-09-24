@@ -179,7 +179,9 @@ scripts/smoke.py   end-to-end GPU smoke test
 
 **Memory and instructions**
 - **Memory:** `SQLiteSession` stores the agent's context in `workspace/tuner_sessions.db`. The visible
-  transcript is stored separately as `TunerMessage`.
+  transcript is stored separately as `TunerMessage`. After every turn `trim_session` keeps the first
+  user message and the last `MAX_SESSION_ITEMS`, cutting at a user message so no tool call loses
+  its output (the Responses API rejects that). The Tuner re-reads the rest with `get_status`.
 - **Instructions** are a callable: `INSTRUCTIONS + LEARNING + profile.prompt_section()`. Put
   behaviour the agent has to learn there, briefly, with the reason.
 

@@ -94,7 +94,10 @@ export default function MetricsBar({ snapshot }: { snapshot?: Snapshot }) {
       )}
       {sys?.disk && <DiskMeter disk={sys.disk} />}
       <UsageMeter />
-      {sys && !sys.agents.key_configured && <Badge tone="warn">set {sys.agents.key_env} in .env</Badge>}
+      {sys && !sys.agents.tuner.ready && <Badge tone="warn">Tuner needs {sys.agents.tuner.key_env} in .env</Badge>}
+      {sys && sys.agents.tuner.ready && !sys.agents.key_configured && (
+        <Badge tone="warn">set {sys.agents.key_env} in .env</Badge>
+      )}
       <span className="ml-auto" />
       {snapshot && (
         <button

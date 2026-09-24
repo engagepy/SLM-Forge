@@ -98,15 +98,21 @@ same human preference pairs with just the policy and a frozen reference.
 
 ## Agent providers
 
-Set `SLM_AGENT_PROVIDER` in `.env` to choose which LLM runs the agents:
+The Tuner and its specialists (DataScout, DataPrep) run on the
+[OpenAI Agents SDK](https://github.com/openai/openai-agents-python) with streaming and persistent
+session memory, on `gpt-6-luna` (`SLM_OPENAI_MODEL` overrides). They always need `OPENAI_API_KEY`;
+traces appear in the OpenAI dashboard unless `SLM_OPENAI_TRACING=false`.
+
+`SLM_AGENT_PROVIDER` chooses the LLM behind the AI judge (evaluation, answer review) and the
+Advanced screens' agents (Observer, Synth):
 
 | Provider | Key | How it runs |
 |---|---|---|
-| `openai` (default) | `OPENAI_API_KEY` | `gpt-6-luna` (`SLM_OPENAI_MODEL` overrides). The Tuner and tool-using agents run on the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) with streaming and persistent session memory; structured outputs use the Responses API with strict JSON schemas. Traces appear in the OpenAI dashboard unless `SLM_OPENAI_TRACING=false`. |
+| `openai` (default) | `OPENAI_API_KEY` | Responses API with strict JSON schemas for structured outputs. |
 | `claude` | `ANTHROPIC_API_KEY` | Anthropic SDK, with adaptive thinking and server-side refusal fallback. |
 | `ollama` | none | A local model. Fully offline, but it competes with training for memory and writes weaker synthetic data. |
 
-Every provider exposes the same two calls, and every tool call is logged the same way, so
+Every provider exposes the same two calls, and every tool call is logged the same way, so those
 agents and the UI don't care which one is behind them.
 
 ## Lessons the Tuner carries

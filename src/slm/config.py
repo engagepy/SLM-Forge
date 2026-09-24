@@ -95,4 +95,10 @@ def get_settings() -> Settings:
 
 
 def agent_key_configured(s: Settings) -> bool:
+    """The provider switch covers the AI judge and the Advanced screens' agents (Observer, Synth)."""
     return {"openai": bool(s.openai_api_key), "claude": bool(s.anthropic_api_key), "ollama": True}[s.agent_provider]
+
+
+def tuner_ready(s: Settings) -> bool:
+    """The Tuner and its specialists run on the OpenAI Agents SDK whatever SLM_AGENT_PROVIDER says."""
+    return bool(s.openai_api_key)

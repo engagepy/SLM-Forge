@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from slm import hardware, profile, storage
-from slm.config import agent_key_configured, get_settings
+from slm.config import agent_key_configured, get_settings, tuner_ready
 from slm.inference.engine import engine as infer
 from slm.models import hub
 from slm.train.config import preset
@@ -33,6 +33,9 @@ def system_status() -> dict:
             "model": _agent_model(s),
             "key_configured": agent_key_configured(s),
             "key_env": {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY", "ollama": None}[s.agent_provider],
+            # The Tuner and its specialists are OpenAI-only; the provider switch above covers the
+            # judge and the Advanced screens' agents.
+            "tuner": {"ready": tuner_ready(s), "key_env": "OPENAI_API_KEY", "model": s.openai_model},
         },
         "workspace": str(s.workspace),
         "disk": storage.footprint(),
