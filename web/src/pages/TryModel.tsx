@@ -102,7 +102,7 @@ export default function TryModel() {
   const usedTexts = () => chips.filter((c) => c.used).map((c) => c.text);
   useEffect(() => {
     if (seeded || !project.data) return;
-    const own = project.data.project.test_questions ?? [];
+    const own = (project.data.project.test_questions ?? []).map((q) => q.input);
     const fromSamples = [...new Set((project.data.samples ?? []).map((x) => x.prompt))];
     const first = [...new Set([...own, ...fromSamples])].slice(0, 4);
     setSeeded(true);

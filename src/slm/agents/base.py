@@ -65,13 +65,17 @@ def set_proposal_status(proposal_id: int, status: str, result: dict | None = Non
 
 
 def eval_prompts(project_id: int) -> set[str]:
-    """Normalised prompts from every held-out split, used to block contamination."""
+    """Normalised prompts from every held-out split and the project's test set: contamination guard."""
     import json
     from pathlib import Path
+
+    from slm.db import test_cases
 
     prompts: set[str] = set()
     with Session(engine()) as s:
         versions = s.exec(select(DatasetVersion).where(DatasetVersion.project_id == project_id)).all()
+        if (p := s.get(Project, project_id)) is not None:
+            prompts |= {normalise(c["input"]) for c in test_cases(p)}
     for v in versions:
         for split in ("test", "valid"):
             path = Path(v.path) / f"{split}.jsonl"

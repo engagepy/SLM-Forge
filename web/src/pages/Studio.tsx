@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 
 import {
@@ -583,13 +583,33 @@ function GoalView({ s }: { s: Snapshot }) {
           <dd className="font-mono text-xs text-muted">{s.project.system_prompt}</dd>
         </div>
       )}
+      {Object.keys(s.project.plan ?? {}).length > 0 && (
+        <div>
+          <dt className="text-[11px] uppercase tracking-wide text-faint">The Tuner's plan (say so in the chat to change it)</dt>
+          <dd>
+            <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
+              {Object.entries(s.project.plan).map(([k, v]) => (
+                <Fragment key={k}>
+                  <dt className="text-faint">{k.replace(/_/g, " ")}</dt>
+                  <dd className="text-muted">{v}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          </dd>
+        </div>
+      )}
       {s.project.test_questions?.length > 0 && (
         <div>
-          <dt className="text-[11px] uppercase tracking-wide text-faint">Test questions (every checkpoint is scored on these)</dt>
+          <dt className="text-[11px] uppercase tracking-wide text-faint">
+            Test set · {s.project.test_questions.length} cases, {s.project.test_questions.filter((q) => q.expected).length} with an expected output
+          </dt>
           <dd>
             <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-xs text-muted">
               {s.project.test_questions.map((q) => (
-                <li key={q}>{q}</li>
+                <li key={q.input} className={cx(q.kind === "should-not" && "italic")} title={q.expected ? `Expected: ${q.expected}` : undefined}>
+                  {q.input}
+                  {q.kind === "should-not" && <span className="ml-1 text-faint">(should return nothing)</span>}
+                </li>
               ))}
             </ol>
           </dd>
@@ -779,7 +799,7 @@ function Scores({ evals }: { evals: Evaluation[] }) {
         <div key={e.id} className="rounded-lg border border-line">
           <button onClick={() => setOpen(open === e.id ? null : e.id)} className="flex w-full items-center gap-3 px-3 py-2 text-left">
             <span className={cx("num w-12 text-[15px] font-semibold", e.mean === best ? "text-good" : "text-fg")}>{e.mean.toFixed(1)}</span>
-            <span className="text-[11px] text-faint">/ 10</span>
+            <span className="text-[11px] text-faint">/ 10{e.exact_rate != null && ` · ${Math.round(e.exact_rate * 100)}% exact`}</span>
             <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-panel-2">
               <div className={cx("h-full", e.mean === best ? "bg-good" : "bg-accent")} style={{ width: `${e.mean * 10}%` }} />
             </div>

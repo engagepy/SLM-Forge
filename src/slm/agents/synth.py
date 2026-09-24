@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 
 from slm.agents.base import eval_prompts, event_logger, normalise, project_context
 from slm.agents.provider import get_provider
-from slm.db import Feedback, PreferencePair, Project, SftExample, engine
+from slm.db import Feedback, PreferencePair, Project, SftExample, engine, test_cases
 
 AGENT = "synth"
 MAX_PER_CALL = 20
@@ -117,6 +117,7 @@ def run(
 
     with Session(engine()) as s:
         project = s.get(Project, project_id)
+        blocked |= {normalise(c["input"]) for c in test_cases(project)}  # the test set stays held out
     return _generate_all(project_id, project, provider, ctx, on_event, blocked, feedback, kind, count, focus, on_policy)
 
 

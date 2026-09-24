@@ -34,6 +34,13 @@ export interface SystemStatus {
   };
 }
 
+/** One entry of the fixed test set. expected makes scoring exact-match; kind says what's right. */
+export interface TestCase {
+  input: string;
+  expected: string | null;
+  kind: "on-goal" | "should-not" | "edge";
+}
+
 export interface Project {
   id: number;
   name: string;
@@ -42,7 +49,8 @@ export interface Project {
   system_prompt: string;
   current_model_path: string | null;
   current_adapter_path: string | null;
-  test_questions: string[];
+  test_questions: TestCase[];
+  plan: Record<string, string>;
   created_at: string;
 }
 
@@ -317,7 +325,8 @@ export interface Evaluation {
   target: string;
   checkpoint_id: number | null;
   mean: number;
-  items: { prompt: string; answer: string; score: number; reason: string }[];
+  exact_rate?: number | null;
+  items: { prompt: string; answer: string; score: number; reason: string; kind?: string; exact?: boolean | null }[];
   at: string;
 }
 

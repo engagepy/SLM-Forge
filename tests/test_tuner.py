@@ -602,8 +602,8 @@ def test_evaluate_model_scores_the_test_set_and_keeps_the_result(session, projec
     from slm.agents.provider import FakeProvider, set_provider
     from slm.db import Checkpoint
 
-    assert "test questions" in str(call(project.id, "evaluate_model", target="base"))  # none set yet
-    call(project.id, "update_project", test_questions=["What is inertia?", " Why is the sky blue? ", ""])
+    assert "No test cases yet" in str(call(project.id, "evaluate_model", target="base"))  # none set yet
+    call(project.id, "update_project", test_cases=["What is inertia?", " Why is the sky blue? ", ""])
     st = session.get(StudioState, project.id)  # the first call created it
     st.autopilot = True
     session.add(st)
@@ -630,7 +630,7 @@ def test_evaluate_model_scores_the_test_set_and_keeps_the_result(session, projec
 
 def test_evaluate_model_is_a_proposal_outside_a_round(session, project, scripted_answers, monkeypatch):
     monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
-    call(project.id, "update_project", test_questions=["q"])
+    call(project.id, "update_project", test_cases=["q"])
     _open_project(session, project)
     assert "go-ahead" in str(call(project.id, "evaluate_model"))
     out = call(project.id, "evaluate_model", reason="See where it stands.")
@@ -658,3 +658,89 @@ def test_serve_checkpoint_rolls_back_unless_a_run_is_using_the_model(session, pr
     session.commit()
     assert "wait for it to finish" in str(call(project.id, "serve_checkpoint", checkpoint_id=worse.id))
     assert "no such checkpoint" in str(call(project.id, "serve_checkpoint", checkpoint_id=999)) or True
+
+
+# ── test cases with expected outputs, the plan, minutes ──────────────────────
+
+
+def test_test_cases_with_expected_outputs_score_by_exact_match_first(session, project, scripted_answers, monkeypatch):
+    from slm.agents.provider import FakeProvider, set_provider
+
+    call(
+        project.id,
+        "update_project",
+        plan={"task_type": "extraction", "stop_rule": "exact ≥ 90%"},
+        test_cases=[
+            {"input": "Hello", "expected": '{"events": []}', "kind": "should-not"},
+            {"input": "cough after lisinopril", "expected": '{"events":[{"drug":"lisinopril"}]}'},
+            {"input": "why is the sky blue?"},
+            "plain string still works",
+        ],
+    )
+    session.expire_all()
+    p = session.get(Project, project.id)
+    assert p.plan == {"task_type": "extraction", "stop_rule": "exact ≥ 90%"}
+    assert [c["kind"] for c in p.test_questions] == ["should-not", "on-goal", "on-goal", "on-goal"]
+    session.add(StudioState(project_id=project.id, autopilot=True))
+    session.commit()
+    # answer to "Hello" → not JSON but JSON expected → 0 without a judge call; second case: the
+    # scripted answer differs from expected → judge; two cases without expected → judge.
+    answers = {
+        "Hello": "Hello! How can I help?",
+        "cough after lisinopril": '{"events": [{"drug": "lisinopril"}]}',  # same JSON, different spacing → exact
+    }
+    monkeypatch.setattr(
+        tools,
+        "_generate",
+        lambda project, prompt, t, m, target="current", seed=None: {"text": answers.get(prompt, "answer")},
+    )
+    set_provider(FakeProvider(json_responses=[{"score": 7, "reason": "ok"}, {"score": 5, "reason": "meh"}]))
+    out = call(project.id, "evaluate_model", target="base")
+    by = {x["q"]: x for x in out["scores"]}
+    assert by["Hello"]["score"] == 0 and by["cough after lisinopril"]["score"] == 10
+    assert out["exact_match_rate"] == 0.5 and out["mean_score"] == round((0 + 10 + 7 + 5) / 4, 1)
+
+
+def test_synthetic_writer_never_reuses_a_test_input(session, project):
+    from slm.agents.base import eval_prompts
+
+    call(project.id, "update_project", test_cases=[{"input": "How long do I boil an egg?"}])
+    assert "how long do i boil an egg?" in eval_prompts(project.id)
+
+
+def test_plan_training_estimates_minutes(session, project, monkeypatch):
+    from slm.db import DatasetVersion, Job, Metric
+    from slm.models import manage
+
+    monkeypatch.setattr(manage, "serving_path", lambda p: "/m")
+    monkeypatch.setattr(
+        manage,
+        "read_shape",
+        lambda path: __import__("slm.hardware", fromlist=["ModelShape"]).ModelShape.from_config(
+            {
+                "hidden_size": 896,
+                "num_hidden_layers": 24,
+                "intermediate_size": 4864,
+                "vocab_size": 151936,
+                "num_attention_heads": 14,
+                "num_key_value_heads": 2,
+            }
+        ),
+    )
+    v = DatasetVersion(project_id=project.id, kind="sft", path="/x", n_train=400, token_stats={"p95": 300})
+    session.add(v)
+    session.commit()
+    session.refresh(v)
+    out = call(project.id, "plan_training", dataset_version_id=v.id, epochs=2)
+    assert out["estimated"]["minutes"] >= 1 and "rule of thumb" in out["estimated"]["basis"]
+    job = Job(project_id=project.id, kind="sft", status="succeeded")
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    session.add(Metric(job_id=job.id, iteration=10, split="train", values={"loss": 1.0, "it_per_sec": 2.0}))
+    session.commit()
+    out = call(project.id, "plan_training", dataset_version_id=v.id, epochs=2)
+    assert out["estimated"] == {
+        "minutes": max(1, round(out["iterations"] / 2.0 / 60)),
+        "basis": "this project's last run",
+    }

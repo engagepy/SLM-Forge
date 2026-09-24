@@ -43,6 +43,7 @@ from slm.db import (
 from slm.db import (
     count as count_rows,
 )
+from slm.db import test_cases as db_test_cases
 from slm.events import canvas_changed, shutting_down
 from slm.feedback import record_feedback
 from slm.inference.engine import EngineBusy, SamplingParams
@@ -162,6 +163,42 @@ def _job_brief(j: Job) -> dict:
 # ── situational awareness ───────────────────────────────────────────────────
 
 
+def _machine_guide(hw) -> dict:
+    """What this Mac can train comfortably, so plans are sized to it rather than to a textbook."""
+    budget = hw.budget_gb
+    tiers = [(0.6, "0.5B"), (1.6, "1.5B"), (3.5, "3B"), (8.0, "7B")]
+    largest = hardware.max_params_for_budget(budget, 4) / 1e9
+    comfortable = next((label for cap, label in reversed(tiers) if cap <= largest * 0.6), "0.5B")
+    return {
+        "ml_budget_gb": round(budget, 1),
+        "largest_trainable_4bit": f"{largest:.1f}B",
+        "comfortable_tier": comfortable,
+        "note": "Above the comfortable tier, use preset safe, batch 1–2 and sequence length ≤ 512; "
+        "the memory estimate underestimates 3B+ by ~30%.",
+    }
+
+
+def _estimated_minutes(pid: int, iterations: int, params_b: float, seq_len: int, batch: int) -> dict:
+    """Minutes a run should take: from this Mac's last run of similar size when there is one,
+    else a rule of thumb for 4-bit LoRA on Apple Silicon (calibrated at 512 tokens × batch 4)."""
+    with Session(engine()) as s:
+        last = s.exec(
+            select(Metric)
+            .join(Job, Job.id == Metric.job_id)
+            .where(Job.project_id == pid, Job.kind.in_(["sft", "dpo"]), Metric.split == "train")
+            .order_by(Metric.id.desc())
+            .limit(20)
+        ).all()
+    rates = [m.values.get("it_per_sec") for m in last if m.values.get("it_per_sec")]
+    if rates:
+        rate, basis = sorted(rates)[len(rates) // 2], "this project's last run"
+    else:
+        rate = 1.3 if params_b <= 0.7 else 0.8 if params_b <= 1.6 else 0.45 if params_b <= 3.5 else 0.2
+        rate *= (512 * 4) / max(1, seq_len * batch)  # rough: time scales with tokens per step
+        basis = "rule of thumb for this size"
+    return {"minutes": max(1, round(iterations / rate / 60)), "basis": basis}
+
+
 @tool
 def get_status(ctx: Ctx) -> dict:
     """Everything about the project right now: hardware, goal, base model, datasets, prepared
@@ -203,8 +240,10 @@ def get_status(ctx: Ctx) -> dict:
                 "name": p.name,
                 "goal": p.goal,
                 "system_prompt": p.system_prompt,
-                "test_questions": p.test_questions,
+                "plan": p.plan,
+                "test_cases": db_test_cases(p),
             },
+            "this_mac": _machine_guide(hw),
             "evaluations": [
                 {k: e.get(k) for k in ("id", "target", "checkpoint_id", "mean", "at")} for e in st.evals[-6:]
             ],
@@ -290,27 +329,55 @@ def update_project(
     name: str | None = None,
     goal: str | None = None,
     system_prompt: str | None = None,
-    test_questions: list[str] | None = None,
+    plan: dict | None = None,
+    test_cases: list[dict | str] | None = None,
 ) -> dict:
-    """Record the project's name, the model's goal (one or two sentences), the system prompt the
-    model will be trained and used with, and its test set. Set these as soon as you understand what
-    the user wants. test_questions: 5–8 short questions a real user would ask, spanning the goal;
-    evaluate_model scores every checkpoint on them, so keep them fixed once training starts."""
+    """Record the project's name, goal (one or two sentences), the system prompt the model will be
+    trained and used with, your plan, and the test set. Set the first three as soon as you
+    understand the goal; write the plan before any data.
+    plan: {task_type: persona|qa|extraction|classification|other, output_format, model_tier,
+    data_target (how many examples and why), eval_design (how many cases, scored how),
+    stop_rule (what score or condition ends the work)}. It's shown to the user, who can steer it.
+    test_cases: [{input, expected?, kind?}]. input is what a user would type. expected is the exact
+    correct output when one exists (JSON, a label, a number): those are scored by exact match
+    first, so give them for every deterministic task. kind: on-goal | should-not (the right answer
+    is the empty/negative result) | edge. Fixed once training starts: evaluate_model scores every
+    checkpoint on the same set. Replaces the whole set."""
+    pid = ctx.context.project_id
     with Session(engine()) as s:
-        p = s.get(Project, ctx.context.project_id)
+        p = s.get(Project, pid)
         if name:
             p.name = name[:60]
         if goal:
             p.goal = goal
         if system_prompt is not None:
             p.system_prompt = system_prompt
-        if test_questions is not None:
-            p.test_questions = [q.strip() for q in test_questions if q.strip()][:12]
+        if plan is not None:
+            p.plan = {k: str(v)[:400] for k, v in plan.items() if v is not None}
+        if test_cases is not None:
+            cases = []
+            for c in test_cases[:60]:
+                c = {"input": c} if isinstance(c, str) else dict(c)
+                if str(c.get("input", "")).strip():
+                    cases.append(
+                        {
+                            "input": str(c["input"]).strip()[:600],
+                            "expected": (str(c["expected"]).strip()[:2000] if c.get("expected") else None),
+                            "kind": c.get("kind") if c.get("kind") in ("on-goal", "should-not", "edge") else "on-goal",
+                        }
+                    )
+            p.test_questions = cases
         s.add(p)
         s.commit()
         s.refresh(p)
-    canvas_changed(ctx.context.project_id)
-    return {"name": p.name, "goal": p.goal, "system_prompt": p.system_prompt, "test_questions": p.test_questions}
+    canvas_changed(pid)
+    return {
+        "name": p.name,
+        "goal": p.goal,
+        "system_prompt": p.system_prompt,
+        "plan": p.plan,
+        "test_cases": db_test_cases(p),
+    }
 
 
 # ── base model ──────────────────────────────────────────────────────────────
@@ -538,10 +605,12 @@ def _plan(
         "grad_checkpoint": cfg.grad_checkpoint,
     }
     if version:
+        iters = cfg.total_iters(version.n_train)
         info |= {
-            "iterations": cfg.total_iters(version.n_train),
+            "iterations": iters,
             "epochs": cfg.epochs_for(version.n_train),
             "train_examples": version.n_train,
+            "estimated": _estimated_minutes(pid, iters, shape.params / 1e9, cfg.max_seq_length, cfg.batch_size),
         }
     return cfg, info, version
 
@@ -758,9 +827,10 @@ def evaluate_model(ctx: Ctx, target: str = "current", reason: str = "") -> dict:
         st = studio_state(s, pid)  # first: creating the row commits, which would expire `project`
         previous = [dict(e) for e in st.evals]
         project = s.get(Project, pid)
-        questions = list(project.test_questions or [])
-    if not questions:
-        raise ValueError("No test questions yet: set 5–8 with update_project(test_questions=[...]) first.")
+        cases = db_test_cases(project)
+    questions = [c["input"] for c in cases]
+    if not cases:
+        raise ValueError("No test cases yet: set them with update_project(test_cases=[...]) first.")
     if proposal := _spend(
         pid, "evaluate_model", "evaluate", f"Score the {target.split(':')[0]} model on {len(questions)} test questions",
         reason, {"questions": len(questions), "target": target}, {"target": target},
@@ -768,8 +838,10 @@ def evaluate_model(ctx: Ctx, target: str = "current", reason: str = "") -> dict:
         return proposal
     judge = get_provider()
     items = []
-    items = _score_all(project, judge, questions, target)
+    items = _score_all(project, judge, cases, target)
     mean = round(sum(i["score"] for i in items) / len(items), 1)
+    checked = [i for i in items if i.get("exact") is not None]
+    exact_rate = round(sum(1 for i in checked if i["exact"]) / len(checked), 2) if checked else None
     with Session(engine()) as s:
         project = s.get(Project, pid)
         if target == "base":
@@ -783,6 +855,7 @@ def evaluate_model(ctx: Ctx, target: str = "current", reason: str = "") -> dict:
             "target": "base" if checkpoint_id is None else f"checkpoint:{checkpoint_id}",
             "checkpoint_id": checkpoint_id,
             "mean": mean,
+            "exact_rate": exact_rate,
             "items": items,
             "at": now().isoformat(),
         }
@@ -798,24 +871,62 @@ def evaluate_model(ctx: Ctx, target: str = "current", reason: str = "") -> dict:
         "target": record["target"],
         "checkpoint_id": checkpoint_id,
         "mean_score": mean,
-        "scores": [{"q": _clip(i["prompt"], 80), "score": i["score"], "why": _clip(i["reason"], 120)} for i in items],
+        "exact_match_rate": exact_rate,  # over cases with an expected output; None if there are none
+        "scores": [
+            {"q": _clip(i["prompt"], 80), "kind": i["kind"], "score": i["score"], "why": _clip(i["reason"], 120)}
+            for i in items
+        ],
         "previous_best": {k: best[k] for k in ("target", "checkpoint_id", "mean")} if best else None,
         "note": "Compare with the base score and the previous best; export the best-scoring checkpoint.",
     }
 
 
-def _score_all(project: Project, judge, questions: list[str], target: str) -> list[dict]:
+def _canon(text: str) -> tuple[str, bool]:
+    """A comparable form of an output: canonical JSON when it parses, else trimmed lowercase text."""
+    import json as _json
+
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.strip("`").split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        return _json.dumps(_json.loads(t), sort_keys=True, separators=(",", ":")), True
+    except ValueError:
+        return " ".join(t.lower().split()), False
+
+
+def _score_all(project: Project, judge, cases: list[dict], target: str) -> list[dict]:
+    """Exact match first (an expected output is the ground truth), the judge only where there is
+    no expected output or the answer differs from it and may still deserve partial credit."""
     items = []
-    for q in questions:
+    for case in cases:
+        q, expected = case["input"], case.get("expected")
         answer = _generate(project, q, 0.3, 300, target)["text"]
-        v = judge.json(
-            SCORE_SYSTEM,
-            f"Goal: {project.goal}\nSystem prompt: {project.system_prompt or '(none)'}\n\n"
-            f"Question: {q}\n\nAnswer:\n{answer}",
-            SCORE_SCHEMA,
-        )
-        score = max(0, min(10, int(v.get("score", 0))))
-        items.append({"prompt": q, "answer": answer, "score": score, "reason": (v.get("reason") or "")[:300]})
+        item = {"prompt": q, "kind": case.get("kind", "on-goal"), "answer": answer, "exact": None}
+        if expected:
+            got, got_json = _canon(answer)
+            want, want_json = _canon(expected)
+            item["exact"] = got == want
+            if item["exact"]:
+                item |= {"score": 10, "reason": "matches the expected output"}
+            elif want_json and not got_json:
+                item |= {"score": 0, "reason": "not valid JSON, and JSON was expected"}
+            else:
+                v = judge.json(
+                    SCORE_SYSTEM + "\nYou are also given the expected output: score by how close the answer is to it.",
+                    f"Goal: {project.goal}\nSystem prompt: {project.system_prompt or '(none)'}\n\n"
+                    f"Input: {q}\n\nExpected output:\n{expected}\n\nAnswer:\n{answer}",
+                    SCORE_SCHEMA,
+                )
+                item |= {"score": max(0, min(9, int(v.get("score", 0)))), "reason": (v.get("reason") or "")[:300]}
+        else:
+            v = judge.json(
+                SCORE_SYSTEM,
+                f"Goal: {project.goal}\nSystem prompt: {project.system_prompt or '(none)'}\n\n"
+                f"Question: {q}\n\nAnswer:\n{answer}",
+                SCORE_SCHEMA,
+            )
+            item |= {"score": max(0, min(10, int(v.get("score", 0)))), "reason": (v.get("reason") or "")[:300]}
+        items.append(item)
     return items
 
 

@@ -29,8 +29,12 @@ class Project(SQLModel, table=True):
     # The model the project currently serves: base path, or latest fused model.
     current_model_path: str | None = None
     current_adapter_path: str | None = None
-    # The fixed questions the Tuner scores every checkpoint on (before/after is a number, not a feeling).
+    # The fixed test set the Tuner scores every checkpoint on: [{input, expected?, kind?}] (older
+    # rows hold plain strings; test_cases() normalises). expected makes scoring exact-match first.
     test_questions: list = json_field([])
+    # The Tuner's plan for this project: task_type, output_format, model_tier, data_target,
+    # eval_design, stop_rule. Written before any data, shown on the Goal card, steerable by the user.
+    plan: dict = json_field({})
     created_at: datetime = Field(default_factory=now)
 
 
@@ -235,6 +239,18 @@ def ready(model) -> tuple:
 def awaiting_review(model) -> tuple:
     """Filters for examples (e.g. synthetic ones) nobody has approved yet."""
     return (model.approved == False,)  # noqa: E712
+
+
+def test_cases(project: "Project") -> list[dict]:
+    """The project's test set as dicts, whatever form it was saved in."""
+    out = []
+    for item in project.test_questions or []:
+        if isinstance(item, str):
+            item = {"input": item}
+        text = str(item.get("input") or "").strip()
+        if text:
+            out.append({"input": text, "expected": item.get("expected") or None, "kind": item.get("kind") or "on-goal"})
+    return out
 
 
 def studio_state(s: Session, project_id: int) -> "StudioState":

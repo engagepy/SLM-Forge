@@ -23,6 +23,7 @@ from slm.db import (
     now,
     ready,
     studio_state,
+    test_cases,
 )
 from slm.events import canvas_changed
 from slm.feedback import record_feedback
@@ -56,7 +57,7 @@ def studio_snapshot(project_id: int, s: Session = SessionDep) -> dict:
     jobs = s.exec(select(Job).where(Job.project_id == project_id).order_by(Job.id.desc()).limit(30)).all()
     ckpts = s.exec(select(Checkpoint).where(Checkpoint.project_id == project_id).order_by(Checkpoint.id)).all()
     return {
-        "project": p.model_dump(mode="json"),
+        "project": p.model_dump(mode="json") | {"test_questions": test_cases(p)},
         "stage": st.stage,
         "note": st.note,
         "tuner_busy": tuner.is_busy(project_id),
