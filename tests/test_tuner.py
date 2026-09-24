@@ -960,3 +960,11 @@ def test_the_tuner_memory_is_trimmed_at_a_user_message_boundary(tmp_path):
     assert all(it["call_id"] in calls for it in kept if it.get("type") == "function_call_output")
     asyncio.run(trim_session(s))
     assert len(asyncio.run(s.get_items())) == len(kept)  # a second pass changes nothing
+
+
+def test_export_tool_rejects_bad_quantize_bits_before_proposing(project):
+    out = call(project.id, "export_model", name="x", quantize_bits=5)
+    assert "quantize_bits must be one of 3, 4, 6, 8" in str(out)
+    from slm.tuner import confirm
+
+    assert not confirm.pending(project.id)  # nothing was proposed

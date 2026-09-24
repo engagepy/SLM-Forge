@@ -24,8 +24,9 @@ SLM Forge is a local web app for building small language models on Apple Silicon
    It does the groundwork on autopilot, but **every run (download, training, export) waits for
    the user's confirmation**.
 
-The Tuner runs on OpenAI `gpt-6-luna` through the OpenAI Agents SDK, with Claude and Ollama as
-fallbacks. Beyond the goal, the user only confirms runs, but can steer at any time.
+The Tuner and its specialists run on OpenAI `gpt-6-luna` through the OpenAI Agents SDK and always
+need `OPENAI_API_KEY`; `SLM_AGENT_PROVIDER` (Claude, Ollama) only switches the AI judge and the
+Advanced screens' agents. Beyond the goal, the user only confirms runs, but can steer at any time.
 
 The Tuner adapts how it explains things to the user's level (beginner, intermediate or expert),
 which it learns across projects (`profile.py`). Whatever the level, its goal stays the same: an

@@ -41,6 +41,8 @@ def _target(s: Session, p: Project, target: str) -> dict:
         return {"model_path": path, "adapter_path": None}
     if target.startswith("checkpoint:"):
         c = get_or_404(s, Checkpoint, int(target.split(":", 1)[1]))
+        if c.project_id != p.id:
+            raise HTTPException(404, "No such checkpoint in this project")
         if c.fused_path:
             return {"model_path": c.fused_path, "adapter_path": None}
         return {"model_path": c.base_model_path, "adapter_path": c.adapter_path}

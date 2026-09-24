@@ -224,7 +224,11 @@ def _delete_from_hf_cache(repo_id: str, local_path: str) -> int:
             return int(strategy.expected_freed_size)
     except Exception:
         pass  # not in the cache (or no cache): fall through to the folder itself
-    return _rmtree(local_path)
+    # A snapshot folder of symlinks frees nothing by itself: count only the bytes that really go.
+    p = Path(local_path)
+    real = sum(f.lstat().st_size for f in p.rglob("*") if f.is_file() and not f.is_symlink()) if p.exists() else 0
+    _rmtree(local_path)
+    return real
 
 
 def remove_model(repo_id: str) -> dict:
@@ -237,13 +241,20 @@ def remove_model(repo_id: str) -> dict:
         if users:
             raise ValueError(f"{repo_id} is the base model of {', '.join(users)}; delete those projects first.")
         local_path = rec.local_path
-        s.delete(rec)
-        s.commit()
     from slm.inference.engine import engine as infer
 
     if (infer.loaded or {}).get("model_path") == local_path:
         infer.unload()
+    # Files first: if the delete fails the row stays, so the model doesn't vanish from the app while
+    # its gigabytes stay on disk.
     freed = _delete_from_hf_cache(repo_id, local_path)
+    if Path(local_path).exists():
+        raise RuntimeError(f"{local_path} is still there after the delete")
+    with Session(engine()) as s:
+        rec = s.exec(select(ModelRecord).where(ModelRecord.repo_id == repo_id)).first()
+        if rec is not None:
+            s.delete(rec)
+            s.commit()
     footprint(refresh=True)
     return {"repo_id": repo_id, "freed_gb": _gb(freed)}
 
@@ -327,7 +338,8 @@ def delete_project(project_id: int, keep_exports: bool = False) -> dict:
     from slm.inference.engine import engine as infer
 
     runs_dir = str(get_settings().runs_dir)
-    if any(str(v or "").startswith(runs_dir) for v in (infer.loaded or {}).values()):
+    loaded = [str(v or "") for v in (infer.loaded or {}).values()]
+    if any(v.startswith(runs_dir) or v in export_paths for v in loaded):
         infer.unload()
     freed = sum(_rmtree(p) for paths in files.values() for p in paths) + sum(_rmtree(p) for p in export_paths)
     tuner.forget(project_id)

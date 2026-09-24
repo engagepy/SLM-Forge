@@ -136,3 +136,34 @@ def test_system_reports_the_tuner_needs_openai_whatever_the_provider(client, mon
     agents = client.get("/api/system").json()["agents"]
     assert agents["key_configured"] is True  # ollama needs no key
     assert agents["tuner"] == {"ready": False, "key_env": "OPENAI_API_KEY", "model": get_settings().openai_model}
+
+
+def test_rollback_is_refused_while_a_job_uses_the_model(client, session):
+    # Regression: the Tuner's serve_checkpoint refused this, the Advanced route didn't.
+    from slm.db import Checkpoint
+
+    pid = _project(client)
+    c = Checkpoint(project_id=pid, kind="sft", job_id=1, adapter_path="/a", base_model_path="/m")
+    session.add(c)
+    session.add(Job(id=77, project_id=pid, kind="sft", status="running"))
+    session.commit()
+    r = client.post(f"/api/projects/{pid}/checkpoints/{c.id}/activate")
+    assert r.status_code == 409 and "Job 77" in r.json()["detail"]
+    # ...and a checkpoint from another project can't be generated from through this one.
+    other = _project(client)
+    body = {"messages": [{"role": "user", "content": "hi"}], "target": f"checkpoint:{c.id}"}
+    assert client.post(f"/api/projects/{other}/generate", json=body).status_code == 404
+
+
+def test_cancelling_a_finished_job_says_so(client, session):
+    pid = _project(client)
+    session.add(Job(id=78, project_id=pid, kind="sft", status="succeeded"))
+    session.commit()
+    r = client.post("/api/jobs/78/cancel")
+    assert r.status_code == 409 and "already succeeded" in r.json()["detail"]
+    assert client.post("/api/jobs/9999/cancel").status_code == 404
+
+
+def test_the_export_route_rejects_bad_quantize_bits(client, project):
+    r = client.post(f"/api/projects/{project.id}/export", json={"quantize_bits": 5})
+    assert r.status_code in (409, 422)  # 409 when no model is downloaded yet, 422 for the bits

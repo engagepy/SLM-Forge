@@ -228,3 +228,32 @@ def test_reset_keeps_the_project_shell_and_chosen_exports(session, client, monke
     assert [j.id for j in session.exec(select(Job)).all()] == [exp_id] and export_dir.exists()
     st = session.get(StudioState, pid)
     assert st.stage == "goal" and st.completed is False and st.evals == []
+
+
+def test_removing_a_model_deletes_files_before_the_row_and_counts_only_real_bytes(session, tmp_path, monkeypatch):
+    import pytest
+
+    # Regression: the row went first, so a failed delete left gigabytes on disk with nothing in the
+    # app pointing at them.
+    model = tmp_path / "m"
+    model.mkdir()
+    (model / "w").write_bytes(b"m" * 3_000_000)
+    session.add(ModelRecord(repo_id="org/tiny", local_path=str(model)))
+    session.commit()
+    monkeypatch.setattr(storage, "_delete_from_hf_cache", lambda repo, path: 0)  # deletes nothing
+    with pytest.raises(RuntimeError, match="still there"):
+        storage.remove_model("org/tiny")
+    session.expire_all()
+    assert session.exec(__import__("sqlmodel").select(ModelRecord)).one().repo_id == "org/tiny"
+    monkeypatch.undo()
+
+    # A snapshot folder of symlinks (the HF cache layout) frees nothing by itself: say 0, not the blob sizes.
+    blobs = tmp_path / "blobs"
+    blobs.mkdir()
+    (blobs / "abc").write_bytes(b"b" * 5_000_000)
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "model.safetensors").symlink_to(blobs / "abc")
+    (snap / "config.json").write_text("{}")
+    assert storage._delete_from_hf_cache("org/not-in-cache", str(snap)) == 2  # config.json only
+    assert not snap.exists() and (blobs / "abc").exists()

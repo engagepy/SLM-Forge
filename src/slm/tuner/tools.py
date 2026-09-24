@@ -1026,15 +1026,11 @@ def serve_checkpoint(ctx: Ctx, checkpoint_id: int) -> dict:
     the model worse (a val_worse or overfitting warning, or a lower evaluate_model score): later
     runs continue from the served checkpoint, and export packages it. get_status lists checkpoints."""
     pid = ctx.context.project_id
+    from slm.train.jobs import model_in_use
     from slm.train.jobs import serve_checkpoint as _serve
 
     with Session(engine()) as s:
-        busy = s.exec(
-            select(Job.id).where(
-                Job.project_id == pid, Job.kind.in_(["sft", "dpo", "export"]), Job.status.in_(["queued", "running"])
-            )
-        ).first()
-        if busy is not None:
+        if (busy := model_in_use(s, pid)) is not None:
             raise ValueError(f"Job {busy} is using this project's model; wait for it to finish.")
         project = s.get(Project, pid)
         c = s.get(Checkpoint, checkpoint_id)
@@ -1395,6 +1391,9 @@ def export_model(ctx: Ctx, name: str, quantize_bits: int | None = None, reason: 
     base is already quantized), and write a model card. It runs only once the user confirms it on
     a card. reason: one plain sentence for the card. Afterwards they can chat with the exported
     model on the "Try it" page."""
+    from slm.export.fuse import check_bits
+
+    check_bits(quantize_bits)
     config = {"name": name, "quantize_bits": quantize_bits, "sampling": {"temperature": 0.7, "top_p": 0.95}}
     details = {"name": name, "quantize_bits": quantize_bits}
     return confirm.propose(ctx.context.project_id, "export", f"Export the model as “{name}”", reason, details,

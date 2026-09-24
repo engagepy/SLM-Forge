@@ -21,6 +21,15 @@ def fuse_command(model_path: str, adapter_path: str, save_path: Path, dequantize
     return cmd
 
 
+QUANTIZE_BITS = (3, 4, 6, 8)
+
+
+def check_bits(bits: int | None) -> int | None:
+    if bits is not None and bits not in QUANTIZE_BITS:
+        raise ValueError(f"quantize_bits must be one of {', '.join(map(str, QUANTIZE_BITS))}")
+    return bits
+
+
 def quantize_command(src: Path, dest: Path, bits: int, group_size: int = 64) -> list[str]:
     return [
         sys.executable, "-m", "mlx_lm", "convert",

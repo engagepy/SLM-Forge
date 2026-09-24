@@ -26,10 +26,11 @@ from slm.db import (
     count,
     ready,
 )
+from slm.export import fuse as fusing
 from slm.models import manage
 from slm.sessions import export_jobs, on_disk
 from slm.train.config import TrainConfig, preset
-from slm.train.jobs import serve_checkpoint
+from slm.train.jobs import model_in_use, serve_checkpoint
 from slm.train.worker import worker
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -295,6 +296,8 @@ def activate_checkpoint(project_id: int, checkpoint_id: int, s: Session = Sessio
     c = get_or_404(s, Checkpoint, checkpoint_id)
     if c.project_id != p.id:
         raise HTTPException(404)
+    if (busy := model_in_use(s, p.id)) is not None:
+        raise HTTPException(409, f"Job {busy} is using this project's model; wait for it to finish.")
     serve_checkpoint(s, p, c)
     return p.model_dump(mode="json")
 
@@ -309,8 +312,10 @@ class ExportIn(BaseModel):
 def export_model(project_id: int, body: ExportIn, s: Session = SessionDep) -> dict:
     p = project_or_404(s, project_id)
     _model_path(p)
-    if body.quantize_bits not in (None, 3, 4, 6, 8):
-        raise HTTPException(422, "quantize_bits must be 3, 4, 6 or 8")
+    try:
+        fusing.check_bits(body.quantize_bits)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
     return {"job_id": worker.submit("export", body.model_dump(), project_id).id}
 
 

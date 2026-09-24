@@ -179,9 +179,12 @@ def get_job(job_id: int, log_lines: int = 200, s: Session = SessionDep) -> dict:
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: int) -> dict:
     try:
-        return {"status": worker.cancel(job_id)}
+        status = worker.cancel(job_id)
     except KeyError as e:
-        raise HTTPException(404) from e
+        raise HTTPException(404, f"job {job_id} not found") from e
+    if status not in ("cancelled", "cancelling"):
+        raise HTTPException(409, f"job {job_id} already {status}")
+    return {"status": status}
 
 
 @router.get("/jobs/{job_id}/stream")

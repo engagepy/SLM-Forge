@@ -15,6 +15,7 @@ from slm.db import (
     Checkpoint,
     Dataset,
     DatasetVersion,
+    Job,
     Metric,
     PreferencePair,
     Project,
@@ -424,6 +425,18 @@ def served_ancestry(s: Session, project: Project) -> list[Checkpoint]:
         chain.append(served)
         served = by_id.get(served.parent_id) if served.parent_id else None
     return list(reversed(chain))
+
+
+def model_in_use(s: Session, project_id: int) -> int | None:
+    """The id of a queued or running job that trains or packages this project's model, if any:
+    switching the served checkpoint under it would corrupt its lineage."""
+    return s.exec(
+        select(Job.id).where(
+            Job.project_id == project_id,
+            Job.kind.in_(["sft", "dpo", "export"]),
+            Job.status.in_(["queued", "running"]),
+        )
+    ).first()
 
 
 @worker.register("export")
