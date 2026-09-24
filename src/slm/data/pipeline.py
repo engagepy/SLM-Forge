@@ -107,6 +107,7 @@ def prepare(
     rules: cleaning.CleaningRules | None = None,
     model_path: str | None = None,
     max_seq_length: int = 1024,
+    max_examples: int | None = None,
     valid_frac: float = 0.05,
     test_frac: float = 0.05,
     seed: int = 0,
@@ -122,7 +123,20 @@ def prepare(
     kept, report = cleaning.clean(mapped, rules)
     if failed:
         report.dropped["mapping_failed"] += failed
+    sampled_from = None
+    if max_examples and len(kept) > max_examples:
+        # A big import is a pool: train on a seeded sample of it, sized by the plan. Another seed
+        # later is a fresh batch from the same pool. Sampling precedes fitting, so tokenising
+        # stays proportional to what trains, not to what was imported.
+        import random as _random
+
+        sampled_from = len(kept)
+        rows = kept[:]
+        _random.Random(seed).shuffle(rows)
+        kept = rows[:max_examples]
     kept, report_d, measurer = _fit(kept, report, max_seq_length, model_path, rules.long_examples)
+    if sampled_from:
+        report_d["sampled"] = {"from": sampled_from, "to": max_examples, "seed": seed}
     fit = report_d["length"]
     report_d["rules"] = asdict(rules)
     if errors:

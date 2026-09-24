@@ -284,7 +284,7 @@ def test_autopilot_endpoint_toggles_and_wakes(client, session, project, monkeypa
     assert snap["autopilot"] is True and snap["completed"] is False
 
 
-def test_find_base_models_puts_local_models_first(project, monkeypatch):
+def test_find_base_models_recommends_the_catalog_first_then_the_hub(project, monkeypatch):
     from types import SimpleNamespace
 
     from slm.models import hub, manage
@@ -293,16 +293,24 @@ def test_find_base_models_puts_local_models_first(project, monkeypatch):
         manage,
         "local_models",
         lambda: [
-            {"repo_id": "org/tiny-0.5B-4bit", "params_b": 0.5, "bits": 4.0, "train_memory_gb": 2.4, "fit": "fits"}
+            {
+                "repo_id": "mlx-community/Qwen3-1.7B-4bit",
+                "params_b": 1.7,
+                "bits": 4.0,
+                "train_memory_gb": 3.2,
+                "fit": "fits",
+            }
         ],
     )
     remote = SimpleNamespace(
         id="org/other-1.5B", params=1.5e9, bits=4.0, train_estimate_gb=3.2, fit="fits", downloads=9
     )
     monkeypatch.setattr(hub, "search_models", lambda q, max_params_b=None, limit=12: [remote])
-    out = call(project.id, "find_base_models", query="tiny instruct")
-    assert [m["repo_id"] for m in out] == ["org/tiny-0.5B-4bit", "org/other-1.5B"]
-    assert out[0]["already_on_this_mac"] is True and out[1]["already_on_this_mac"] is False
+    out = call(project.id, "find_base_models", query="tiny instruct", task_type="extraction", max_params_billion=3.5)
+    rec = out["recommended"]
+    assert rec[0]["repo_id"] == "mlx-community/Qwen3-1.7B-4bit"  # suited to extraction and already here
+    assert all(r["suited_to_task"] for r in rec[:3]) and all("licence" in r and r["fit"] for r in rec)
+    assert all(r["params_b"] <= 3.5 for r in rec) and out["more_from_hub"][0]["repo_id"] == "org/other-1.5B"
 
 
 def test_every_defined_tool_is_registered():

@@ -91,7 +91,8 @@ src/slm/
                    project (detected via the admin key list; OPENAI_PROJECT_ID overrides), 10-minute
                    cache, never raises; GET /api/usage
   feedback.py      record_feedback → preference pairs + SFT examples (used by API and AI judge)
-  models/          hub.py (search, fit verdict), manage.py (download local-first, HF cache scan)
+  models/          hub.py (search, fit verdict), manage.py (download local-first, HF cache scan),
+                   catalog.py (curated families built as small models; find_base_models lists them first)
   data/            scout_tools (HF search/preview/import), format (column mapping), clean,
                    length (fit_to_length: drop/split long examples), split, pipeline (prepare → version)
   train/           config (TrainConfig, presets, memory_estimate, YAML), runner (subprocess + log

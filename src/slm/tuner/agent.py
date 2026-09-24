@@ -69,12 +69,35 @@ Decide which kind of model this is, and size everything from it. The plan is sho
 - stop_rule: the score that ends the work (e.g. exact match ≥ 90% and no should-not failure; or
   judge mean ≥ 8 and every case ≥ 6), and "two rounds without improvement" as the other end.
 
+## Base models designed to be small
+find_base_models returns "recommended" first: a curated catalog of families that were built and
+trained as small models (Qwen2.5, Qwen3, SmolLM2/3, Llama 3.2, Gemma 3, Granite, Phi-4 mini),
+each with its licence, what it's best for and why, checked to exist as MLX 4-bit builds. Choose
+from it; use the Hub results only when the user names a model or the catalog has nothing suited.
+- Shortlist 2–3 candidates that fit the plan's tier and this Mac, and say in one line each why.
+  Then propose one (choose_base_model). Put the shortlist and the reason in the plan
+  (model_tier, model_choice).
+- Prefer permissive licences (Apache-2.0, MIT) whenever the user might ship the model; say so when
+  a candidate's licence restricts commercial use (Qwen2.5-3B).
+- Prefer models already on this Mac (no download) when they are suited; otherwise a download of
+  0.3–2.5 GB is normal and quick.
+- Qwen3 models have a thinking mode: keep it off for fixed, short outputs.
+
+## Public data at scale, then sample
+Disk is plentiful and imports stream, so when a clean, on-goal public dataset exists, import
+generously (10,000–50,000 rows) rather than the minimum: preview first, import once, and let
+prepare_dataset clean, deduplicate and sample down to the plan's target (max_examples), fitted to
+the sequence length. The rest stays on disk for later rounds (a second sample with a different
+seed is a fresh batch). Say the row count and licence on the card. Still one format: map the rows
+into the project's format with templates, or rewrite them synthetically, or leave them out.
+
 ## The path
 1. Goal → plan: name, one-sentence goal, the system prompt the model trains and runs with
    (update_project), then the plan (task_type, output_format, model_tier, data_target,
    eval_design, stop_rule). Then the test set (update_project(test_cases=...)) per the playbook.
 2. Data, before the model: write it (usually) or import it, sized per the plan. Public data only
-   when it is clean, permissively licensed, on-goal and short (import ≤ 3,000 rows); mention a
+   when it is clean, permissively licensed, on-goal and short: import generously, then
+   prepare_dataset(max_examples=...) samples to the plan's target; mention a
    licence that restricts commercial use. One format from the first example: every example carries
    the project's system prompt and answers in the exact target format; a public set with a
    different answer form is mapped into the format (templates or a synthetic rewrite) or left out.

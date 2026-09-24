@@ -92,9 +92,16 @@ def import_dataset_job(ctx: JobContext) -> None:
     repo = c["repo_id"]
     name = c.get("name") or _slug(repo.split("/")[-1])
     dest = get_settings().datasets_dir / f"p{ctx.project_id}" / "raw" / f"{name}-job{ctx.job_id}"
-    ctx.note(f"Streaming up to {c.get('max_rows', 5000)} rows from {repo} ({c.get('split', 'train')}) ...")
+    max_rows = int(c.get("max_rows", 5000))
+    ctx.note(f"Streaming up to {max_rows:,} rows from {repo} ({c.get('split', 'train')}) ...")
+
+    def progress(n: int) -> None:
+        ctx.progress(n, max_rows)
+        if n % 10000 == 0:
+            ctx.note(f"{n:,} rows so far")
+
     n, columns = scout_tools.import_hf_dataset(
-        repo, dest, config=c.get("config"), split=c.get("split", "train"), max_rows=c.get("max_rows", 5000)
+        repo, dest, config=c.get("config"), split=c.get("split", "train"), max_rows=max_rows, on_progress=progress
     )
     ctx.note(f"Imported {n} rows with columns {columns}")
     with Session(engine()) as s:
@@ -128,6 +135,7 @@ def prepare_dataset_job(ctx: JobContext) -> None:
         rules=CleaningRules(**c.get("rules", {})),
         model_path=model_path,
         max_seq_length=c.get("max_seq_length", 1024),
+        max_examples=c.get("max_examples"),
         valid_frac=c.get("valid_frac", 0.05),
         test_frac=c.get("test_frac", 0.05),
         seed=c.get("seed", 0),

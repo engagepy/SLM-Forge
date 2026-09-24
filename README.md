@@ -165,6 +165,12 @@ taught it.
   prompt twice, and GPT-6 picks the better answer, writes the ideal one and critiques the flaws.
   Each verdict becomes a DPO preference pair and, where the model was wrong, a corrected SFT
   example. Human A/B judging is still available when you ask for it.
+- **Base models built to be small.** `find_base_models` lists a curated catalog first (Qwen2.5,
+  Qwen3, SmolLM2/3, Llama 3.2, Gemma 3, Granite, Phi-4 mini) with licence, what each is best for
+  and why, ordered by the plan's task type; the Tuner shortlists 2–3 and proposes one.
+- **Big imports, then a sample.** Hub datasets stream in up to 200,000 rows with progress on the
+  canvas; `prepare_dataset(max_examples=…)` cleans, deduplicates and samples to the plan's target,
+  and the rest stays on disk as a pool for later rounds.
 - **Smallest model that does the job:** about 0.5B by default, 1–1.5B when answers need real
   explanation, 3B only if you ask or a smaller model has clearly failed. Models already in the local Hugging Face cache
   are listed first and registered instantly, with no re-download.

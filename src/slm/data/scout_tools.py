@@ -140,11 +140,16 @@ def import_hf_dataset(
     config: str | None = None,
     split: str = "train",
     max_rows: int = 5000,
+    on_progress=None,
+    _load=None,
 ) -> tuple[int, list[str]]:
-    """Stream up to `max_rows` rows into dest/raw.jsonl. Returns (row count, columns)."""
-    from datasets import load_dataset
+    """Stream up to `max_rows` rows into dest/raw.jsonl. Returns (row count, columns).
+    Streams, so a 50,000-row import costs no more memory than a 500-row one; `on_progress(n)` is
+    called every 2,000 rows so the UI can show it."""
+    if _load is None:
+        from datasets import load_dataset as _load
 
-    ds = load_dataset(repo_id, config, split=split, streaming=True)
+    ds = _load(repo_id, config, split=split, streaming=True)
     dest.mkdir(parents=True, exist_ok=True)
     n, columns = 0, []
     with open(dest / "raw.jsonl", "w") as f:
@@ -153,6 +158,8 @@ def import_hf_dataset(
                 columns = list(row.keys())
             f.write(json.dumps(row, default=str, ensure_ascii=False) + "\n")
             n += 1
+            if on_progress and n % 2000 == 0:
+                on_progress(n)
     return n, columns
 
 

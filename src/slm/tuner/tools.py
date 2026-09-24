@@ -384,12 +384,29 @@ def update_project(
 
 
 @tool
-def find_base_models(ctx: Ctx, query: str, max_params_billion: float = 3.0) -> list[dict]:
-    """Search for MLX base models that fit this Mac, smallest first. Models already downloaded on
-    this Mac are marked and listed first (they cost nothing to use). Returns size, bits, estimated
-    training memory and a fit verdict. Prefer the smallest Instruct model that can do the job."""
+def find_base_models(ctx: Ctx, query: str = "", max_params_billion: float = 3.0, task_type: str | None = None) -> dict:
+    """Base models for this project. "recommended": a curated catalog of families built as small
+    models (with licence, what each is best for, why, and whether it's already on this Mac),
+    ordered by suitability to task_type (persona | qa | extraction | classification | other) then
+    size; every entry exists as an MLX 4-bit build. "more_from_hub": a Hub search for `query`, for
+    when the user names a model. Shortlist 2–3 from recommended, then choose_base_model."""
+    from slm.models import catalog
+
     local = {m["repo_id"]: m for m in manage.local_models()}
-    rows = hub.search_models(query, max_params_b=max_params_billion, limit=12)
+    budget = hardware.detect().budget_gb
+    recommended = []
+    for c in catalog.recommend(task_type, max_params_b=max_params_billion):
+        train_gb = hub.rough_training_gb(int(c["params_b"] * 1e9), 4)
+        recommended.append(
+            c
+            | {
+                "train_memory_gb": round(train_gb, 2),
+                "fit": hub.fit_verdict(train_gb, budget),
+                "already_on_this_mac": c["repo_id"] in local,
+            }
+        )
+    recommended.sort(key=lambda m: (not m["suited_to_task"], not m["already_on_this_mac"], m["params_b"]))
+    rows = hub.search_models(query, max_params_b=max_params_billion, limit=12) if query else []
     found = {
         m.id: {
             "repo_id": m.id,
@@ -412,7 +429,11 @@ def find_base_models(ctx: Ctx, query: str, max_params_billion: float = 3.0) -> l
             found[rid] = {k: m[k] for k in ("repo_id", "params_b", "bits", "train_memory_gb", "fit")} | {
                 "already_on_this_mac": True
             }
-    return sorted(found.values(), key=lambda m: (not m["already_on_this_mac"], m["params_b"]))
+    more = sorted(found.values(), key=lambda m: (not m["already_on_this_mac"], m["params_b"]))
+    return {
+        "recommended": recommended,
+        "more_from_hub": [m for m in more if m["repo_id"] not in {r["repo_id"] for r in recommended}],
+    }
 
 
 @tool
@@ -453,11 +474,14 @@ def preview_dataset(ctx: Ctx, repo_id: str) -> dict:
 
 @tool
 def import_dataset(
-    ctx: Ctx, repo_id: str, max_rows: int = 3000, config: str | None = None, split: str = "train", reason: str = ""
+    ctx: Ctx, repo_id: str, max_rows: int = 20000, config: str | None = None, split: str = "train", reason: str = ""
 ) -> dict:
-    """Import rows from a Hugging Face dataset into the project. A few thousand good rows is plenty
-    for a small model. Waits for the import to finish. Outside a round the user set in motion this
-    is a proposal they confirm first; give a plain-words `reason` for the card."""
+    """Import rows from a Hugging Face dataset into the project (streamed; up to 200,000 rows; the
+    canvas shows progress). Import generously: prepare_dataset(max_examples=...) samples the pool
+    down to the plan's target, and later rounds can draw a fresh sample. Waits for the import to
+    finish. Outside a round the user set in motion this is a proposal they confirm first; give a
+    plain-words `reason` for the card."""
+    max_rows = max(1, min(int(max_rows), 200_000))
     args = {"repo_id": repo_id, "max_rows": max_rows, "config": config, "split": split}
     if proposal := _spend(
         ctx.context.project_id, "import_dataset", "import", f"Import {repo_id}", reason,
@@ -469,7 +493,7 @@ def import_dataset(
         {"repo_id": repo_id, "max_rows": max_rows, "config": config, "split": split},
         ctx.context.project_id,
     )
-    job = _wait(job.id, 300)
+    job = _wait(job.id, 3600)
     if job.status != "succeeded":
         return {"status": job.status, "error": job.error or "still running", "job_id": job.id}
     return {"status": "imported", **_clip(job.result)}
@@ -509,6 +533,7 @@ def prepare_dataset(
     rejected_column: str | None = None,
     constant_system_prompt: str | None = None,
     max_seq_length: int = 1024,
+    max_examples: int | None = None,
     min_answer_chars: int = 2,
     long_examples: str = "auto",
 ) -> dict:
@@ -522,6 +547,8 @@ def prepare_dataset(
     Examples longer than max_seq_length are handled here rather than silently truncated during
     training (which cuts off the end of answers): long_examples="auto" drops over-long Q&A/chat
     examples and splits long raw text into windows; "keep" leaves them to be truncated.
+    max_examples: after cleaning and deduplication, train on a seeded random sample of this many
+    (the plan's data target); the rest of the import stays on disk as a pool for later rounds.
     The result's "length" report shows the length distribution and how many didn't fit: if a
     large share was dropped, raise max_seq_length (check memory with plan_training) or pick data
     with shorter examples."""
@@ -552,6 +579,7 @@ def prepare_dataset(
             "dataset_id": dataset_id,
             "mapping": mapping,
             "max_seq_length": max_seq_length,
+            "max_examples": max_examples,
             "rules": {"min_chars": min_answer_chars, "long_examples": long_examples},
         },
         ctx.context.project_id,
@@ -570,6 +598,7 @@ def prepare_dataset(
             "cleaning": v.cleaning_report.get("dropped"),
             "tokens": {k: v.token_stats.get(k) for k in ("p50", "p95", "max", "over_max_seq_length", "estimated")},
             "length": v.cleaning_report.get("length"),
+            "sampled": v.cleaning_report.get("sampled"),
             "sample_record": _clip(preview_mapping(ds, mapping, n=1)["records"][:1], 500),
         }
 

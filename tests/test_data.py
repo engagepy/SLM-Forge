@@ -160,3 +160,42 @@ def test_synthetic_examples_are_fitted_to_the_sequence_length_too(session, proje
     assert v.n_train + v.n_valid == 3
     assert v.cleaning_report["dropped"]["too_long_for_max_seq_length"] == 1
     assert v.cleaning_report["length"]["policy"] == "drop" and v.token_stats["estimated"] is True
+
+
+def test_a_big_import_streams_with_progress_and_prepare_samples_to_the_target(session, project, tmp_path):
+    from slm.data import scout_tools
+    from slm.data.pipeline import prepare
+    from slm.db import Dataset
+
+    seen = []
+    rows = ({"q": f"Question {i}?", "a": f"Answer {i}."} for i in range(10_000))
+    n, cols = scout_tools.import_hf_dataset(
+        "org/big", tmp_path, max_rows=5_000, on_progress=seen.append, _load=lambda *a, **k: rows
+    )
+    assert n == 5_000 and cols == ["q", "a"] and seen == [2000, 4000]
+    ds = Dataset(project_id=project.id, name="big", source="hf", raw_path=str(tmp_path / "raw.jsonl"), columns=cols)
+    session.add(ds)
+    session.commit()
+    v = prepare(
+        ds, {"format": "instruction", "prompt": "q", "response": "a"}, max_seq_length=256, max_examples=300, seed=1
+    )
+    assert v.n_train + v.n_valid + v.n_test == 300 and v.cleaning_report["sampled"] == {
+        "from": 5_000,
+        "to": 300,
+        "seed": 1,
+    }
+    v2 = prepare(
+        ds, {"format": "instruction", "prompt": "q", "response": "a"}, max_seq_length=256, max_examples=300, seed=2
+    )
+    assert v2.n_train == v.n_train  # a different seed is a fresh batch from the same pool
+
+
+def test_the_catalog_recommends_by_task_and_licence():
+    from slm.models.catalog import CATALOG, lookup, recommend
+
+    assert all(c.repo_id.startswith("mlx-community/") and c.best_for for c in CATALOG)
+    small = recommend("persona", max_params_b=1.0)
+    assert small and all(r["params_b"] <= 1.0 for r in small) and small[0]["suited_to_task"]
+    ship = recommend("extraction", shipping=True)
+    assert all(r["commercial_ok"] is not False for r in ship) and "Qwen2.5-3B" not in str(ship)
+    assert lookup("mlx-community/Qwen3-1.7B-4bit")["licence"] == "Apache-2.0" and lookup("x/y") is None
