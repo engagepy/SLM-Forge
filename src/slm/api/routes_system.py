@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from slm import hardware
 from slm.api.common import SessionDep
-from slm.config import get_settings
+from slm.config import agent_key_configured, get_settings
 from slm.db import ModelRecord
 from slm.inference.engine import engine as infer
 from slm.models import hub, manage
@@ -14,6 +14,14 @@ from slm.train.config import preset
 from slm.train.worker import worker
 
 router = APIRouter(prefix="/api", tags=["system"])
+
+
+def _agent_model(s) -> str:
+    if s.agent_provider == "openai":
+        from agents.models import get_default_model
+
+        return s.openai_model or get_default_model()
+    return s.claude_model if s.agent_provider == "claude" else s.ollama_model
 
 
 @router.get("/system")
@@ -27,8 +35,9 @@ def system_status() -> dict:
         "inference": {"loaded": infer.loaded, "blocked": infer.blocked},
         "agents": {
             "provider": s.agent_provider,
-            "model": s.claude_model if s.agent_provider == "claude" else s.ollama_model,
-            "claude_key_configured": bool(s.anthropic_api_key),
+            "model": _agent_model(s),
+            "key_configured": agent_key_configured(s),
+            "key_env": {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY", "ollama": None}[s.agent_provider],
         },
         "workspace": str(s.workspace),
     }

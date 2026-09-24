@@ -21,7 +21,7 @@ export default function AgentsPage() {
   });
   const pending = (proposals.data ?? []).filter((p) => p.status === "pending" || (p.action === "acquire_manually" && p.status === "approved"));
   const history = (proposals.data ?? []).filter((p) => !pending.includes(p));
-  const noKey = system.data?.agents.provider === "claude" && !system.data.agents.claude_key_configured;
+  const noKey = system.data && !system.data.agents.key_configured;
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-6">
@@ -34,8 +34,9 @@ export default function AgentsPage() {
       </div>
       {noKey && (
         <div className="rounded-lg border border-warn/40 bg-warn-soft px-4 py-3 text-[13px] text-warn">
-          No Claude API key configured. Add <span className="font-mono">ANTHROPIC_API_KEY=…</span> to <span className="font-mono">.env</span> in
-          the project root and restart the server, or set <span className="font-mono">SLM_AGENT_PROVIDER=ollama</span> to use a local model.
+          No API key for the {system.data?.agents.provider} agent provider. Add{" "}
+          <span className="font-mono">{system.data?.agents.key_env}=…</span> to <span className="font-mono">.env</span> in the project root and
+          restart the server, or set <span className="font-mono">SLM_AGENT_PROVIDER=ollama</span> to use a local model.
         </div>
       )}
 

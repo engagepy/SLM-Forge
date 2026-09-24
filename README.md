@@ -8,8 +8,8 @@ hardware, let agents find and prepare training data, fine-tune it with
 base model → data (agents + you) → SFT → compare answers → DPO → … → export
 ```
 
-Everything trains locally on Apple Silicon. Only the agents call out to an LLM (Claude by
-default, or a local Ollama model).
+Everything trains locally on Apple Silicon. Only the agents call out to an LLM: OpenAI by
+default (via the OpenAI Agents SDK), or Claude, or a local Ollama model.
 
 ## Quick start
 
@@ -17,7 +17,7 @@ Requirements: an Apple Silicon Mac, [uv](https://docs.astral.sh/uv/) and Node 20
 
 ```bash
 uv sync                                   # Python deps (MLX, mlx-lm, mlx-lm-lora, FastAPI…)
-cp .env.example .env                      # then add ANTHROPIC_API_KEY
+cp .env.example .env                      # then add OPENAI_API_KEY
 (cd web && npm install && npm run build)  # web UI
 uv run slm serve                          # → http://127.0.0.1:8000
 ```
@@ -53,12 +53,25 @@ review queue before they can reach training.
 memory at once, which doesn't fit a 16 GB Mac for useful model sizes. DPO learns from the
 same human preference pairs with just the policy and a frozen reference.
 
+## Agent providers
+
+Set `SLM_AGENT_PROVIDER` in `.env` to choose which LLM runs the agents:
+
+| Provider | Key | How it runs |
+|---|---|---|
+| `openai` (default) | `OPENAI_API_KEY` | Tool-using agents run on the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) `Runner`; structured outputs use the Responses API with strict JSON schemas. The model defaults to the SDK's default (`SLM_OPENAI_MODEL` overrides it). Traces appear in the OpenAI dashboard unless `SLM_OPENAI_TRACING=false`. |
+| `claude` | `ANTHROPIC_API_KEY` | Anthropic SDK, with adaptive thinking and server-side refusal fallback. |
+| `ollama` | none | A local model. Fully offline, but it competes with training for memory and writes weaker synthetic data. |
+
+Every provider exposes the same two calls, and every tool call is logged the same way, so
+agents and the UI don't care which one is behind them.
+
 ## Architecture
 
 ```
 web/ (React + Vite + TanStack Query + Recharts) ──REST + SSE──▶ FastAPI  src/slm/api
                                                                   │
-   models/   hub search, fit check, download            agents/   provider (Claude | Ollama)
+   models/   hub search, fit check, download            agents/   provider (OpenAI | Claude | Ollama)
    data/     scout tools, mapping, cleaning, splits               scout · prep · observer · synth
    train/    configs & presets, subprocess runner,                actions: approved proposal → job
              log parsing, diagnosis, 3-lane job worker

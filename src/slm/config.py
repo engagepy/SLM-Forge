@@ -14,13 +14,16 @@ class Settings(BaseSettings):
 
     workspace: Path = PROJECT_ROOT / "workspace"
 
-    # Agent LLM provider. Claude is the default; Ollama is the offline fallback.
-    agent_provider: Literal["claude", "ollama"] = "claude"
+    # Agent LLM provider. OpenAI is the default; Claude and a local Ollama model also work.
+    agent_provider: Literal["openai", "claude", "ollama"] = "openai"
+    openai_model: str | None = None  # None = the OpenAI Agents SDK's default model
+    openai_tracing: bool = True  # send agent traces to the OpenAI dashboard
     claude_model: str = "claude-opus-5"
     ollama_model: str = "qwen2.5:7b-instruct"
     ollama_url: str = "http://localhost:11434"
 
-    # Read without the SLM_ prefix so the standard variable name works.
+    # Also read under their standard unprefixed names (see get_settings).
+    openai_api_key: str | None = None
     anthropic_api_key: str | None = None
 
     host: str = "127.0.0.1"
@@ -62,18 +65,27 @@ class Settings(BaseSettings):
             d.mkdir(parents=True, exist_ok=True)
 
 
+def _dotenv_value(name: str) -> str | None:
+    env_file = PROJECT_ROOT / ".env"
+    if not env_file.exists():
+        return None
+    for line in env_file.read_text().splitlines():
+        if line.strip().startswith(f"{name}="):
+            return line.split("=", 1)[1].strip().strip('"').strip("'") or None
+    return None
+
+
 @lru_cache
 def get_settings() -> Settings:
     import os
 
     s = Settings()
-    if s.anthropic_api_key is None:
-        s.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if s.anthropic_api_key is None:
-        # pydantic-settings only maps SLM_-prefixed names; read the plain name from .env too.
-        env_file = PROJECT_ROOT / ".env"
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                if line.startswith("ANTHROPIC_API_KEY="):
-                    s.anthropic_api_key = line.split("=", 1)[1].strip().strip('"')
+    # pydantic-settings only maps SLM_-prefixed names; accept the standard key names too.
+    for field, name in (("openai_api_key", "OPENAI_API_KEY"), ("anthropic_api_key", "ANTHROPIC_API_KEY")):
+        if getattr(s, field) is None:
+            setattr(s, field, os.environ.get(name) or _dotenv_value(name))
     return s
+
+
+def agent_key_configured(s: Settings) -> bool:
+    return {"openai": bool(s.openai_api_key), "claude": bool(s.anthropic_api_key), "ollama": True}[s.agent_provider]

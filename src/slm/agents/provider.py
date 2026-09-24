@@ -1,7 +1,8 @@
-"""LLM providers for the agents: Claude (default), Ollama (offline fallback), Fake (tests).
+"""LLM providers for the agents: OpenAI (default), Claude, Ollama (offline), Fake (tests).
 
-The tool loop lives here rather than in the SDK's tool runner so the same loop, event
-logging and error handling drive every provider.
+Every provider implements the same two calls: `run` (a tool-using agent loop) and `json`
+(one structured-output call). OpenAI's loop is the Agents SDK's Runner; the others use the
+loop here. Tool calls are logged the same way whichever provider runs them.
 """
 
 import json
@@ -166,6 +167,115 @@ class ClaudeProvider:
         return json.loads(text)
 
 
+# ── OpenAI ──────────────────────────────────────────────────────────────────
+
+
+class OpenAIProvider:
+    """Tool-using agents run on the OpenAI Agents SDK; structured outputs use the plain client."""
+
+    name = "openai"
+
+    def __init__(self, model: str | None = None) -> None:
+        import agents
+        from agents.models import get_default_model
+        from openai import OpenAI
+
+        settings = get_settings()
+        if not settings.openai_api_key:
+            raise ProviderError("No OpenAI API key. Set OPENAI_API_KEY in .env.")
+        self.model = model or settings.openai_model or get_default_model()
+        self.client = OpenAI(api_key=settings.openai_api_key)
+        agents.set_default_openai_key(settings.openai_api_key, use_for_tracing=settings.openai_tracing)
+        agents.set_tracing_disabled(not settings.openai_tracing)
+
+    @staticmethod
+    def _wrap_errors(e: Exception) -> ProviderError:
+        import openai
+
+        if isinstance(e, openai.AuthenticationError):
+            return ProviderError("OpenAI authentication failed. Check OPENAI_API_KEY in .env.")
+        if isinstance(e, openai.RateLimitError):
+            return ProviderError("OpenAI rate limit or quota exceeded; try again shortly or check billing.")
+        if isinstance(e, openai.APIConnectionError):
+            return ProviderError("Could not reach the OpenAI API (network).")
+        if isinstance(e, openai.APIStatusError):
+            return ProviderError(f"OpenAI API error {e.status_code}: {e.message}")
+        return ProviderError(f"{e.__class__.__name__}: {e}")
+
+    def _function_tool(self, tool: Tool, on_event: EventFn, calls: list[dict]):
+        from agents import FunctionTool
+
+        async def invoke(_ctx, args_json: str) -> str:
+            try:
+                args = json.loads(args_json or "{}")
+            except json.JSONDecodeError:
+                return "Error: arguments were not valid JSON"
+            out, is_error = _call_tool(tool, tool.name, args, on_event)
+            calls.append({"tool": tool.name, "input": args, "is_error": is_error})
+            return f"Error: {out}" if is_error else out
+
+        # Our schemas have optional fields, which strict mode would reject.
+        return FunctionTool(
+            name=tool.name,
+            description=tool.description,
+            params_json_schema=tool.input_schema,
+            on_invoke_tool=invoke,
+            strict_json_schema=False,
+        )
+
+    def run(self, system, user, tools, *, on_event, max_steps=12) -> AgentResult:
+        import openai
+        from agents import Agent, ItemHelpers, RunHooks, Runner
+        from agents.exceptions import AgentsException, MaxTurnsExceeded
+
+        calls: list[dict] = []
+        steps = 0
+
+        class Hooks(RunHooks):
+            async def on_llm_end(self, context, agent, response) -> None:
+                nonlocal steps
+                steps += 1
+                # Surface any text the model writes between tool calls, as the other providers do.
+                for item in response.output:
+                    if getattr(item, "type", None) == "message":
+                        text = ItemHelpers.extract_text(item) or ""
+                        if text.strip():
+                            on_event("message", {"text": text})
+
+        agent = Agent(
+            name="agent",
+            instructions=system,
+            model=self.model,
+            tools=[self._function_tool(t, on_event, calls) for t in tools],
+        )
+        try:
+            result = Runner.run_sync(agent, user, max_turns=max_steps, hooks=Hooks())
+        except MaxTurnsExceeded:
+            on_event("error", {"text": f"Stopped after {max_steps} steps"})
+            return AgentResult(text="", steps=steps, tool_calls=calls)
+        except (openai.OpenAIError, AgentsException) as e:
+            raise self._wrap_errors(e) from e
+        return AgentResult(text=str(result.final_output or ""), steps=steps, tool_calls=calls)
+
+    def json(self, system, user, schema) -> dict:
+        import openai
+
+        try:
+            resp = self.client.responses.create(
+                model=self.model,
+                instructions=system,
+                input=user,
+                text={
+                    "format": {"type": "json_schema", "name": "output", "schema": strict_schema(schema), "strict": True}
+                },
+            )
+        except openai.OpenAIError as e:
+            raise self._wrap_errors(e) from e
+        if not resp.output_text:
+            raise ProviderError("OpenAI returned no structured output (refused or empty).")
+        return json.loads(resp.output_text)
+
+
 # ── Ollama ──────────────────────────────────────────────────────────────────
 
 
@@ -278,4 +388,6 @@ def get_provider(name: str | None = None) -> LLMProvider:
     name = name or get_settings().agent_provider
     if name == "ollama":
         return OllamaProvider()
-    return ClaudeProvider()
+    if name == "claude":
+        return ClaudeProvider()
+    return OpenAIProvider()

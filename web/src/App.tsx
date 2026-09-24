@@ -154,9 +154,9 @@ function StatusBar() {
       </span>
       <span className="ml-auto flex items-center gap-1.5">
         Agents: {data.agents.provider} · <span className="font-mono">{data.agents.model}</span>
-        {data.agents.provider === "claude" && !data.agents.claude_key_configured && (
+        {!data.agents.key_configured && (
           <Badge tone="warn" className="ml-1">
-            no API key: set ANTHROPIC_API_KEY in .env
+            no API key: set {data.agents.key_env} in .env
           </Badge>
         )}
       </span>
