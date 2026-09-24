@@ -109,6 +109,15 @@ Set `SLM_AGENT_PROVIDER` in `.env` to choose which LLM runs the agents:
 Every provider exposes the same two calls, and every tool call is logged the same way, so
 agents and the UI don't care which one is behind them.
 
+## Lessons the Tuner carries
+
+Its instructions encode what real runs on a 16 GB Mac taught, and the code enforces the same
+things: scored test sets sized by task (exact match for deterministic outputs), one output format
+per project, exports that carry their system prompt, no tiny top-ups, no DPO under 30 pairs,
+learning rate 1e-4, continued runs that resume the adapter instead of copying the model, and
+spending only inside a round the user set in motion. `AGENTS.md` lists each with the run that
+taught it.
+
 ## How the Tuner works
 
 - **One agent, 29 tools** (`src/slm/tuner/`) wrapping the tested platform code: `get_status`,

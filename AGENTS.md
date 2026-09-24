@@ -237,6 +237,40 @@ scripts/smoke.py   end-to-end GPU smoke test
 - **SQLAlchemy JSON columns:** to mutate one in place, `copy.deepcopy` the value, assign it back and
   call `flag_modified`. Otherwise the change is lost.
 
+## Lessons from real runs (keep these true in code and in the Tuner's instructions)
+
+Every rule here cost a failed round on this Mac (Apple M1 Pro, 16 GB) in September 2026.
+1. **Evaluation must be a number that can tell runs apart.** Five to eight judge-scored questions
+   put the Physics tutor at 6.2 vs 7.3 with a noise band as wide as the gap. Deterministic tasks get
+   30–60 cases with expected outputs and exact-match scoring (`evaluate_model`); open-ended tasks
+   get 10–25 judge-scored questions. The test set is written before any training data, held out
+   from the synthetic writer (`eval_prompts`), and fixed for the project.
+2. **One output format per project.** ADE Extract trained 882 plain-text answers under one system
+   prompt, then JSON under another; the export answered "Hello! How can I help?". Map public data
+   into the target format or leave it out; a format or system-prompt change means retraining from
+   base.
+3. **The export must carry its system prompt.** Every example had it; `mlx_lm.generate` without it
+   fell back to Qwen's default and the model behaved like the base. `bake_system_prompt` makes it the
+   chat template's default.
+4. **Tiny top-ups hurt.** 6-, 22- and 33-example rounds on top of a big run raised validation loss
+   (0.625 → 0.696) and the worst checkpoint got exported. Batch data properly; never export a
+   checkpoint that scored below an earlier one (`serve_checkpoint` first).
+5. **DPO needs pairs.** Nine pairs, one validation pair, accuracy 0.5: nothing measurable. 30+ pairs
+   or no DPO.
+6. **Learning rate 1e-4.** 2e-4 diverged on 0.5B Qwen (the `diverged` warning exists because of it).
+7. **Don't fuse between rounds.** Each round fused the adapter into a 1.6 GB copy; eight ADE rounds
+   took 11 GB. A continued run resumes the adapter (`resume_adapter_file`, shapes matched by
+   `match_adapter`); run folders are ~12 MB. Only DPO and export fuse.
+8. **Fit examples to the sequence length on every data path.** Synthetic and preference data once
+   bypassed `fit_to_length` and the trainer truncated the ends of answers silently; now every path
+   fits, and a `truncated` warning fires if the trainer still cuts.
+9. **A round that never beats its pre-training validation loss is `val_worse`, not `overfitting`.**
+   "Bottomed out at iteration 1" read as "train a bit less"; the right move is a roll-back.
+10. **Talking is not working.** A question after the export ("what would you suggest?") started 150
+    API calls. Spending tools propose a card outside a round (`tools._spend`).
+11. **Size to the machine.** `get_status → this_mac` names the comfortable tier; 3B runs at 512
+    tokens and batch 1–2 fit in 10 GB, and the memory estimate underestimates 3B by ~30%.
+
 ## Gotchas
 - **React effects must not return a value.** `scrollIntoView()` returns a Promise in current Chrome,
   so use block-bodied effects.
