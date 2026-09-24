@@ -51,6 +51,24 @@ def diagnose(train: list[tuple[int, float]], val: list[tuple[int, float]]) -> li
                     "whether the model generalises.",
                 )
             )
+        elif (
+            len(val) >= 3
+            and best_it == val[0][0]
+            and end > best * 1.05
+            and train
+            and train[-1][1] < best
+            and not any(w.code == "diverged" for w in out)
+        ):
+            # The first validation point is measured before any update: never better than that means
+            # this round only hurt. That's a roll-back, not a "train a bit less".
+            out.append(
+                Warning(
+                    "val_worse",
+                    f"Validation loss was best before this round ({best:.3f}) and ended at {end:.3f} while training "
+                    "loss kept falling: the round hurt more than it helped. Serve the previous checkpoint, then "
+                    "rethink the data (is it on-goal and varied?) before trying fewer iterations or a lower rate.",
+                )
+            )
         elif len(val) >= 3 and end > best * 1.1 and end > 0.1 and train and train[-1][1] < best:
             out.append(
                 Warning(

@@ -26,7 +26,7 @@ from slm.export import fuse as fusing
 from slm.models import manage
 from slm.train import runner
 from slm.train.config import TrainConfig
-from slm.train.diagnose import diagnose
+from slm.train.diagnose import Warning, diagnose
 from slm.train.worker import JobContext, worker
 
 
@@ -37,6 +37,9 @@ def _slug(s: str) -> str:
 def _run(ctx: JobContext, cmd: list[str], *, parse_metrics: bool = False) -> None:
     def on_line(line: str) -> None:
         ctx.log(line)
+        # The trainer warns (once per batch, collapsed by the runner) when it truncates examples.
+        if runner.truncation_count(line):
+            ctx.result["truncated_batches"] = ctx.result.get("truncated_batches", 0) + runner.truncation_count(line)
         if parse_metrics:
             if (total := runner.parse_total_iters(line)) is not None:
                 ctx.result["total_iters"] = total
@@ -201,6 +204,15 @@ def _warnings(ctx: JobContext) -> list[dict]:
         [(r.iteration, r.values["loss"]) for r in rows if r.split == "train"],
         [(r.iteration, r.values["loss"]) for r in rows if r.split == "val"],
     )
+    if n := ctx.result.get("truncated_batches"):
+        warnings.append(
+            Warning(
+                "truncated",
+                f"The trainer cut examples short in {n} batch(es): some were longer than max_seq_length, so the "
+                "model learned answers that stop mid-way. Rebuild the dataset (the served model's tokenizer gives "
+                "exact lengths) or lower max_seq_length, and don't trust this run's loss.",
+            )
+        )
     for w in warnings:
         ctx.note(f"⚠ {w.message}")
     return [w.to_dict() for w in warnings]
@@ -324,6 +336,16 @@ def dpo_job(ctx: JobContext) -> None:
         "dataset_version_id": version.id,
         "warnings": _warnings(ctx),
     }
+
+
+def serve_checkpoint(s: Session, project: Project, ckpt: Checkpoint) -> None:
+    """Make the project serve this checkpoint (a roll-back, or forward). Later runs continue from it."""
+    if ckpt.fused_path:
+        project.current_model_path, project.current_adapter_path = ckpt.fused_path, None
+    else:
+        project.current_model_path, project.current_adapter_path = ckpt.base_model_path, ckpt.adapter_path
+    s.add(project)
+    s.commit()
 
 
 def served_ancestry(s: Session, project: Project) -> list[Checkpoint]:

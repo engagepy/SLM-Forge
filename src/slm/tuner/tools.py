@@ -198,7 +198,15 @@ def get_status(ctx: Ctx) -> dict:
                 "ml_budget_gb": round(hw.budget_gb, 1),
                 "largest_trainable_4bit_params_b": round(hardware.max_params_for_budget(hw.budget_gb, 4) / 1e9, 1),
             },
-            "project": {"name": p.name, "goal": p.goal, "system_prompt": p.system_prompt},
+            "project": {
+                "name": p.name,
+                "goal": p.goal,
+                "system_prompt": p.system_prompt,
+                "test_questions": p.test_questions,
+            },
+            "evaluations": [
+                {k: e.get(k) for k in ("id", "target", "checkpoint_id", "mean", "at")} for e in st.evals[-6:]
+            ],
             "models_already_on_this_mac": [
                 {k: m[k] for k in ("repo_id", "params_b", "bits", "fit")} for m in manage.local_models()
             ],
@@ -277,10 +285,16 @@ def set_stage(ctx: Ctx, stage: str, note: str) -> str:
 
 @tool
 def update_project(
-    ctx: Ctx, name: str | None = None, goal: str | None = None, system_prompt: str | None = None
+    ctx: Ctx,
+    name: str | None = None,
+    goal: str | None = None,
+    system_prompt: str | None = None,
+    test_questions: list[str] | None = None,
 ) -> dict:
-    """Record the project's name, the model's goal (one or two sentences), and the system prompt
-    the model will be trained and used with. Set these as soon as you understand what the user wants."""
+    """Record the project's name, the model's goal (one or two sentences), the system prompt the
+    model will be trained and used with, and its test set. Set these as soon as you understand what
+    the user wants. test_questions: 5–8 short questions a real user would ask, spanning the goal;
+    evaluate_model scores every checkpoint on them, so keep them fixed once training starts."""
     with Session(engine()) as s:
         p = s.get(Project, ctx.context.project_id)
         if name:
@@ -289,11 +303,13 @@ def update_project(
             p.goal = goal
         if system_prompt is not None:
             p.system_prompt = system_prompt
+        if test_questions is not None:
+            p.test_questions = [q.strip() for q in test_questions if q.strip()][:12]
         s.add(p)
         s.commit()
         s.refresh(p)
     canvas_changed(ctx.context.project_id)
-    return {"name": p.name, "goal": p.goal, "system_prompt": p.system_prompt}
+    return {"name": p.name, "goal": p.goal, "system_prompt": p.system_prompt, "test_questions": p.test_questions}
 
 
 # ── base model ──────────────────────────────────────────────────────────────
@@ -633,15 +649,41 @@ def cancel_job(ctx: Ctx, job_id: int) -> str:
 # ── evaluation & feedback ───────────────────────────────────────────────────
 
 
-def _generate(
-    project: Project, prompt: str, temperature: float, max_tokens: int, target: str = "current", seed: int | None = None
-) -> dict:
+def _where(project: Project, target: str) -> dict:
+    """Which weights answer: current (served) | base (untrained) | checkpoint:<id>."""
+    if target == "base":
+        path = manage.local_path_for(project.base_model or "")
+        if not path:
+            raise ValueError("The base model isn't downloaded yet")
+        return {"model_path": path, "adapter_path": None}
+    if target.startswith("checkpoint:"):
+        with Session(engine()) as s:
+            c = s.get(Checkpoint, int(target.split(":", 1)[1]))
+        if c is None or c.project_id != project.id:
+            raise ValueError("no such checkpoint in this project")
+        if c.fused_path:
+            return {"model_path": c.fused_path, "adapter_path": None}
+        return {"model_path": c.base_model_path, "adapter_path": c.adapter_path}
     path = manage.serving_path(project)
     if not path:
         raise ValueError("No model downloaded yet")
-    where = {"model_path": path, "adapter_path": project.current_adapter_path}
-    if target == "base":
-        where = {"model_path": manage.local_path_for(project.base_model), "adapter_path": None}
+    return {"model_path": path, "adapter_path": project.current_adapter_path}
+
+
+def _served_checkpoint_id(s: Session, project: Project) -> int | None:
+    """The checkpoint the project serves right now, or None for the plain base model."""
+    for c in s.exec(select(Checkpoint).where(Checkpoint.project_id == project.id).order_by(Checkpoint.id.desc())):
+        if c.adapter_path == project.current_adapter_path or (
+            c.fused_path and c.fused_path == project.current_model_path
+        ):
+            return c.id
+    return None
+
+
+def _generate(
+    project: Project, prompt: str, temperature: float, max_tokens: int, target: str = "current", seed: int | None = None
+) -> dict:
+    where = _where(project, target)
     messages = [{"role": "user", "content": prompt}]
     if project.system_prompt:
         messages.insert(0, {"role": "system", "content": project.system_prompt})
@@ -669,9 +711,9 @@ def _two_answers(project: Project, prompt: str, max_tokens: int) -> tuple[str, s
 def try_model(
     ctx: Ctx, prompts: list[str], target: str = "current", temperature: float = 0.7, max_tokens: int = 300
 ) -> list[dict]:
-    """Ask the local model some questions and see its answers (also shown on the canvas).
-    target: current (latest trained) | base (the untrained model, for before/after comparisons).
-    Use 3–5 varied prompts that reflect the goal, including ones not in the training data."""
+    """Ask the local model a few questions and see its answers (also shown on the canvas), to show
+    the user what it sounds like. For a score, use evaluate_model. target: current (served) | base
+    (untrained) | checkpoint:<id>. Use 2–4 prompts; each one loads the model onto the GPU."""
     pid = ctx.context.project_id
     with Session(engine()) as s:
         project = s.get(Project, pid)
@@ -687,6 +729,114 @@ def try_model(
         s.commit()
     canvas_changed(pid)
     return results
+
+
+SCORE_SYSTEM = """You grade one answer from a small language model that is being fine-tuned for a
+specific goal. Score it 0–10 for how well it serves that goal: correctness first (a confident wrong
+fact caps the score at 3), then whether it follows the system prompt's voice, format and length.
+10 is an answer the user would be delighted by; 5 is usable but flawed; 0 is wrong or off-topic.
+Give a one-sentence reason naming the concrete strength or flaw."""
+
+SCORE_SCHEMA = {
+    "type": "object",
+    "properties": {"score": {"type": "integer", "minimum": 0, "maximum": 10}, "reason": {"type": "string"}},
+    "required": ["score", "reason"],
+}
+
+
+@tool
+def evaluate_model(ctx: Ctx, target: str = "current", reason: str = "") -> dict:
+    """Score a model on the project's fixed test questions (set with update_project): each answer is
+    graded 0–10 by GPT-6 against the goal and system prompt. The result is kept per checkpoint and
+    shown on the canvas, so before/after and run-to-run comparisons are numbers. Run it on the base
+    model before training (the score to beat), after every run, and before proposing an export.
+    target: current (served) | base | checkpoint:<id>. Costs one judge call per question. Outside a
+    round the user set in motion it's a proposal they confirm first; give a plain-words `reason`."""
+    pid = ctx.context.project_id
+    with Session(engine()) as s:
+        st = studio_state(s, pid)  # first: creating the row commits, which would expire `project`
+        previous = [dict(e) for e in st.evals]
+        project = s.get(Project, pid)
+        questions = list(project.test_questions or [])
+    if not questions:
+        raise ValueError("No test questions yet: set 5–8 with update_project(test_questions=[...]) first.")
+    if proposal := _spend(
+        pid, "evaluate_model", "evaluate", f"Score the {target.split(':')[0]} model on {len(questions)} test questions",
+        reason, {"questions": len(questions), "target": target}, {"target": target},
+    ):  # fmt: skip
+        return proposal
+    judge = get_provider()
+    items = []
+    for q in questions:
+        answer = _generate(project, q, 0.3, 300, target)["text"]
+        v = judge.json(
+            SCORE_SYSTEM,
+            f"Goal: {project.goal}\nSystem prompt: {project.system_prompt or '(none)'}\n\n"
+            f"Question: {q}\n\nAnswer:\n{answer}",
+            SCORE_SCHEMA,
+        )
+        score = max(0, min(10, int(v.get("score", 0))))
+        items.append({"prompt": q, "answer": answer, "score": score, "reason": (v.get("reason") or "")[:300]})
+    mean = round(sum(i["score"] for i in items) / len(items), 1)
+    with Session(engine()) as s:
+        project = s.get(Project, pid)
+        if target == "base":
+            checkpoint_id = None
+        elif target.startswith("checkpoint:"):
+            checkpoint_id = int(target.split(":", 1)[1])
+        else:
+            checkpoint_id = _served_checkpoint_id(s, project)
+        record = {
+            "id": f"e{int(time.time() * 1000)}",
+            "target": "base" if checkpoint_id is None else f"checkpoint:{checkpoint_id}",
+            "checkpoint_id": checkpoint_id,
+            "mean": mean,
+            "items": items,
+            "at": now().isoformat(),
+        }
+        st = studio_state(s, pid)
+        st.evals = (previous + [record])[-12:]
+        flag_modified(st, "evals")
+        st.stage = "evaluate"
+        s.add(st)
+        s.commit()
+    canvas_changed(pid)
+    best = max(previous, key=lambda e: e["mean"], default=None)
+    return {
+        "target": record["target"],
+        "checkpoint_id": checkpoint_id,
+        "mean_score": mean,
+        "scores": [{"q": _clip(i["prompt"], 80), "score": i["score"], "why": _clip(i["reason"], 120)} for i in items],
+        "previous_best": {k: best[k] for k in ("target", "checkpoint_id", "mean")} if best else None,
+        "note": "Compare with the base score and the previous best; export the best-scoring checkpoint.",
+    }
+
+
+@tool
+def serve_checkpoint(ctx: Ctx, checkpoint_id: int) -> dict:
+    """Make the project serve an earlier checkpoint again (a roll-back). Use it when a round made
+    the model worse (a val_worse or overfitting warning, or a lower evaluate_model score): later
+    runs continue from the served checkpoint, and export packages it. get_status lists checkpoints."""
+    pid = ctx.context.project_id
+    from slm.train.jobs import serve_checkpoint as _serve
+
+    with Session(engine()) as s:
+        busy = s.exec(
+            select(Job.id).where(
+                Job.project_id == pid, Job.kind.in_(["sft", "dpo", "export"]), Job.status.in_(["queued", "running"])
+            )
+        ).first()
+        if busy is not None:
+            raise ValueError(f"Job {busy} is using this project's model; wait for it to finish.")
+        project = s.get(Project, pid)
+        c = s.get(Checkpoint, checkpoint_id)
+        if c is None or c.project_id != pid:
+            raise ValueError("no such checkpoint in this project")
+        _serve(s, project, c)
+        out = {"serving": f"checkpoint:{c.id}", "kind": c.kind, "job_id": c.job_id, "metrics": c.metrics}
+    infer.unload()  # the next generation loads the rolled-back weights
+    canvas_changed(pid)
+    return out
 
 
 @tool
@@ -847,7 +997,9 @@ def review_synthetic_examples(
 @tool
 def build_dataset_from_examples(ctx: Ctx, max_seq_length: int = 1024) -> dict:
     """Turn every approved, not-yet-used SFT example (the user's rewritten answers plus approved
-    synthetic examples) into a prepared dataset version you can train on."""
+    synthetic examples) into a prepared dataset version you can train on. Examples longer than
+    max_seq_length are dropped here rather than truncated by the trainer; read the "length" report
+    and, if many were dropped, write shorter examples or raise max_seq_length (check memory)."""
     pid = ctx.context.project_id
     with Session(engine()) as s:
         project = s.get(Project, pid)
@@ -859,7 +1011,8 @@ def build_dataset_from_examples(ctx: Ctx, max_seq_length: int = 1024) -> dict:
         "train": v.n_train,
         "valid": v.n_valid,
         "cleaning": (v.cleaning_report or {}).get("dropped"),
-        "tokens": {k: (v.token_stats or {}).get(k) for k in ("p50", "p95", "max")},
+        "tokens": {k: (v.token_stats or {}).get(k) for k in ("p50", "p95", "max", "estimated")},
+        "length": (v.cleaning_report or {}).get("length"),
     }
 
 
@@ -1055,6 +1208,8 @@ ALL_TOOLS = [
     training_progress,
     cancel_job,
     try_model,
+    evaluate_model,
+    serve_checkpoint,
     ask_user_to_compare,
     feedback_summary,
     generate_synthetic_examples,

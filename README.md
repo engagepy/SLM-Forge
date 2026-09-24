@@ -111,7 +111,7 @@ agents and the UI don't care which one is behind them.
 
 ## How the Tuner works
 
-- **One agent, 27 tools** (`src/slm/tuner/`) wrapping the tested platform code: `get_status`,
+- **One agent, 29 tools** (`src/slm/tuner/`) wrapping the tested platform code: `get_status`,
   `find_base_models`, `choose_base_model`, `search_datasets`, `prepare_dataset`,
   `generate_synthetic_examples`, `start_training`, `try_model`, `ask_user_to_compare`,
   `export_model` and more. Quick jobs (imports, data prep, synthesis) are awaited inside the
@@ -124,6 +124,10 @@ agents and the UI don't care which one is behind them.
 - **Small, simple data by default:** the Tuner usually has GPT-6 write 150–300 short,
   characterful examples in the goal's style, reviews a sample, approves the rest and trains on
   them. It uses public data only when a clean, on-goal set with short answers exists.
+- **Before/after is a number.** The Tuner saves 5–8 test questions with the project and scores every
+  checkpoint on them with `evaluate_model` (GPT-6 grades each answer 0–10 against the goal). The
+  scores sit on the Evaluate card, the export is the best-scoring checkpoint (`serve_checkpoint`
+  rolls back if the latest run made things worse), and DPO isn't attempted under 30 pairs.
 - **AI feedback instead of human clicks:** `ai_review_answers` has the local model answer each
   prompt twice, and GPT-6 picks the better answer, writes the ideal one and critiques the flaws.
   Each verdict becomes a DPO preference pair and, where the model was wrong, a corrected SFT

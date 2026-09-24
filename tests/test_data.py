@@ -141,3 +141,22 @@ def test_constant_templates_insert_columns():
 def test_mojibake_repaired_without_touching_real_accents():
     assert clean.fix_mojibake("100g/3Â½oz, itâ€™s crÃ¨me") == "100g/3½oz, it’s crème"
     assert clean.fix_mojibake("naïve café, Ångström, 50°C") == "naïve café, Ångström, 50°C"
+
+
+def test_synthetic_examples_are_fitted_to_the_sequence_length_too(session, project):
+    # Regression: only Hub/uploaded datasets went through fit_to_length; synthetic examples (the
+    # main data path) reached the trainer over-long and were silently truncated.
+    from slm.data.pipeline import build_feedback_version
+    from slm.db import SftExample
+
+    short = [
+        [{"role": "user", "content": f"Question {i}?"}, {"role": "assistant", "content": f"Answer {i}."}]
+        for i in range(3)
+    ]
+    long = [{"role": "user", "content": "Explain"}, {"role": "assistant", "content": "word " * 3000}]
+    session.add_all([SftExample(project_id=project.id, messages=m) for m in (*short, long)])
+    session.commit()
+    v = build_feedback_version(project.id, model_path=None, max_seq_length=256)
+    assert v.n_train + v.n_valid == 3
+    assert v.cleaning_report["dropped"]["too_long_for_max_seq_length"] == 1
+    assert v.cleaning_report["length"]["policy"] == "drop" and v.token_stats["estimated"] is True

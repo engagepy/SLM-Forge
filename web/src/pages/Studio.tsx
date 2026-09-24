@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router";
 import {
   api,
   type Comparison,
+  type Evaluation,
   fmt,
   isActive,
   type Job,
@@ -55,6 +56,8 @@ const TOOL_LABEL: Record<string, string> = {
   training_progress: "Checking on training",
   cancel_job: "Stopping a job",
   try_model: "Testing the model",
+  evaluate_model: "Scoring the model on the test questions",
+  serve_checkpoint: "Rolling back to an earlier checkpoint",
   ask_user_to_compare: "Preparing answers for you to compare",
   feedback_summary: "Reading your feedback",
   generate_synthetic_examples: "Writing training examples",
@@ -351,7 +354,7 @@ function StartTuner({ projectId }: { projectId: number }) {
   );
 }
 
-const ACTION_ICON: Record<PendingAction["kind"], string> = { model: "◆", sft: "▲", dpo: "▲", export: "⬇", synthesize: "✎", review: "⚖", import: "⇣" };
+const ACTION_ICON: Record<PendingAction["kind"], string> = { model: "◆", sft: "▲", dpo: "▲", export: "⬇", synthesize: "✎", review: "⚖", import: "⇣", evaluate: "★" };
 
 /** The Tuner's proposed run. It only starts from here (or a plain "yes" in the chat). */
 function ConfirmCard({ projectId, action }: { projectId: number; action: PendingAction }) {
@@ -439,6 +442,8 @@ function actionFacts(a: PendingAction): string[] {
     out.push(`${d.count} ${d.kind === "preference" ? "preference pairs" : "examples"}`, "uses the OpenAI API");
   } else if (a.kind === "review") {
     out.push(`${d.prompts} questions`, "runs the model, then uses the OpenAI API");
+  } else if (a.kind === "evaluate") {
+    out.push(`${d.questions} test questions`, String(d.target), "runs the model, then uses the OpenAI API");
   } else if (a.kind === "import") {
     out.push(`up to ${Number(d.max_rows).toLocaleString()} rows`, "downloads from Hugging Face");
   }
@@ -494,7 +499,7 @@ function stageDone(s: Snapshot): Record<Stage, boolean> {
     model: !!s.model?.downloaded,
     data: s.versions.length > 0,
     train: sft,
-    evaluate: sft && (s.samples.some((x) => x.target !== "base") || s.feedback.judgements > 0),
+    evaluate: sft && (s.evals.some((e) => e.checkpoint_id != null) || s.samples.some((x) => x.target !== "base") || s.feedback.judgements > 0),
     refine: s.checkpoints.some((c) => c.kind === "dpo"),
     export: s.exports.length > 0,
   };
@@ -614,6 +619,18 @@ function GoalView({ s }: { s: Snapshot }) {
         <div>
           <dt className="text-[11px] uppercase tracking-wide text-faint">System prompt</dt>
           <dd className="font-mono text-xs text-muted">{s.project.system_prompt}</dd>
+        </div>
+      )}
+      {s.project.test_questions?.length > 0 && (
+        <div>
+          <dt className="text-[11px] uppercase tracking-wide text-faint">Test questions (every checkpoint is scored on these)</dt>
+          <dd>
+            <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-xs text-muted">
+              {s.project.test_questions.map((q) => (
+                <li key={q}>{q}</li>
+              ))}
+            </ol>
+          </dd>
         </div>
       )}
     </dl>
@@ -759,9 +776,10 @@ function EvaluateView({ s }: { s: Snapshot }) {
   const byPrompt = new Map<string, Sample[]>();
   for (const x of s.samples) byPrompt.set(x.prompt, [...(byPrompt.get(x.prompt) ?? []), x]);
   const groups = [...byPrompt.entries()].slice(0, 6);
-  if (!groups.length && !s.comparisons.length) return <Empty>The Tuner will test the model on your example questions here.</Empty>;
+  if (!groups.length && !s.comparisons.length && !s.evals.length) return <Empty>The Tuner will score the model on your test questions here.</Empty>;
   return (
     <div className="space-y-4">
+      {s.evals.length > 0 && <Scores evals={s.evals} />}
       {pending.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
@@ -782,6 +800,46 @@ function EvaluateView({ s }: { s: Snapshot }) {
               </div>
             ))}
           </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Scores per checkpoint, latest first: the before/after as numbers. */
+function Scores({ evals }: { evals: Evaluation[] }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const best = Math.max(...evals.map((e) => e.mean));
+  const label = (e: Evaluation) => (e.checkpoint_id == null ? "before training" : `checkpoint ${e.checkpoint_id}`);
+  return (
+    <div className="space-y-1.5">
+      {[...evals].reverse().map((e) => (
+        <div key={e.id} className="rounded-lg border border-line">
+          <button onClick={() => setOpen(open === e.id ? null : e.id)} className="flex w-full items-center gap-3 px-3 py-2 text-left">
+            <span className={cx("num w-12 text-[15px] font-semibold", e.mean === best ? "text-good" : "text-fg")}>{e.mean.toFixed(1)}</span>
+            <span className="text-[11px] text-faint">/ 10</span>
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-panel-2">
+              <div className={cx("h-full", e.mean === best ? "bg-good" : "bg-accent")} style={{ width: `${e.mean * 10}%` }} />
+            </div>
+            <Badge tone={e.checkpoint_id == null ? "neutral" : e.mean === best ? "good" : "info"}>{label(e)}</Badge>
+            <span className={cx("text-faint transition", open === e.id && "rotate-90")}>›</span>
+          </button>
+          {open === e.id && (
+            <ul className="space-y-2 border-t border-line px-3 py-2">
+              {e.items.map((it) => (
+                <li key={it.prompt} className="text-xs">
+                  <div className="flex items-start gap-2">
+                    <span className={cx("num w-5 shrink-0 font-semibold", it.score >= 7 ? "text-good" : it.score >= 4 ? "text-warn" : "text-bad")}>{it.score}</span>
+                    <div className="min-w-0">
+                      <p className="font-medium">{it.prompt}</p>
+                      <p className="whitespace-pre-wrap text-muted">{it.answer}</p>
+                      <p className="mt-0.5 text-faint">{it.reason}</p>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       ))}
     </div>

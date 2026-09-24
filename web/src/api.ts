@@ -32,6 +32,7 @@ export interface Project {
   system_prompt: string;
   current_model_path: string | null;
   current_adapter_path: string | null;
+  test_questions: string[];
   created_at: string;
 }
 
@@ -293,11 +294,21 @@ export interface Sample {
 /** A run the Tuner proposed; nothing starts until the user confirms it. */
 export interface PendingAction {
   id: string;
-  kind: "model" | "sft" | "dpo" | "export" | "synthesize" | "review" | "import";
+  kind: "model" | "sft" | "dpo" | "export" | "synthesize" | "review" | "import" | "evaluate";
   title: string;
   reason: string;
   details: Record<string, unknown>;
   created_at: string;
+}
+
+/** One evaluate_model run: the test questions scored 0–10 against the goal. */
+export interface Evaluation {
+  id: string;
+  target: string;
+  checkpoint_id: number | null;
+  mean: number;
+  items: { prompt: string; answer: string; score: number; reason: string }[];
+  at: string;
 }
 
 export interface Snapshot {
@@ -314,6 +325,7 @@ export interface Snapshot {
   jobs: Job[];
   checkpoints: Checkpoint[];
   samples: Sample[];
+  evals: Evaluation[];
   comparisons: Comparison[];
   feedback: { judgements: number; pairs_ready: number };
   exports: { job_id: number; path: string; size_gb: number; min_ram_gb: number }[];

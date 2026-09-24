@@ -40,7 +40,7 @@ profile. A sessions sidebar appears on both. The older manual screens are under 
 
 ```bash
 uv sync                                    # Python deps (never create a venv/interpreter by hand)
-uv run pytest -q                           # ~122 tests, no GPU/network, ~3 s. Must pass.
+uv run pytest -q                           # ~130 tests, no GPU/network, ~3 s. Must pass.
 uv run ruff check src tests && uv run ruff format src tests
 (cd web && npm install && npm run build)   # tsc -b + vite build. Must be clean.
 uv run slm serve                           # http://127.0.0.1:8000 (serves web/dist)
@@ -91,7 +91,7 @@ src/slm/
   export/          fuse.py (fuse, quantize, model card)
   agents/          provider abstraction (OpenAI | Claude | Ollama) + legacy proposal agents
                    (scout, prep, observer, synth) used by the Advanced screens
-  tuner/           agent.py (INSTRUCTIONS, build_agent), tools.py (27 @tool functions),
+  tuner/           agent.py (INSTRUCTIONS, build_agent), tools.py (29 @tool functions),
                    session.py (Tuner: turns, autopilot, halt, job wake-ups),
                    confirm.py (proposed runs: propose / confirm / decline)
   api/             app.py (lifespan starts worker), routes_* (projects, studio, feedback, agents, system)
@@ -126,7 +126,11 @@ scripts/smoke.py   end-to-end GPU smoke test
 - **Runs build on each other.** A new run starts from the project's served model, fusing pending
   adapters first. An export's lineage (`served_ancestry`) lists only the served model's ancestors.
 - **Every finished run is diagnosed** (`diagnose.py`) for divergence, no improvement, overfitting,
-  memorised validation and "validation worse". The warnings feed the Tuner.
+  memorised validation and "validation worse" (which also covers a round that never beat its
+  pre-training validation loss: a roll-back, not "train less"). The warnings feed the Tuner.
+- **Quality is a number.** `Project.test_questions` is the fixed test set; `evaluate_model` scores
+  every checkpoint on it (GPT-6, 0–10 each) into `StudioState.evals`, and `serve_checkpoint` rolls
+  back so the best-scoring checkpoint is what gets exported and built on.
 - **Warmup is capped at 25%** of iterations.
 - **The memory estimate uses the dataset's p95 token length.** It's calibrated on 0.5B models and
   underestimates 3B by about 30%.
@@ -136,11 +140,14 @@ scripts/smoke.py   end-to-end GPU smoke test
   Otherwise MLX's thread-local compile cache segfaults the process at exit.
 
 ### Data
-- **Long examples are handled before training**, never by MLX's silent truncation (`data/length.py`):
+- **Long examples are handled before training**, never by MLX's silent truncation (`data/length.py`),
+  on every path: imported/uploaded (`pipeline.prepare`), synthetic and corrected examples
+  (`build_feedback_version`) and preference pairs (`build_preference_version`), all via `pipeline._fit`:
   - chat, instruction and preference examples that are too long are **dropped**;
   - raw text is **split** into overlapping windows.
 
-  Each version stores the result in `cleaning_report["length"]`.
+  Each version stores the result in `cleaning_report["length"]`. If the trainer still reports
+  truncation, the run gets a `truncated` warning (`runner.truncation_count`), so it can't go unnoticed.
 - **Mapping must never produce empty records silently.** `_resolve` enforces required fields and
   errors on missing columns.
 

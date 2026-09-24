@@ -90,6 +90,16 @@ def _finalise(
         return v
 
 
+def _fit(records: list[dict], report, max_seq_length: int, model_path: str | None, policy: str = "auto"):
+    """Fit examples to the sequence length before training (drop over-long Q&A, split raw text), so
+    the trainer never truncates the end of an answer silently. Returns (kept, report dict, measurer)."""
+    measurer = Measurer(load_tokenizer(model_path) if model_path else None)
+    kept, fit = fit_to_length(records, max_seq_length, policy, measurer)
+    if fit.get("dropped"):
+        report.dropped["too_long_for_max_seq_length"] += fit["dropped"]
+    return kept, report.to_dict() | {"length": fit, "kept": len(kept)}, measurer
+
+
 def prepare(
     dataset: Dataset,
     mapping: dict,
@@ -112,13 +122,9 @@ def prepare(
     kept, report = cleaning.clean(mapped, rules)
     if failed:
         report.dropped["mapping_failed"] += failed
-    # Fit examples to the sequence length here, not by the trainer's silent truncation.
-    measurer = Measurer(load_tokenizer(model_path) if model_path else None)
-    kept, fit = fit_to_length(kept, max_seq_length, rules.long_examples, measurer)
-    if fit.get("dropped"):
-        report.dropped["too_long_for_max_seq_length"] += fit["dropped"]
-    report_d = report.to_dict() | {"rules": asdict(rules), "length": fit}
-    report_d["kept"] = len(kept)
+    kept, report_d, measurer = _fit(kept, report, max_seq_length, model_path, rules.long_examples)
+    fit = report_d["length"]
+    report_d["rules"] = asdict(rules)
     if errors:
         report_d["mapping_errors"] = errors
     if len(kept) < 3:
@@ -164,8 +170,9 @@ def build_preference_version(
                 rec["system"] = p.system
             records.append(rec)
     kept, report = cleaning.clean(records)
+    kept, report_d, measurer = _fit(kept, report, max_seq_length, model_path)
     if len(kept) < 3:
-        raise ValueError(f"Need at least 3 usable preference pairs, have {len(kept)}")
+        raise ValueError(f"Need at least 3 usable preference pairs, have {len(kept)} ({report_d['dropped']})")
     return _finalise(
         project_id,
         kept,
@@ -173,12 +180,13 @@ def build_preference_version(
         name="preferences",
         dataset_id=None,
         mapping={"format": "preference", "source": "feedback", "preference_pair_ids": pair_ids},
-        report=report.to_dict(),
+        report=report_d,
         model_path=model_path,
         max_seq_length=max_seq_length,
         valid_frac=0.1,
         test_frac=0.0,
         seed=seed,
+        measurer=measurer,
     )
 
 
@@ -195,8 +203,9 @@ def build_feedback_version(
     """An SFT dataset made only of feedback edits and approved synthetic examples."""
     records, ids = feedback_sft_records(project_id)
     kept, report = cleaning.clean(records)
+    kept, report_d, measurer = _fit(kept, report, max_seq_length, model_path)
     if len(kept) < 3:
-        raise ValueError(f"Need at least 3 approved SFT examples, have {len(kept)}")
+        raise ValueError(f"Need at least 3 approved SFT examples, have {len(kept)} ({report_d['dropped']})")
     return _finalise(
         project_id,
         kept,
@@ -204,12 +213,13 @@ def build_feedback_version(
         name="feedback",
         dataset_id=None,
         mapping={"format": "chat", "source": "feedback", "feedback_example_ids": ids},
-        report=report.to_dict(),
+        report=report_d,
         model_path=model_path,
         max_seq_length=max_seq_length,
         valid_frac=0.1,
         test_frac=0.0,
         seed=seed,
+        measurer=measurer,
     )
 
 

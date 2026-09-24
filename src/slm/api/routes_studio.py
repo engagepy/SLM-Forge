@@ -78,6 +78,7 @@ def studio_snapshot(project_id: int, s: Session = SessionDep) -> dict:
         "jobs": [j.model_dump(mode="json", exclude={"config", "log_path"}) for j in jobs],
         "checkpoints": [c.model_dump(mode="json") for c in ckpts],
         "samples": st.samples,
+        "evals": st.evals[-12:],
         "comparisons": st.comparisons[-20:],
         "feedback": {
             "judgements": count(s, Feedback, Feedback.project_id == project_id),

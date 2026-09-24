@@ -185,3 +185,23 @@ def test_an_export_never_overwrites_an_earlier_one(tmp_path):
     (tmp_path / "chef").mkdir()
     (tmp_path / "chef-2").mkdir()
     assert unique_dest(tmp_path, "chef") == tmp_path / "chef-3"
+
+
+def test_trainer_truncation_warnings_are_counted():
+    # Regression: the runner collapsed "[WARNING] Some sequences are longer than N tokens" lines into
+    # a suppressed-count summary and nothing told the Tuner the trainer had cut examples short.
+    from slm.train.runner import truncation_count
+
+    assert (
+        truncation_count(
+            "[WARNING] Some sequences are longer than 512 tokens. The longest sentence 900 will be truncated to 512."
+        )
+        == 1
+    )
+    assert truncation_count("[41 more 'sequence truncated' warnings suppressed]") == 41
+    assert (
+        truncation_count(
+            "Iter 10: Train loss 1.2, Learning Rate 1e-4, It/sec 3.1, Tokens/sec 900, Trained Tokens 100, Peak mem 2.1 GB"
+        )
+        == 0
+    )

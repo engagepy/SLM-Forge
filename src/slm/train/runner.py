@@ -125,6 +125,18 @@ def _noise_key(line: str) -> str | None:
     return next((key for pattern, key in _NOISY if pattern.search(line)), None)
 
 
+_SUPPRESSED = re.compile(r"^\[(\d+) more 'sequence truncated' warnings suppressed\]")
+
+
+def truncation_count(line: str) -> int:
+    """How many truncation warnings this output line stands for: the first one, or the summary."""
+    if _noise_key(line) == "sequence truncated":
+        return 1
+    if m := _SUPPRESSED.match(line):
+        return int(m.group(1))
+    return 0
+
+
 def run_process(
     cmd: list[str],
     *,

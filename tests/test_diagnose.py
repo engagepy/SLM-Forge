@@ -35,3 +35,15 @@ def test_overfitting():
 
 def test_no_improvement():
     assert "no_improvement" in codes([(5, 2.0), (10, 2.1), (15, 2.05)], [])
+
+
+def test_a_round_that_only_hurts_is_a_rollback_not_an_overfit():
+    # Regression: the Physics top-up (job 32) never beat its pre-training validation loss, but was
+    # reported as "overfitting: bottomed out at iteration 1", which reads as "train a bit less".
+    train = [(10, 1.07), (60, 0.55), (110, 0.11)]
+    val = [(1, 0.625), (50, 0.763), (100, 0.698), (126, 0.696)]
+    ws = diagnose(train, val)
+    assert [w.code for w in ws] == ["val_worse"] and "before this round" in ws[0].message
+    # A real overfit (validation improved first, then rose) keeps its own advice.
+    ws = diagnose(train, [(1, 1.5), (50, 0.7), (100, 0.9), (126, 0.95)])
+    assert [w.code for w in ws] == ["overfitting"]

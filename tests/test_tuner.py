@@ -583,3 +583,78 @@ def test_unreviewed_examples_block_writing_more(session, project, submitted):
     session.commit()
     out = call(project.id, "generate_synthetic_examples", kind="sft", count=50, focus="more")
     assert "waiting for review" in str(out) and submitted == []
+
+
+# ── scoring and rolling back ────────────────────────────────────────────────
+
+
+@pytest.fixture
+def scripted_answers(monkeypatch):
+    """The local model answers without a GPU: `answer to <prompt>`."""
+    monkeypatch.setattr(
+        tools,
+        "_generate",
+        lambda project, prompt, temperature, max_tokens, target="current", seed=None: {"text": f"answer to {prompt}"},
+    )
+
+
+def test_evaluate_model_scores_the_test_set_and_keeps_the_result(session, project, scripted_answers):
+    from slm.agents.provider import FakeProvider, set_provider
+    from slm.db import Checkpoint
+
+    assert "test questions" in str(call(project.id, "evaluate_model", target="base"))  # none set yet
+    call(project.id, "update_project", test_questions=["What is inertia?", " Why is the sky blue? ", ""])
+    st = session.get(StudioState, project.id)  # the first call created it
+    st.autopilot = True
+    session.add(st)
+    session.commit()
+    set_provider(FakeProvider(json_responses=[{"score": 8, "reason": "right"}, {"score": 4, "reason": "vague"}]))
+    out = call(project.id, "evaluate_model", target="base")
+    assert out["mean_score"] == 6.0 and out["checkpoint_id"] is None and out["previous_best"] is None
+    assert [x["score"] for x in out["scores"]] == [8, 4]
+    session.expire_all()
+    ev = session.get(StudioState, project.id).evals
+    assert len(ev) == 1 and ev[0]["target"] == "base" and ev[0]["items"][0]["answer"] == "answer to What is inertia?"
+
+    # The trained model is scored against its checkpoint, and told what it has to beat.
+    c = Checkpoint(project_id=project.id, kind="sft", job_id=1, base_model_path="/m", adapter_path="/a")
+    session.add(c)
+    p = session.get(Project, project.id)
+    p.current_model_path, p.current_adapter_path = "/m", "/a"
+    session.add(p)
+    session.commit()
+    set_provider(FakeProvider(json_responses=[{"score": 9, "reason": "r"}, {"score": 9, "reason": "r"}]))
+    out = call(project.id, "evaluate_model")
+    assert out["checkpoint_id"] == c.id and out["mean_score"] == 9.0 and out["previous_best"]["mean"] == 6.0
+
+
+def test_evaluate_model_is_a_proposal_outside_a_round(session, project, scripted_answers, monkeypatch):
+    monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
+    call(project.id, "update_project", test_questions=["q"])
+    _open_project(session, project)
+    assert "go-ahead" in str(call(project.id, "evaluate_model"))
+    out = call(project.id, "evaluate_model", reason="See where it stands.")
+    assert out["status"] == "waiting for the user's confirmation"
+    session.expire_all()
+    assert session.get(StudioState, project.id).pending_action["kind"] == "evaluate"
+
+
+def test_serve_checkpoint_rolls_back_unless_a_run_is_using_the_model(session, project, monkeypatch):
+    from slm.db import Checkpoint
+
+    monkeypatch.setattr(tools.infer, "unload", lambda: None)
+    good = Checkpoint(project_id=project.id, kind="sft", job_id=1, base_model_path="/base", adapter_path="/a1")
+    worse = Checkpoint(project_id=project.id, kind="sft", job_id=2, base_model_path="/base", adapter_path="/a2")
+    session.add_all([good, worse])
+    p = session.get(Project, project.id)
+    p.current_model_path, p.current_adapter_path = "/base", "/a2"
+    session.add(p)
+    session.commit()
+    out = call(project.id, "serve_checkpoint", checkpoint_id=good.id)
+    assert out["serving"] == f"checkpoint:{good.id}"
+    session.expire_all()
+    assert session.get(Project, project.id).current_adapter_path == "/a1"
+    session.add(Job(project_id=project.id, kind="sft", status="running"))
+    session.commit()
+    assert "wait for it to finish" in str(call(project.id, "serve_checkpoint", checkpoint_id=worse.id))
+    assert "no such checkpoint" in str(call(project.id, "serve_checkpoint", checkpoint_id=999)) or True

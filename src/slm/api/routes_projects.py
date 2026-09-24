@@ -29,6 +29,7 @@ from slm.db import (
 from slm.models import manage
 from slm.sessions import export_jobs, on_disk
 from slm.train.config import TrainConfig, preset
+from slm.train.jobs import serve_checkpoint
 from slm.train.worker import worker
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -294,12 +295,7 @@ def activate_checkpoint(project_id: int, checkpoint_id: int, s: Session = Sessio
     c = get_or_404(s, Checkpoint, checkpoint_id)
     if c.project_id != p.id:
         raise HTTPException(404)
-    if c.fused_path:
-        p.current_model_path, p.current_adapter_path = c.fused_path, None
-    else:
-        p.current_model_path, p.current_adapter_path = c.base_model_path, c.adapter_path
-    s.add(p)
-    s.commit()
+    serve_checkpoint(s, p, c)
     return p.model_dump(mode="json")
 
 

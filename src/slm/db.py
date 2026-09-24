@@ -28,6 +28,8 @@ class Project(SQLModel, table=True):
     # The model the project currently serves: base path, or latest fused model.
     current_model_path: str | None = None
     current_adapter_path: str | None = None
+    # The fixed questions the Tuner scores every checkpoint on (before/after is a number, not a feeling).
+    test_questions: list = json_field([])
     created_at: datetime = Field(default_factory=now)
 
 
@@ -202,6 +204,7 @@ class StudioState(SQLModel, table=True):
     # One-shot go-aheads for tools that spend (API calls, downloads), granted when the user confirms
     # such a proposal; the tool consumes its entry when it runs. See tuner/confirm.py.
     granted: list = json_field([])
+    evals: list = json_field([])  # evaluate_model results: [{id, target, checkpoint_id, mean, items, at}]
     updated_at: datetime = Field(default_factory=now)
 
 
