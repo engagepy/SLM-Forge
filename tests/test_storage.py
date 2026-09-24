@@ -203,3 +203,28 @@ def test_tidy_clears_only_fused_copies_nothing_depends_on(session, client, monke
         session.get(Checkpoint, c3.id).fused_path is None and session.get(Checkpoint, c3.id).adapter_path
     )  # still servable
     assert storage.reclaimable_items() == []
+
+
+def test_reset_keeps_the_project_shell_and_chosen_exports(session, client, monkeypatch):
+    from sqlmodel import select
+
+    from slm.db import Job, Project, StudioState
+    from slm.tuner.session import tuner
+
+    monkeypatch.setattr(tuner, "forget", lambda pid: None)
+    monkeypatch.setattr(tuner, "halt", lambda pid: None)
+    monkeypatch.setattr("slm.inference.engine.engine.unload", lambda: None)
+    p, run, exp, export_dir = _project_with_files(session)
+    pid, exp_id = p.id, exp.id
+    session.add(StudioState(project_id=pid, stage="export", completed=True, evals=[{"mean": 7}]))
+    p.plan, p.test_questions, p.system_prompt = {"task_type": "extraction"}, [{"input": "q"}], "sys"
+    session.add(p)
+    session.commit()
+    out = client.post(f"/api/projects/{pid}/reset", json={"keep_export_job_ids": [exp_id]}).json()
+    assert out["kept_exports"] == ["chef-v1"] and out["freed_gb"] >= round(3_000_000 / storage.GB, 3)
+    session.expire_all()
+    p = session.get(Project, pid)
+    assert p is not None and p.base_model is None and p.plan == {"task_type": "extraction"} and p.system_prompt == "sys"
+    assert [j.id for j in session.exec(select(Job)).all()] == [exp_id] and export_dir.exists()
+    st = session.get(StudioState, pid)
+    assert st.stage == "goal" and st.completed is False and st.evals == []

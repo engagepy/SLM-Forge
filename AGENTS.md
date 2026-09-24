@@ -83,6 +83,7 @@ src/slm/
   storage.py       disk footprint (workspace parts + downloaded models), cached a minute; in /api/system.
                    inventory(); remove_model / delete_export / delete_project (files + rows + Tuner
                    memory; models stay unless removed explicitly); each returns freed_gb.
+                   reset_project(pid, keep_export_job_ids): wipe history, keep the project shell + chosen exports.
                    reclaimable_items()/tidy(): fused copies no project serves and no checkpoint
                    builds on, plus dead runs' folders; Checkpoint.fused_path is nulled (serve falls
                    back to base + adapter). Threshold: SLM_DISK_TIDY_GB

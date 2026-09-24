@@ -322,6 +322,18 @@ def delete_project(project_id: int, keep_exports: bool = False, s: Session = Ses
     return storage.delete_project(project_id, keep_exports=keep_exports)
 
 
+class ResetIn(BaseModel):
+    keep_export_job_ids: list[int] = []
+
+
+@router.post("/{project_id}/reset")
+def reset_project(project_id: int, body: ResetIn, s: Session = SessionDep) -> dict:
+    """Wipe the project's runs, data, chat and memory; keep the project and the chosen exports."""
+    project_or_404(s, project_id)
+    s.close()
+    return storage.reset_project(project_id, body.keep_export_job_ids)
+
+
 @router.delete("/{project_id}/exports/{job_id}")
 def delete_export(project_id: int, job_id: int, s: Session = SessionDep) -> dict:
     project_or_404(s, project_id)

@@ -49,6 +49,12 @@ export default function StoragePage() {
     onSuccess: done("Exported model"),
     onError: setError,
   });
+  const resetProject = useMutation({
+    mutationFn: (x: { pid: number; keep: number[] }) =>
+      api.post<{ freed_gb: number }>(`/api/projects/${x.pid}/reset`, { keep_export_job_ids: x.keep }),
+    onSuccess: done("Project history"),
+    onError: setError,
+  });
   const deleteProject = useMutation({
     mutationFn: (x: { pid: number; keep: boolean }) => api.delete<{ freed_gb: number }>(`/api/projects/${x.pid}?keep_exports=${x.keep}`),
     onSuccess: done("Project"),
@@ -59,7 +65,7 @@ export default function StoragePage() {
     onSuccess: done("Intermediate run files"),
     onError: setError,
   });
-  const busy = removeModel.isPending || deleteExport.isPending || deleteProject.isPending || tidy.isPending;
+  const busy = removeModel.isPending || deleteExport.isPending || deleteProject.isPending || resetProject.isPending || tidy.isPending;
   const d = inv.data;
 
   return (
@@ -150,6 +156,17 @@ export default function StoragePage() {
                   </div>
                   <span className="num text-[13px]">{size(p.total_gb)}</span>
                   <div className="flex flex-col gap-1">
+                    <Button
+                      size="sm"
+                      disabled={busy}
+                      title="Delete its runs, data, chat and memory; keep the project, its brief and its exported models"
+                      onClick={() =>
+                        confirm(`Reset "${p.name}"? Its runs, data, chat and memory are deleted; the project, its brief and its exported models stay.`) &&
+                        resetProject.mutate({ pid: p.id, keep: p.exports.map((e) => e.job_id) })
+                      }
+                    >
+                      Reset, keep exports
+                    </Button>
                     <Button
                       size="sm"
                       variant="danger"

@@ -262,6 +262,48 @@ def delete_export(project_id: int, job_id: int) -> dict:
     return {"job_id": job_id, "freed_gb": _gb(freed)}
 
 
+def reset_project(project_id: int, keep_export_job_ids: list[int]) -> dict:
+    """Wipe a project's history but keep the project and the chosen exported models: runs, data,
+    checkpoints, chat and Tuner memory go; the goal, system prompt, plan and test set stay, so the
+    next round starts clean. The base model is unset (a fresh round picks one again)."""
+    from slm.sessions import stop_project
+    from slm.tuner.session import tuner
+
+    stop_project(project_id, cancel_jobs=True)
+    keep = set(keep_export_job_ids)
+    with Session(engine()) as s:
+        project = s.get(Project, project_id)
+        if project is None:
+            raise LookupError(f"project {project_id} not found")
+        files = _project_files(s, project_id)
+        export_paths, kept = [], []
+        for j in export_jobs(s, project_id):
+            (kept if j.id in keep else export_paths).append(j.result.get("path"))
+        kept_runs = {cfg_run for cfg_run in ()}  # export folders live under exports/, not runs/
+        job_ids = [j.id for j in s.exec(select(Job).where(Job.project_id == project_id)).all() if j.id not in keep]
+        s.exec(delete(Metric).where(Metric.job_id.in_(job_ids)))
+        for model in (Checkpoint, PreferencePair, SftExample, Feedback, DatasetVersion, Dataset, Proposal,
+                      AgentEvent, TunerMessage):  # fmt: skip
+            s.exec(delete(model).where(model.project_id == project_id))
+        s.exec(delete(Job).where(Job.id.in_(job_ids)))
+        st = s.get(StudioState, project_id)
+        if st is not None:
+            st.stage, st.note, st.comparisons, st.samples, st.evals = "goal", "", [], [], []
+            st.autopilot, st.completed, st.stalled_nudges, st.pending_action, st.granted = False, False, 0, {}, []
+            s.add(st)
+        project.base_model = project.current_model_path = project.current_adapter_path = None
+        s.add(project)
+        s.commit()
+    from slm.inference.engine import engine as infer
+
+    infer.unload()
+    freed = sum(_rmtree(p) for paths in files.values() for p in paths) + sum(_rmtree(p) for p in export_paths)
+    del kept_runs
+    tuner.forget(project_id)
+    footprint(refresh=True)
+    return {"project_id": project_id, "freed_gb": _gb(freed), "kept_exports": [Path(p).name for p in kept]}
+
+
 def delete_project(project_id: int, keep_exports: bool = False) -> dict:
     """Remove a project: its Tuner, jobs, data, runs, memory and (unless kept) its exported models.
     Downloaded base models stay: they may serve other projects, and are removed separately."""
