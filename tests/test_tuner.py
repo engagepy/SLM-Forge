@@ -8,6 +8,9 @@ from agents.tool_context import ToolContext
 from sqlmodel import select
 
 from slm.db import Dataset, Job, PreferencePair, Project, SftExample, StudioState, TunerMessage
+from slm.events import canvas_changed
+from slm.inference.engine import engine as infer
+from slm.train.worker import worker
 from slm.tuner import tools
 from slm.tuner.session import job_update_text, on_job_finished, tuner
 from slm.tuner.tools import ALL_TOOLS, TunerContext
@@ -91,7 +94,7 @@ def test_prepare_dataset_passes_the_plan_through(session, project, tmp_path, mon
         submitted.update(config)
         raise RuntimeError("stop here")
 
-    monkeypatch.setattr(tools, "_submit", fake_submit)
+    monkeypatch.setattr(tools.data, "_submit", fake_submit)
     call(
         project.id,
         "prepare_dataset",
@@ -225,7 +228,7 @@ def test_canvas_changed_publishes(project):
 
     async def listen():
         async with bus.subscribe(f"tuner:{project.id}") as q:
-            tools.canvas_changed(project.id)
+            canvas_changed(project.id)
             got.append(await asyncio.wait_for(q.get(), 1))
 
     asyncio.run(listen())
@@ -347,16 +350,8 @@ def test_find_base_models_recommends_the_catalog_first_then_the_hub(project, mon
 def test_every_defined_tool_is_registered():
     # Regression: two tools were once defined with @tool but never added to ALL_TOOLS, so the
     # agent silently couldn't use them.
-    import ast
-    import pathlib
-
-    src = pathlib.Path(tools.__file__).read_text()
-    defined = {
-        n.name
-        for n in ast.parse(src).body
-        if isinstance(n, ast.FunctionDef) and any(getattr(d, "id", None) == "tool" for d in n.decorator_list)
-    }
-    assert defined == {t.name for t in ALL_TOOLS}
+    assert {t.name for t in tools.REGISTRY} == {t.name for t in ALL_TOOLS}
+    assert len(tools.REGISTRY) == len(ALL_TOOLS) == 31
 
 
 def test_successful_export_completes_the_project(session, project, monkeypatch):
@@ -387,7 +382,7 @@ def submitted(session, monkeypatch):
         jobs.append(job)
         return job
 
-    monkeypatch.setattr(tools.worker, "submit", submit)
+    monkeypatch.setattr(worker, "submit", submit)
     return jobs
 
 
@@ -584,7 +579,7 @@ def test_a_question_after_the_export_cannot_start_spending(client, session, proj
     st = session.get(StudioState, project.id)
     expected_grant = {"tool": "generate_synthetic_examples", "args": {"kind": "sft", "count": 150, "focus": "forces"}}
     assert st.granted == [expected_grant] and st.completed is True  # a spend card is no mandate for the round
-    monkeypatch.setattr(tools, "_wait", lambda job_id, timeout: submitted[-1])
+    monkeypatch.setattr(tools.data, "_wait", lambda job_id, timeout: submitted[-1])
     # Different arguments (200 where 150 were approved): no grant, a new card instead.
     out = call(project.id, "generate_synthetic_examples", kind="sft", count=200, focus="forces", reason="More.")
     assert out["status"] == "waiting for the user's confirmation" and submitted == []
@@ -613,7 +608,7 @@ def test_spending_tools_propose_when_no_round_is_in_motion(session, project, sub
 def test_inside_a_round_spending_tools_run_without_asking(session, project, submitted, monkeypatch):
     session.add(StudioState(project_id=project.id, autopilot=True, completed=False))
     session.commit()
-    monkeypatch.setattr(tools, "_wait", lambda job_id, timeout: submitted[-1])
+    monkeypatch.setattr(tools.data, "_wait", lambda job_id, timeout: submitted[-1])
     call(project.id, "generate_synthetic_examples", kind="sft", count=20, focus="x")
     assert [j.kind for j in submitted] == ["synthesize"]
 
@@ -645,7 +640,7 @@ def test_unreviewed_examples_block_writing_more(session, project, submitted):
 def scripted_answers(monkeypatch):
     """The local model answers without a GPU: `answer to <prompt>`."""
     monkeypatch.setattr(
-        tools,
+        tools.generate,
         "_generate",
         lambda project, prompt, temperature, max_tokens, target="current", seed=None: {"text": f"answer to {prompt}"},
     )
@@ -695,7 +690,7 @@ def test_evaluate_model_is_a_proposal_outside_a_round(session, project, scripted
 def test_serve_checkpoint_rolls_back_unless_a_run_is_using_the_model(session, project, monkeypatch):
     from slm.db import Checkpoint
 
-    monkeypatch.setattr(tools.infer, "unload", lambda: None)
+    monkeypatch.setattr(infer, "unload", lambda: None)
     good = Checkpoint(project_id=project.id, kind="sft", job_id=1, base_model_path="/base", adapter_path="/a1")
     worse = Checkpoint(project_id=project.id, kind="sft", job_id=2, base_model_path="/base", adapter_path="/a2")
     session.add_all([good, worse])
@@ -743,7 +738,7 @@ def test_test_cases_with_expected_outputs_score_by_exact_match_first(session, pr
         "cough after lisinopril": '{"events": [{"drug": "lisinopril"}]}',  # same JSON, different spacing → exact
     }
     monkeypatch.setattr(
-        tools,
+        tools.generate,
         "_generate",
         lambda project, prompt, t, m, target="current", seed=None: {"text": answers.get(prompt, "answer")},
     )

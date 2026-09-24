@@ -191,7 +191,7 @@ def decline(pid: int, action_id: str | None = None, reason: str = "") -> dict:
 
 
 def _execute(pid: int, action: dict) -> dict:
-    from slm.tuner.tools import _submit
+    from slm.tuner.runs import submit_job as _submit
 
     kind, payload = action["kind"], action["payload"]
     with Session(engine()) as s:
@@ -226,7 +226,7 @@ def _execute(pid: int, action: dict) -> dict:
 
 def apply_base_model(pid: int, repo_id: str) -> dict:
     """Set the project's base model, downloading it unless it's already on this Mac."""
-    from slm.tuner.tools import _submit
+    from slm.tuner.runs import submit_job as _submit
 
     with Session(engine()) as s:
         p = s.get(Project, pid)

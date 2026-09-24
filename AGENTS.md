@@ -103,7 +103,9 @@ src/slm/
   export/          fuse.py (fuse, quantize, model card, bake_system_prompt into the chat template)
   agents/          provider abstraction (OpenAI | Claude | Ollama) + legacy proposal agents
                    (scout, prep, observer, synth) used by the Advanced screens
-  tuner/           agent.py (INSTRUCTIONS, build_agent), tools.py (31 @tool functions),
+  tuner/           agent.py (INSTRUCTIONS, build_agent), tools/ (31 @tool functions: status, models,
+                   data, training, generate, scoring, evaluation, person; _core has the helpers),
+                   runs.py (submit_job/wait_job, shared with confirm),
                    specialists.py (DataScout, DataPrep: SDK agents-as-tools with structured outputs,
                    run on the Tuner's loop via tuner.run_coroutine; tool calls saved with meta.agent),
                    session.py (Tuner: turns, autopilot, halt, job wake-ups),
@@ -174,7 +176,7 @@ scripts/smoke.py   end-to-end GPU smoke test
   turn: it causes "Event loop is closed".
 - **Tools** are `function_tool(strict_mode=False)` and run in `asyncio.to_thread`.
 - `parallel_tool_calls=False`.
-- **Every tool in `tools.py` must be registered on the agent.** A test guards this.
+- **Every `@tool` (they register in `tools._core.REGISTRY`) must be in `ALL_TOOLS`.** A test guards this.
 - **Quick jobs are awaited inside the tool.** Long ones (download, sft, dpo, export) return at once
   with `notify: True`; `on_job_finished` then wakes the Tuner.
 
@@ -291,6 +293,9 @@ Every rule here cost a failed round on this Mac (Apple M1 Pro, 16 GB) in Septemb
 - **Hugging Face dataset search only substring-matches names.** `search_datasets` merges keyword
   searches and ranks the results by relevance.
 - **Hooks are never conditional**; see `SessionsSidebar`, where both `useMatch` calls always run.
+- **Patch a helper on the module that calls it.** The tools are a package: `tools.data._wait`,
+  `tools.generate._generate`. Patching `tools._wait` on the package changes nothing and the
+  test waits for a job that never runs (that hang cost an hour).
 - **The OpenAI key comes from `.env` via `config._dotenv_value`.** Tests must not need a real key.
 
 ## Testing the UI
@@ -307,7 +312,7 @@ uv run --isolated --no-project --with playwright python script.py   # launch(cha
 
 ## Evolving the repo
 - **Adding a Tuner tool:**
-  1. Write the `@tool` function in `tools.py`, with a docstring the model reads.
+  1. Write the `@tool` function in the right `tuner/tools/*.py`, with a docstring the model reads.
   2. Register it.
   3. Mention it in `INSTRUCTIONS` if the agent needs to know when to use it.
   4. Add a test in `tests/test_tuner.py`.
