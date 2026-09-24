@@ -126,7 +126,7 @@ taught it.
 
 ## How the Tuner works
 
-- **One agent, 29 tools** (`src/slm/tuner/`) wrapping the tested platform code: `get_status`,
+- **One agent, 31 tools** (`src/slm/tuner/tools/`) wrapping the tested platform code: `get_status`,
   `find_base_models`, `choose_base_model`, `search_datasets`, `prepare_dataset`,
   `generate_synthetic_examples`, `start_training`, `try_model`, `ask_user_to_compare`,
   `export_model` and more. Quick jobs (imports, data prep, synthesis) are awaited inside the
@@ -139,8 +139,10 @@ taught it.
 - **Small, simple data by default:** the Tuner usually has GPT-6 write 150–300 short,
   characterful examples in the goal's style, reviews a sample, approves the rest and trains on
   them. It uses public data only when a clean, on-goal set with short answers exists.
-- **Before/after is a number.** The Tuner saves 5–8 test questions with the project and scores every
-  checkpoint on them with `evaluate_model` (GPT-6 grades each answer 0–10 against the goal). The
+- **Before/after is a number.** The Tuner writes a test set sized to the task (10–80 cases, with
+  exact expected outputs wherever the task is deterministic) and scores every checkpoint on it with
+  `evaluate_model`: exact match first, the judge (0–10 against the goal) only where there is no
+  expected output or the answer differs from it. The
   scores sit on the Evaluate card, the export is the best-scoring checkpoint (`serve_checkpoint`
   rolls back if the latest run made things worse), and DPO isn't attempted under 30 pairs.
 - **Try it keeps you testing:** four suggested inputs sit above the message box, three on-goal at
@@ -235,9 +237,14 @@ With `mlx-community/Qwen2.5-0.5B-Instruct-4bit`:
 
 ## Roadmap
 
-- **M2:** evaluation harness with an LLM judge, near-duplicate detection (MinHash), language ID
-  and PII scrubbing, web search for off-Hub data, resumable runs, checkpoint comparison.
-- **M3:** Observer autonomy levels, curricula, ORPO/GRPO, GGUF/Ollama export, a device
-  compatibility matrix, packaging for other users.
+Built since the first plan: the scored evaluation harness (exact match + judge), checkpoint
+comparison and roll-back, adapter resumption between rounds, the storage manager, the spend meter,
+the model catalog and the data specialists. Still ahead:
+
+- near-duplicate detection (MinHash), language ID and PII scrubbing in cleaning;
+- web search for off-Hub data;
+- a machine-wide GPU lock across server processes, and a memory estimator recalibrated for 3B+;
+- curricula, ORPO/GRPO, GGUF/Ollama export, a device compatibility matrix, packaging for other
+  users.
 
 `simpletokeniser.py` is an unrelated learning exercise (a toy word tokenizer).

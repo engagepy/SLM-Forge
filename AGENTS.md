@@ -41,7 +41,7 @@ profile. A sessions sidebar appears on both. The older manual screens are under 
 
 ```bash
 uv sync                                    # Python deps (never create a venv/interpreter by hand)
-uv run pytest -q                           # ~130 tests, no GPU/network, ~3 s. Must pass.
+uv run pytest -q                           # ~175 tests, no GPU/network, ~10 s. Must pass.
 uv run ruff check src tests && uv run ruff format src tests
 (cd web && npm install && npm run build)   # tsc -b + vite build. Must be clean.
 uv run slm serve                           # http://127.0.0.1:8000 (serves web/dist)
@@ -224,10 +224,12 @@ scripts/smoke.py   end-to-end GPU smoke test
 
 **Spending needs a mandate (regression-tested)**
 - Talking to the Tuner must never cost anything. Tools that spend (`generate_synthetic_examples`,
-  `ai_review_answers`, `import_dataset`) go through `tools._spend`:
+  `ai_review_answers`, `import_dataset`, `evaluate_model`, `scout_datasets`, `plan_preparation`)
+  go through `tools._spend`; `confirm.KINDS` is the one table of card kinds:
   - inside a round (autopilot on, project not completed) they run: the goal is the mandate;
-  - outside one (finished, or autopilot paused) they propose a card (`synthesize` / `review` /
-    `import`); confirming grants one call (`StudioState.granted`), which the tool consumes;
+  - outside one (finished, or autopilot paused) they propose a card; confirming grants exactly
+    one call *with those arguments* (`StudioState.granted` holds `{tool, args}`; a call with other
+    arguments proposes again) and does not reopen the round. Only runs reopen it;
   - while any proposal is pending they refuse; with no `reason` they refuse.
 - `generate_synthetic_examples` refuses while `MAX_UNREVIEWED` examples await review.
 - A new spending tool must call `_spend` first. Put the cost in its docstring and in the prompt's
@@ -284,6 +286,11 @@ Every rule here cost a failed round on this Mac (Apple M1 Pro, 16 GB) in Septemb
     API calls. Spending tools propose a card outside a round (`tools._spend`).
 11. **Size to the machine.** `get_status → this_mac` names the comfortable tier; 3B runs at 512
     tokens and batch 1–2 fit in 10 GB, and the memory estimate underestimates 3B by ~30%.
+12. **Lineage follows the served checkpoint, not the newest.** After a roll-back the next run's
+    parent (and the export's model card) must be the checkpoint being served: `served_checkpoint`
+    is the one definition of "what is served".
+13. **A grant is for one call with those arguments.** Approving "write 20 examples" once let the
+    Tuner write 200; grants now carry the arguments and a decision clears leftovers.
 
 ## Gotchas
 - **React effects must not return a value.** `scrollIntoView()` returns a Promise in current Chrome,
@@ -329,4 +336,4 @@ uv run --isolated --no-project --with playwright python script.py   # launch(cha
 - **Known follow-ups:**
   - a machine-wide GPU lock across server processes;
   - recalibrating the memory estimator for 3B and larger models;
-  - the M2/M3 roadmap items in the README.
+  - the roadmap items in the README.
