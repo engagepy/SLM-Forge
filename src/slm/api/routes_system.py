@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from slm import hardware, profile
+from slm import hardware, profile, storage
 from slm.config import agent_key_configured, get_settings
 from slm.inference.engine import engine as infer
 from slm.models import hub
@@ -35,6 +35,7 @@ def system_status() -> dict:
             "key_env": {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY", "ollama": None}[s.agent_provider],
         },
         "workspace": str(s.workspace),
+        "disk": storage.footprint(),
     }
 
 

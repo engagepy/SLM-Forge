@@ -19,7 +19,7 @@ import {
 import { MetricChart } from "../components/Charts";
 import JobLog from "../components/JobLog";
 import Markdown from "../components/Markdown";
-import UsageMeter from "../components/UsageMeter";
+import MetricsBar from "../components/MetricsBar";
 import { runProgress, useLiveJob, useStudio, useSystem } from "../hooks";
 import { Badge, Button, CodeBlock, cx, ErrorNote, MemoryBar, ProgressBar, Spinner, StatusBadge, TextArea } from "../ui";
 
@@ -128,59 +128,18 @@ export default function Studio() {
 }
 
 function TopBar({ snapshot }: { snapshot?: Snapshot }) {
-  const { data: sys } = useSystem();
-  const qc = useQueryClient();
-  const gpu = sys?.worker.running.gpu;
-  const toggle = useMutation({
-    mutationFn: (on: boolean) => api.post(`/api/projects/${snapshot!.project.id}/studio/autopilot`, { on }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["studio", snapshot!.project.id] }),
-  });
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4">
-      <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold">{snapshot?.project.name ?? "…"}</div>
-        <div className="truncate text-[11px] text-faint">{snapshot?.project.goal}</div>
-      </div>
-      <div className="ml-auto flex shrink-0 items-center gap-3 whitespace-nowrap text-xs text-muted">
-        {sys && (
-          <span className="hidden xl:inline">
-            {sys.hardware.chip} · <span className="num">{sys.hardware.budget_gb.toFixed(1)} GB</span> for ML
-          </span>
-        )}
-        {gpu ? (
-          <Badge tone="info">
-            <span className="size-1.5 animate-pulse rounded-full bg-current" /> GPU: job {gpu}
-          </Badge>
-        ) : (
-          <Badge>GPU idle</Badge>
-        )}
-        {sys && !sys.agents.key_configured && <Badge tone="warn">set {sys.agents.key_env} in .env</Badge>}
-        <UsageMeter />
-        {snapshot && (
-          <button
-            onClick={() => toggle.mutate(!snapshot.autopilot)}
-            title={snapshot.autopilot ? "The Tuner builds the model on its own. Click to pause." : "Paused. Click to let the Tuner carry on."}
-            className={cx(
-              "flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-medium transition",
-              snapshot.autopilot ? "border-accent/50 bg-accent-soft text-accent" : "border-line text-muted hover:text-fg",
-            )}
-          >
-            <span className={cx("size-1.5 rounded-full", snapshot.autopilot ? "animate-pulse bg-accent" : "bg-faint")} />
-            Autopilot {snapshot.completed ? "done" : snapshot.autopilot ? "on" : "paused"}
-          </button>
-        )}
-        {!!snapshot?.exports.length && (
-          <Link to={`/p/${snapshot.project.id}/try`} className="rounded-md bg-good-soft px-2.5 py-1 font-medium text-good hover:brightness-110">
-            ▶ Try it
-          </Link>
-        )}
-        {snapshot && (
-          <Link to={`/p/${snapshot.project.id}/overview`} className="rounded-md px-2 py-1 hover:bg-panel-2 hover:text-fg">
-            Advanced
-          </Link>
-        )}
-      </div>
-    </header>
+    <>
+      <MetricsBar snapshot={snapshot} />
+      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-4">
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-semibold">{snapshot?.project.name ?? "…"}</div>
+          <div className="truncate text-[11px] text-faint" title={snapshot?.project.goal}>
+            {snapshot?.project.goal}
+          </div>
+        </div>
+      </header>
+    </>
   );
 }
 

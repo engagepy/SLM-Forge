@@ -128,6 +128,9 @@ agents and the UI don't care which one is behind them.
   checkpoint on them with `evaluate_model` (GPT-6 grades each answer 0–10 against the goal). The
   scores sit on the Evaluate card, the export is the best-scoring checkpoint (`serve_checkpoint`
   rolls back if the latest run made things worse), and DPO isn't attempted under 30 pairs.
+- **A metrics strip above every project:** the Mac and its ML budget, the GPU, how much disk the app
+  occupies (datasets, runs, exports, uploads, databases and the downloaded models, with free space),
+  and the OpenAI spend below.
 - **A spend meter, read from OpenAI.** The pill in the Studio bar and the sidebar shows what the
   OpenAI account has spent today and this month, straight from OpenAI's Costs API (no token
   counting). It needs an organisation admin key in `.env` (`OPENAI_ADMIN_KEY`; the project key

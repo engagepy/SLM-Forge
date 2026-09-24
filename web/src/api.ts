@@ -22,6 +22,13 @@ export interface SystemStatus {
   inference: { loaded: { model_path: string; adapter_path: string | null } | null; blocked: string | null };
   agents: { provider: string; model: string; key_configured: boolean; key_env: string | null };
   workspace: string;
+  disk: {
+    total_gb: number;
+    parts_gb: Record<"models" | "datasets" | "runs" | "exports" | "uploads" | "database", number>;
+    workspace: string;
+    disk_free_gb: number;
+    disk_total_gb: number;
+  };
 }
 
 export interface Project {
