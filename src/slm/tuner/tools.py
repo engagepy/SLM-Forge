@@ -43,7 +43,7 @@ from slm.db import (
 from slm.db import (
     count as count_rows,
 )
-from slm.events import canvas_changed
+from slm.events import canvas_changed, shutting_down
 from slm.feedback import record_feedback
 from slm.inference.engine import EngineBusy, SamplingParams
 from slm.inference.engine import engine as infer
@@ -134,7 +134,8 @@ def _wait(job_id: int, timeout: float) -> Job:
             job = s.get(Job, job_id)
             if job.status in ("succeeded", "failed", "cancelled") or time.time() > deadline:
                 return job
-        time.sleep(1)
+        if shutting_down.wait(1):
+            return job  # the server is stopping: don't keep a thread alive for this
 
 
 def _job_brief(j: Job) -> dict:

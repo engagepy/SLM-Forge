@@ -11,7 +11,9 @@ published on the bus topic `tuner:{project_id}`:
 import asyncio
 import json
 import threading
+import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 from agents import Runner, SQLiteSession
 from agents.exceptions import MaxTurnsExceeded
@@ -32,7 +34,7 @@ from slm.db import (
     engine,
     studio_state,
 )
-from slm.events import bus, canvas_changed
+from slm.events import bus, canvas_changed, shutting_down
 from slm.tuner.agent import build_agent
 from slm.tuner.tools import TunerContext
 
@@ -76,6 +78,9 @@ class Tuner:
         # One long-lived loop for every turn: the Agents SDK's shared OpenAI client binds to the
         # loop it first runs on, so a fresh asyncio.run() per turn fails with "Event loop is closed".
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Tools run here (asyncio.to_thread). Owned, so shutdown can stop it without joining a tool
+        # that's still waiting on something.
+        self._tools = ThreadPoolExecutor(thread_name_prefix="tuner-tools")
         self._runs: dict[int, object] = {}  # project → the streaming run in progress
         self._halted: set[int] = set()  # projects the user stopped: no new work until they speak
 
@@ -101,8 +106,27 @@ class Tuner:
         with self._lock:
             if self._loop is None:
                 self._loop = asyncio.new_event_loop()
+                self._loop.set_default_executor(self._tools)
                 threading.Thread(target=self._loop.run_forever, daemon=True, name="tuner-loop").start()
             return self._loop
+
+    def shutdown(self) -> None:
+        """Stop every turn and let tool threads finish: the server is going down."""
+        shutting_down.set()
+        with self._lock:
+            runs, loop = list(self._runs.values()), self._loop
+            self._pending.clear()
+        if loop is not None:
+            for run in runs:
+                loop.call_soon_threadsafe(run.cancel, "immediate")
+        # Tool threads return within about a second (their waits watch `shutting_down`); give them
+        # that, so their tasks complete, then stop the loop. Anything slower is abandoned, not joined.
+        self._tools.shutdown(wait=False, cancel_futures=True)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and any(t.name.startswith("tuner-tools") for t in threading.enumerate()):
+            time.sleep(0.05)
+        if loop is not None:
+            loop.call_soon_threadsafe(loop.stop)
 
     def is_busy(self, pid: int) -> bool:
         return pid in self._busy
@@ -170,6 +194,8 @@ class Tuner:
                 if ev.type == "raw_response_event" and getattr(ev.data, "type", "") == "response.output_text.delta":
                     segment.append(ev.data.delta)
                     _publish(pid, {"type": "delta", "text": ev.data.delta})
+                elif ev.type == "raw_response_event" and getattr(ev.data, "type", "") == "response.completed":
+                    _record_response(pid, ev.data.response)  # meter each model call as it lands
                 elif ev.type == "run_item_stream_event" and ev.name == "tool_called":
                     flush()  # text before a tool call is its own message
                     raw = ev.item.raw_item
@@ -190,7 +216,6 @@ class Tuner:
                         _publish(pid, {"type": "message", "message": m.model_dump(mode="json")})
                     _publish(pid, {"type": "tool_end", "output": output[:500]})
             flush()
-            _record_usage(pid, result)
         except MaxTurnsExceeded:
             flush()
             save_message(pid, "event", "The Tuner paused after many steps. Say “continue” to carry on.")
@@ -205,15 +230,16 @@ class Tuner:
             canvas_changed(pid)
 
 
-def _record_usage(pid: int, result) -> None:
-    """Meter the turn: the Agents SDK totals every model call of the run."""
-    u = getattr(getattr(result, "context_wrapper", None), "usage", None)
-    if u is None or not getattr(u, "requests", 0):
+def _record_response(pid: int, response) -> None:
+    """Meter one model call of a turn, the moment it completes. Per call rather than per turn, so a
+    long turn shows on the meter as it runs and a killed server loses nothing."""
+    u = getattr(response, "usage", None)
+    if u is None:
         return
     cached = getattr(getattr(u, "input_tokens_details", None), "cached_tokens", 0) or 0
     usage.record(
-        get_settings().openai_model, u.input_tokens, u.output_tokens,
-        cached_tokens=cached, requests=u.requests, project_id=pid, purpose="tuner",
+        getattr(response, "model", None) or get_settings().openai_model, u.input_tokens, u.output_tokens,
+        cached_tokens=cached, project_id=pid, purpose="tuner",
     )  # fmt: skip
 
 

@@ -77,6 +77,12 @@ class Engine:
     def unload(self) -> None:
         self._on_mlx_thread(self._unload)
 
+    def shutdown(self) -> None:
+        """Tear the MLX thread down while the interpreter is still alive (see the module docstring)."""
+        if self._key is not None:
+            self._on_mlx_thread(self._unload)
+        self._pool.shutdown(wait=True)
+
     def _unload(self) -> None:
         import mlx.core as mx
 

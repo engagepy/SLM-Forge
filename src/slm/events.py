@@ -38,6 +38,9 @@ class Bus:
 
 bus = Bus()
 
+# Set when the server is stopping: blocking waits return early so no thread outlives the shutdown.
+shutting_down = threading.Event()
+
 
 def canvas_changed(project_id: int) -> None:
     """Tell a project's Studio to re-read its snapshot."""

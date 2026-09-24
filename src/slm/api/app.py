@@ -13,9 +13,11 @@ from slm.agents import actions  # noqa: F401  (registers agent job handlers)
 from slm.api import routes_agents, routes_feedback, routes_projects, routes_studio, routes_system
 from slm.config import PROJECT_ROOT
 from slm.db import engine
+from slm.events import shutting_down
+from slm.inference.engine import engine as infer
 from slm.train import jobs  # noqa: F401  (registers training job handlers)
 from slm.train.worker import worker
-from slm.tuner.session import on_job_finished
+from slm.tuner.session import on_job_finished, tuner
 
 WEB_DIST = PROJECT_ROOT / "web" / "dist"
 
@@ -26,6 +28,15 @@ async def lifespan(app: FastAPI):
     worker.on_finish(on_job_finished)  # finished long jobs wake the Tuner
     worker.start()
     yield
+    shutdown_services()
+
+
+def shutdown_services() -> None:
+    """Stop our threads in an order that lets the process exit promptly and cleanly: blocking waits
+    return, the Tuner's tool pool drains, and the MLX thread is torn down before the interpreter."""
+    shutting_down.set()
+    tuner.shutdown()
+    infer.shutdown()
 
 
 def create_app() -> FastAPI:
