@@ -1,5 +1,7 @@
 """Playground generation, A/B comparison, human feedback and example review."""
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -7,7 +9,7 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import iterate_in_threadpool
 
 from slm.api.common import SessionDep, get_or_404, project_or_404, sse
-from slm.db import Checkpoint, Feedback, PreferencePair, Project, SftExample
+from slm.db import Checkpoint, Job, PreferencePair, Project, SftExample, awaiting_review, ready
 from slm.feedback import record_feedback
 from slm.inference.engine import EngineBusy, SamplingParams
 from slm.inference.engine import engine as infer
@@ -19,7 +21,7 @@ router = APIRouter(prefix="/api/projects/{project_id}", tags=["feedback"])
 class GenerateIn(BaseModel):
     messages: list[dict]
     params: SamplingParams = SamplingParams()
-    target: str = "current"  # current | base | checkpoint:<id>
+    target: str = "current"  # current | base | checkpoint:<id> | export:<job id>
 
 
 def _target(s: Session, p: Project, target: str) -> dict:
@@ -28,12 +30,21 @@ def _target(s: Session, p: Project, target: str) -> dict:
         if not path:
             raise HTTPException(409, "Base model not downloaded")
         return {"model_path": path, "adapter_path": None}
+    if target.startswith("export:"):
+        # The finished, exported model exactly as it sits on disk (fused and quantized).
+        job = s.get(Job, int(target.split(":", 1)[1]))
+        if job is None or job.project_id != p.id or job.kind != "export" or job.status != "succeeded":
+            raise HTTPException(404, "No such export in this project")
+        path = (job.result or {}).get("path")
+        if not path or not Path(path).is_dir():
+            raise HTTPException(409, f"The exported model is no longer at {path}")
+        return {"model_path": path, "adapter_path": None}
     if target.startswith("checkpoint:"):
         c = get_or_404(s, Checkpoint, int(target.split(":", 1)[1]))
         if c.fused_path:
             return {"model_path": c.fused_path, "adapter_path": None}
         return {"model_path": c.base_model_path, "adapter_path": c.adapter_path}
-    path = p.current_model_path or manage.local_path_for(p.base_model or "")
+    path = manage.serving_path(p)
     if not path:
         raise HTTPException(409, "Download the project's base model first")
     return {"model_path": path, "adapter_path": p.current_adapter_path}
@@ -114,25 +125,14 @@ def submit_feedback(project_id: int, body: FeedbackIn, s: Session = SessionDep) 
         raise HTTPException(422, str(e)) from e
 
 
-@router.get("/feedback")
-def list_feedback(project_id: int, limit: int = 50, s: Session = SessionDep) -> list[dict]:
-    rows = s.exec(
-        select(Feedback).where(Feedback.project_id == project_id).order_by(Feedback.id.desc()).limit(min(limit, 500))
-    ).all()
-    return [r.model_dump(mode="json") for r in rows]
-
-
 @router.get("/examples")
 def list_examples(project_id: int, status: str = "pending", s: Session = SessionDep) -> dict:
     """status: pending (awaiting review) | ready (approved, untrained) | all"""
     q_pairs = select(PreferencePair).where(PreferencePair.project_id == project_id)
     q_sft = select(SftExample).where(SftExample.project_id == project_id)
-    if status == "pending":
-        q_pairs = q_pairs.where(PreferencePair.approved == False)  # noqa: E712
-        q_sft = q_sft.where(SftExample.approved == False)  # noqa: E712
-    elif status == "ready":
-        q_pairs = q_pairs.where(PreferencePair.approved == True, PreferencePair.used_in_job_id == None)  # noqa: E711,E712
-        q_sft = q_sft.where(SftExample.approved == True, SftExample.used_in_job_id == None)  # noqa: E711,E712
+    if status in ("pending", "ready"):
+        filters = awaiting_review if status == "pending" else ready
+        q_pairs, q_sft = q_pairs.where(*filters(PreferencePair)), q_sft.where(*filters(SftExample))
     return {
         "pairs": [
             r.model_dump(mode="json") for r in s.exec(q_pairs.order_by(PreferencePair.id.desc()).limit(500)).all()
@@ -163,34 +163,3 @@ def review_examples(project_id: int, body: ReviewIn, s: Session = SessionDep) ->
             n += 1
     s.commit()
     return {"updated": n}
-
-
-class PairEdit(BaseModel):
-    prompt: str | None = None
-    chosen: str | None = None
-    rejected: str | None = None
-
-
-@router.patch("/examples/pairs/{pair_id}")
-def edit_pair(project_id: int, pair_id: int, body: PairEdit, s: Session = SessionDep) -> dict:
-    row = get_or_404(s, PreferencePair, pair_id)
-    for k, v in body.model_dump(exclude_none=True).items():
-        setattr(row, k, v)
-    s.add(row)
-    s.commit()
-    s.refresh(row)
-    return row.model_dump(mode="json")
-
-
-class SftEdit(BaseModel):
-    messages: list[dict]
-
-
-@router.patch("/examples/sft/{example_id}")
-def edit_sft(project_id: int, example_id: int, body: SftEdit, s: Session = SessionDep) -> dict:
-    row = get_or_404(s, SftExample, example_id)
-    row.messages = body.messages
-    s.add(row)
-    s.commit()
-    s.refresh(row)
-    return row.model_dump(mode="json")

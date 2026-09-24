@@ -5,16 +5,17 @@ at once would compete for it and likely fail. Everything else queues. Downloads,
 agent turns run alongside.
 """
 
+from pathlib import Path
+
 from sqlmodel import Session, select
 
 from slm import hardware
-from slm.db import Job, Metric, Project, StudioState, engine
-from slm.train.worker import GPU_KINDS
+from slm.db import Job, Metric, Project, StudioState, engine, studio_state
+from slm.train.worker import GPU_KINDS, worker
 
 JOB_LABEL = {
     "sft": "training",
     "dpo": "preference training",
-    "fuse": "merging adapters",
     "export": "exporting",
     "download": "downloading a model",
     "import_dataset": "importing data",
@@ -43,6 +44,20 @@ def _progress(s: Session, job: Job) -> dict:
     return out
 
 
+def export_jobs(s: Session, project_id: int | None = None) -> list[Job]:
+    """Succeeded exports, newest first (all projects, or one)."""
+    q = select(Job).where(Job.kind == "export", Job.status == "succeeded")
+    if project_id is not None:
+        q = q.where(Job.project_id == project_id)
+    return list(s.exec(q.order_by(Job.id.desc())).all())
+
+
+def on_disk(job: Job) -> bool:
+    """An export's folder may have been moved or deleted since."""
+    path = (job.result or {}).get("path")
+    return bool(path) and Path(path).is_dir()
+
+
 def overview() -> dict:
     from slm.tuner.session import tuner
 
@@ -54,6 +69,9 @@ def overview() -> dict:
         gpu_running = next((j for j in active if j.kind in GPU_KINDS and j.status == "running"), None)
         gpu_queue = [j for j in active if j.kind in GPU_KINDS and j.status == "queued"]
         names = {p.id: p.name for p in projects}
+        models: dict[int, int] = {}  # project → exported models still on disk
+        for j in export_jobs(s):
+            models[j.project_id] = models.get(j.project_id, 0) + on_disk(j)
 
         def brief(j: Job) -> dict:
             out = {"job_id": j.id, "project_id": j.project_id, "project": names.get(j.project_id), "kind": j.kind,
@@ -74,6 +92,8 @@ def overview() -> dict:
                 state = "queued"
             elif tuner.is_busy(p.id):
                 state = "thinking"
+            elif st and st.pending_action:
+                state = "waiting"  # a run is proposed and only the user can start it
             elif st and st.completed:
                 state = "done"
             elif st and not st.autopilot:
@@ -85,9 +105,11 @@ def overview() -> dict:
                 "name": p.name,
                 "goal": p.goal,
                 "stage": st.stage if st else "goal",
-                "autopilot": st.autopilot if st else True,
+                "autopilot": st.autopilot if st else False,
                 "completed": st.completed if st else False,
                 "state": state,
+                "awaiting": (st.pending_action or {}).get("title") if st else None,
+                "models": models.get(p.id, 0),
                 "created_at": p.created_at.isoformat(),
             }
             if running:
@@ -119,13 +141,16 @@ def overview() -> dict:
 
 def stop_project(project_id: int, cancel_jobs: bool = True) -> dict:
     """Pause a project's autopilot and, optionally, cancel its queued and running jobs."""
-    from slm.train.worker import worker
+    from slm.tuner.session import tuner
 
+    tuner.halt(project_id)  # first, so the agent can't start anything new while we cancel
     cancelled = []
     with Session(engine()) as s:
-        st = s.get(StudioState, project_id) or StudioState(project_id=project_id)
+        st = studio_state(s, project_id)
         st.autopilot = False
         st.stalled_nudges = 0
+        if cancel_jobs:
+            st.pending_action = {}  # a stopped project shouldn't keep a run waiting to be confirmed
         s.add(st)
         s.commit()
         jobs = s.exec(select(Job).where(Job.project_id == project_id, Job.status.in_(["running", "queued"]))).all()
@@ -140,8 +165,9 @@ def stop_project(project_id: int, cancel_jobs: bool = True) -> dict:
 def resume_project(project_id: int) -> dict:
     from slm.tuner.session import tuner
 
+    tuner.unhalt(project_id)
     with Session(engine()) as s:
-        st = s.get(StudioState, project_id) or StudioState(project_id=project_id)
+        st = studio_state(s, project_id)
         st.autopilot, st.completed, st.stalled_nudges = True, False, 0
         s.add(st)
         s.commit()

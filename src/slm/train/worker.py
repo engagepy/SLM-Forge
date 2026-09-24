@@ -17,9 +17,9 @@ from slm.config import get_settings
 from slm.db import Job, Metric, engine, now
 from slm.events import bus
 from slm.inference.engine import engine as inference_engine
-from slm.train.runner import Cancelled, ParsedMetric
+from slm.train.runner import Cancelled, ParsedMetric, tail
 
-GPU_KINDS = {"sft", "dpo", "fuse", "export"}
+GPU_KINDS = {"sft", "dpo", "export"}
 AGENT_KINDS = {"agent_scout", "agent_prep", "agent_observer", "synthesize"}
 
 
@@ -213,6 +213,5 @@ worker = JobWorker()
 
 
 def log_tail(job: Job, n: int = 200) -> str:
-    from slm.train.runner import tail
 
     return tail(Path(job.log_path), n) if job.log_path else ""

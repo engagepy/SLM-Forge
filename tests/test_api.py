@@ -1,17 +1,8 @@
 import json
 
-import pytest
-from fastapi.testclient import TestClient
 from sqlmodel import select
 
-from slm.api.app import app
 from slm.db import Job, PreferencePair, SftExample
-
-
-@pytest.fixture
-def client():
-    # No `with` block: lifespan (and so the background worker) doesn't start; jobs just queue.
-    return TestClient(app)
 
 
 def _project(client, **kw) -> int:

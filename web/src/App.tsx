@@ -4,6 +4,7 @@ import { NavLink, Route, Routes, useMatch, useParams } from "react-router";
 
 import { api, type Project } from "./api";
 import { useJobsFeed, useOverview, useProjectFeed, useSystem } from "./hooks";
+import SessionsSidebar from "./components/SessionsSidebar";
 import { Badge, cx, Spinner } from "./ui";
 
 // Route-level code splitting: charting code only loads with the training view.
@@ -17,18 +18,30 @@ const OverviewPage = lazy(() => import("./pages/Overview"));
 const Playground = lazy(() => import("./pages/Playground"));
 const Studio = lazy(() => import("./pages/Studio"));
 const TrainPage = lazy(() => import("./pages/Train"));
+const TryModel = lazy(() => import("./pages/TryModel"));
 
 export default function App() {
   useJobsFeed();
   return (
     <Suspense fallback={<Spinner className="m-6" />}>
       <Routes>
-        <Route path="/" element={<Home />} />
-        {/* The Studio is the main experience: full window, no sidebar. */}
-        <Route path="/p/:projectId" element={<Studio />} />
+        {/* Home and the Studio share the sessions sidebar, so running work is always visible. */}
+        <Route path="/" element={<WithSessions><Home /></WithSessions>} />
+        <Route path="/p/:projectId" element={<WithSessions><Studio /></WithSessions>} />
+        {/* The finished, exported model: where a project ends up. */}
+        <Route path="/p/:projectId/try" element={<WithSessions><TryModel /></WithSessions>} />
         <Route path="/p/:projectId/*" element={<AdvancedLayout />} />
       </Routes>
     </Suspense>
+  );
+}
+
+function WithSessions({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-full">
+      <SessionsSidebar />
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
   );
 }
 
@@ -179,7 +192,7 @@ function StatusBar() {
   );
 }
 
-export function shortPath(p: string) {
+function shortPath(p: string) {
   const m = p.match(/models--([^/]+)--([^/]+)/);
   if (m) return `${m[1]}/${m[2]}`;
   const parts = p.split("/").filter(Boolean);

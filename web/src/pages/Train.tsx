@@ -2,12 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { api, fmt, type DatasetVersion, type Job, type MemoryEstimate, type Preset, type TrainConfig } from "../api";
+import { api, fmt, isActive, type DatasetVersion, type Job, type MemoryEstimate, type Preset, type TrainConfig } from "../api";
 import { MetricChart } from "../components/Charts";
 import JobLog from "../components/JobLog";
 import TrainControls from "../components/TrainControls";
-import { useLiveJob, useOverview, useProjectId } from "../hooks";
-import { Badge, Button, Card, cx, Empty, ErrorNote, Field, MemoryBar, Select, Stat, StatusBadge } from "../ui";
+import { runProgress, useLiveJob, useOverview, useProjectId } from "../hooks";
+import { Badge, Button, Card, cx, Empty, ErrorNote, Field, MemoryBar, ProgressBar, Select, Stat, StatusBadge } from "../ui";
 
 export default function TrainPage() {
   const projectId = useProjectId();
@@ -247,7 +247,8 @@ function Launcher({ projectId }: { projectId: number }) {
 }
 
 function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
-  const { job, metrics, log, progress } = useLiveJob(jobId);
+  const live = useLiveJob(jobId);
+  const { job, metrics, log } = live;
   const qc = useQueryClient();
   const cancel = useMutation({
     mutationFn: () => api.post(`/api/jobs/${jobId}/cancel`),
@@ -255,18 +256,11 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
   });
   if (!job) return null;
 
-  const train = metrics.filter((m) => m.split === "train");
+  const { current, total, pct, minutesLeft, last, lastVal, warnings } = runProgress(live);
   const val = metrics.filter((m) => m.split === "val");
-  const last = train.at(-1)?.values;
-  const lastVal = val.at(-1)?.values;
   const isDpo = job.kind === "dpo";
-  const total = progress?.total || (job.result.total_iters as number) || 0;
-  const current = progress?.current ?? train.at(-1)?.iteration ?? 0;
-  const pct = total ? Math.min(100, (current / total) * 100) : 0;
-  const itPerSec = last?.it_per_sec;
-  const eta = itPerSec && total > current ? (total - current) / itPerSec : null;
   const cfg = (job.config.train ?? {}) as Partial<TrainConfig>;
-  const active = job.status === "running" || job.status === "queued";
+  const active = isActive(job);
 
   return (
     <div className="space-y-5">
@@ -291,7 +285,7 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
       </div>
 
       {job.status === "failed" && <ErrorNote error={job.error} />}
-      {((job.result.warnings as { code: string; message: string }[] | undefined) ?? []).map((w) => (
+      {warnings.map((w) => (
         <div key={w.code} className="rounded-lg border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-warn">
           <span className="font-semibold">{w.code.replace("_", " ")}:</span> {w.message}
         </div>
@@ -303,11 +297,9 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
             iteration {current} / {total || "?"}
             {job.result.epochs != null && ` · ${String(job.result.epochs)} epochs`}
           </span>
-          {eta != null && active && <span className="num">~{Math.ceil(eta / 60)} min left</span>}
+          {minutesLeft != null && active && <span className="num">~{minutesLeft} min left</span>}
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-panel-2">
-          <div className={cx("h-full transition-all", job.status === "failed" ? "bg-bad" : "bg-accent")} style={{ width: `${job.status === "succeeded" ? 100 : pct}%` }} />
-        </div>
+        <ProgressBar pct={pct} failed={job.status === "failed"} />
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">

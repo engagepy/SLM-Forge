@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from slm.agents.base import create_proposal, event_logger, pending_actions, project_context
 from slm.agents.provider import get_provider
-from slm.db import Checkpoint, Feedback, Job, Metric, PreferencePair, SftExample, engine
+from slm.db import Checkpoint, Feedback, Job, Metric, PreferencePair, SftExample, awaiting_review, count, engine, ready
 
 AGENT = "observer"
 DPO_MIN_PAIRS = 8
@@ -55,28 +55,12 @@ def gather_state(project_id: int) -> dict:
             select(Feedback).where(Feedback.project_id == project_id, Feedback.observed == False)  # noqa: E712
         ).all()
         pairs_ready = s.exec(
-            select(PreferencePair).where(
-                PreferencePair.project_id == project_id,
-                PreferencePair.approved == True,  # noqa: E712
-                PreferencePair.used_in_job_id == None,  # noqa: E711
-            )
+            select(PreferencePair).where(PreferencePair.project_id == project_id, *ready(PreferencePair))
         ).all()
-        pending_review = len(
-            s.exec(
-                select(PreferencePair.id).where(
-                    PreferencePair.project_id == project_id, PreferencePair.approved == False
-                )  # noqa: E712
-            ).all()
-        ) + len(
-            s.exec(select(SftExample.id).where(SftExample.project_id == project_id, SftExample.approved == False)).all()  # noqa: E712
+        pending_review = sum(
+            count(s, m, m.project_id == project_id, *awaiting_review(m)) for m in (PreferencePair, SftExample)
         )
-        sft_ready = s.exec(
-            select(SftExample).where(
-                SftExample.project_id == project_id,
-                SftExample.approved == True,  # noqa: E712
-                SftExample.used_in_job_id == None,  # noqa: E711
-            )
-        ).all()
+        sft_ready = s.exec(select(SftExample).where(SftExample.project_id == project_id, *ready(SftExample))).all()
         ckpts = s.exec(select(Checkpoint).where(Checkpoint.project_id == project_id).order_by(Checkpoint.id)).all()
         last_train_job = s.exec(
             select(Job)

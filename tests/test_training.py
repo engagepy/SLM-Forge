@@ -175,3 +175,13 @@ def test_export_lineage_is_only_the_served_models_ancestry(session, project):
     session.add(project)
     session.commit()
     assert [c.id for c in served_ancestry(session, project)] == [fresh.id, dpo.id]
+
+
+def test_an_export_never_overwrites_an_earlier_one(tmp_path):
+    # Regression: re-exporting under the same name rmtree'd the earlier model.
+    from slm.export.fuse import unique_dest
+
+    assert unique_dest(tmp_path, "chef") == tmp_path / "chef"
+    (tmp_path / "chef").mkdir()
+    (tmp_path / "chef-2").mkdir()
+    assert unique_dest(tmp_path, "chef") == tmp_path / "chef-3"

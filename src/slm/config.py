@@ -34,10 +34,6 @@ class Settings(BaseSettings):
         return self.workspace / "slm.db"
 
     @property
-    def models_dir(self) -> Path:
-        return self.workspace / "models"
-
-    @property
     def datasets_dir(self) -> Path:
         return self.workspace / "datasets"
 
@@ -56,7 +52,6 @@ class Settings(BaseSettings):
     def ensure_dirs(self) -> None:
         for d in (
             self.workspace,
-            self.models_dir,
             self.datasets_dir,
             self.runs_dir,
             self.exports_dir,

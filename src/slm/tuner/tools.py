@@ -1,24 +1,28 @@
 """The Tuner's hands: every action it can take on the platform.
 
 Each tool wraps existing, tested backend code and returns a compact dict the agent can reason
-about. Quick jobs (dataset import, preparation, synthesis) are awaited inside the tool. Long ones
-(downloads, training, export) return a job id at once; the Tuner is woken when they finish.
+about. Quick jobs (dataset import, preparation, synthesis) are awaited inside the tool. Runs (downloads,
+training, export) are only proposed: the user confirms them (tuner/confirm.py), and the Tuner is
+woken when they're confirmed and again when they finish.
 """
 
 import asyncio
 import functools
+import random
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 from agents import RunContextWrapper, function_tool
 from sqlalchemy.orm.attributes import flag_modified
-from sqlmodel import Session, func, select
+from sqlmodel import Session, select
 
-from slm import hardware
+from slm import hardware, profile
+from slm.agents.provider import get_provider
 from slm.data import format as fmt
 from slm.data import scout_tools
-from slm.data.pipeline import preview_mapping
+from slm.data.pipeline import build_feedback_version, preview_mapping
 from slm.db import (
     Checkpoint,
     Dataset,
@@ -29,14 +33,25 @@ from slm.db import (
     PreferencePair,
     Project,
     SftExample,
-    StudioState,
+    awaiting_review,
+    count,
     engine,
     now,
+    ready,
+    studio_state,
 )
-from slm.events import bus
+from slm.db import (
+    count as count_rows,
+)
+from slm.events import canvas_changed
+from slm.feedback import record_feedback
+from slm.inference.engine import EngineBusy, SamplingParams
+from slm.inference.engine import engine as infer
 from slm.models import hub, manage
+from slm.sessions import overview, resume_project, stop_project
 from slm.train.config import TrainConfig, preset
 from slm.train.worker import worker
+from slm.tuner import confirm
 
 STAGES = ("goal", "model", "data", "train", "evaluate", "refine", "export")
 # Jobs the Tuner starts and does not wait for: it gets woken when they finish.
@@ -76,24 +91,39 @@ def _clip(v, n: int = 300):
     return v
 
 
-def canvas_changed(project_id: int) -> None:
-    bus.publish(f"tuner:{project_id}", {"type": "canvas"})
-
-
-def _studio(s: Session, project_id: int) -> StudioState:
-    st = s.get(StudioState, project_id)
-    if st is None:
-        st = StudioState(project_id=project_id)
-        s.add(st)
-        s.commit()
-        s.refresh(st)
-    return st
-
-
 def _submit(kind: str, config: dict, project_id: int) -> Job:
+    from slm.tuner.session import tuner
+
+    if tuner.is_halted(project_id):
+        raise ValueError(confirm.STOPPED)
     job = worker.submit(kind, config | {"origin": "tuner", "notify": kind in NOTIFY_KINDS}, project_id)
     canvas_changed(project_id)
     return job
+
+
+# Tools that spend (API tokens, downloads, GPU time). Inside a round the user set in motion they run
+# freely, because reaching the goal is the mandate. Outside one (the project is finished, or autopilot
+# is paused) each call is a proposal the user confirms; confirming grants that one call.
+MAX_UNREVIEWED = 150  # synthetic examples nobody has looked at yet: review before writing more
+
+
+def _spend(pid: int, tool_name: str, kind: str, title: str, reason: str, details: dict, args: dict) -> dict | None:
+    """None: go ahead. A dict: the proposal to return instead (the user decides)."""
+    if confirm.take_grant(pid, tool_name):
+        return None
+    if confirm.pending(pid):
+        raise ValueError(
+            "A proposal is already waiting for the user's decision. Don't start other costly work meanwhile: "
+            "answer them, and wait for their go-ahead."
+        )
+    if not confirm.needs_go_ahead(pid):
+        return None
+    if not reason.strip():
+        raise ValueError(
+            f"{tool_name} costs something and the user hasn't set a round in motion, so it needs their "
+            "go-ahead: call it again with a plain-words `reason` for the card (what it's for, what it costs)."
+        )
+    return confirm.propose(pid, kind, title, reason, details, {"tool": tool_name, "args": args})
 
 
 def _wait(job_id: int, timeout: float) -> Job:
@@ -105,10 +135,6 @@ def _wait(job_id: int, timeout: float) -> Job:
             if job.status in ("succeeded", "failed", "cancelled") or time.time() > deadline:
                 return job
         time.sleep(1)
-
-
-def _model_path(project: Project) -> str | None:
-    return project.current_model_path or (manage.local_path_for(project.base_model) if project.base_model else None)
 
 
 def _job_brief(j: Job) -> dict:
@@ -144,34 +170,22 @@ def get_status(ctx: Ctx) -> dict:
     hw = hardware.detect()
     with Session(engine()) as s:
         p = s.get(Project, pid)
-        st = _studio(s, pid)
+        st = studio_state(s, pid)
         datasets = s.exec(select(Dataset).where(Dataset.project_id == pid)).all()
         versions = s.exec(select(DatasetVersion).where(DatasetVersion.project_id == pid)).all()
         jobs = s.exec(select(Job).where(Job.project_id == pid).order_by(Job.id.desc()).limit(8)).all()
         ckpts = s.exec(select(Checkpoint).where(Checkpoint.project_id == pid).order_by(Checkpoint.id)).all()
         job_results = {j.id: j.result for j in s.exec(select(Job).where(Job.id.in_([c.job_id for c in ckpts]))).all()}
 
-        def count(model, *where) -> int:
-            return s.exec(select(func.count()).select_from(model).where(*where)).one()
-
         feedback = {
-            "judgements": count(Feedback, Feedback.project_id == pid),
+            "judgements": count(s, Feedback, Feedback.project_id == pid),
             "preference_pairs_ready": count(
-                PreferencePair,
-                PreferencePair.project_id == pid,
-                PreferencePair.approved == True,  # noqa: E712
-                PreferencePair.used_in_job_id == None,  # noqa: E711
+                s, PreferencePair, PreferencePair.project_id == pid, *ready(PreferencePair)
             ),
-            "sft_examples_ready": count(
-                SftExample,
-                SftExample.project_id == pid,
-                SftExample.approved == True,  # noqa: E712
-                SftExample.used_in_job_id == None,  # noqa: E711
+            "sft_examples_ready": count(s, SftExample, SftExample.project_id == pid, *ready(SftExample)),
+            "synthetic_awaiting_review": sum(
+                count(s, m, m.project_id == pid, *awaiting_review(m)) for m in (PreferencePair, SftExample)
             ),
-            "synthetic_awaiting_review": count(
-                PreferencePair, PreferencePair.project_id == pid, PreferencePair.approved == False
-            )  # noqa: E712
-            + count(SftExample, SftExample.project_id == pid, SftExample.approved == False),  # noqa: E712
             "comparisons_waiting_for_user": sum(1 for c in st.comparisons if c.get("status") == "pending"),
         }
         exports = s.exec(
@@ -189,6 +203,7 @@ def get_status(ctx: Ctx) -> dict:
                 {k: m[k] for k in ("repo_id", "params_b", "bits", "fit")} for m in manage.local_models()
             ],
             "canvas_stage": st.stage,
+            "waiting_for_user_to_confirm": (st.pending_action or {}).get("title"),
             "base_model": {
                 "repo_id": p.base_model,
                 "downloaded": bool(p.base_model and manage.local_path_for(p.base_model)),
@@ -252,7 +267,7 @@ def set_stage(ctx: Ctx, stage: str, note: str) -> str:
     if stage not in STAGES:
         raise ValueError(f"stage must be one of {STAGES}")
     with Session(engine()) as s:
-        st = _studio(s, ctx.context.project_id)
+        st = studio_state(s, ctx.context.project_id)
         st.stage, st.note, st.updated_at = stage, note[:200], now()
         s.add(st)
         s.commit()
@@ -317,27 +332,21 @@ def find_base_models(ctx: Ctx, query: str, max_params_billion: float = 3.0) -> l
 
 
 @tool
-def choose_base_model(ctx: Ctx, repo_id: str) -> dict:
-    """Set the project's base model and download it (runs in the background; you'll be told when
-    it's done). Only possible before any training has happened."""
+def choose_base_model(ctx: Ctx, repo_id: str, reason: str) -> dict:
+    """Propose a base model. The user confirms it on a card; only then is it set (and downloaded
+    if it isn't on this Mac yet). reason: one or two plain sentences on why this model, shown on
+    the card. Only possible before any training has happened."""
     pid = ctx.context.project_id
     with Session(engine()) as s:
-        p = s.get(Project, pid)
-        if p.base_model != repo_id and s.exec(select(Checkpoint).where(Checkpoint.project_id == pid)).first():
-            raise ValueError("Training has already started on another base model; start a new project to switch.")
-        p.base_model = repo_id
-        p.current_adapter_path = None
-        local = manage.local_path_for(repo_id)
-        if local is None and (rec := manage.register_local(repo_id)) is not None:
-            local = rec.local_path  # already in the HF cache: no download needed
-        p.current_model_path = local
-        s.add(p)
-        s.commit()
-    canvas_changed(pid)
-    if local:
-        return {"status": "already downloaded", "repo_id": repo_id}
-    job = _submit("download", {"repo_id": repo_id}, pid)
-    return {"status": "downloading", "job_id": job.id, "note": "You'll receive a job update when it finishes."}
+        if confirm.base_model_locked(s, s.get(Project, pid), repo_id):
+            raise ValueError(confirm.SWITCH_BASE)
+    on_mac = manage.local_path_for(repo_id) is not None or manage.register_local(repo_id) is not None
+    info = next((m for m in manage.local_models() if m["repo_id"] == repo_id), None) if on_mac else None
+    details = {"repo_id": repo_id, "on_this_mac": on_mac}
+    if info:
+        details |= {"params_b": info["params_b"], "bits": info["bits"]}
+    title = f"Use {repo_id.split('/')[-1]}" + ("" if on_mac else " (download it)")
+    return confirm.propose(pid, "model", title, reason, details, {"repo_id": repo_id})
 
 
 # ── data ────────────────────────────────────────────────────────────────────
@@ -360,10 +369,17 @@ def preview_dataset(ctx: Ctx, repo_id: str) -> dict:
 
 @tool
 def import_dataset(
-    ctx: Ctx, repo_id: str, max_rows: int = 3000, config: str | None = None, split: str = "train"
+    ctx: Ctx, repo_id: str, max_rows: int = 3000, config: str | None = None, split: str = "train", reason: str = ""
 ) -> dict:
     """Import rows from a Hugging Face dataset into the project. A few thousand good rows is plenty
-    for a small model. Waits for the import to finish."""
+    for a small model. Waits for the import to finish. Outside a round the user set in motion this
+    is a proposal they confirm first; give a plain-words `reason` for the card."""
+    args = {"repo_id": repo_id, "max_rows": max_rows, "config": config, "split": split}
+    if proposal := _spend(
+        ctx.context.project_id, "import_dataset", "import", f"Import {repo_id}", reason,
+        {"repo_id": repo_id, "max_rows": max_rows}, args,
+    ):  # fmt: skip
+        return proposal
     job = _submit(
         "import_dataset",
         {"repo_id": repo_id, "max_rows": max_rows, "config": config, "split": split},
@@ -477,10 +493,14 @@ def prepare_dataset(
 # ── training ────────────────────────────────────────────────────────────────
 
 
-def _config(
-    project: Project, mode: str, preset_name: str, version: DatasetVersion | None, overrides: dict
-) -> tuple[TrainConfig, dict]:
-    path = _model_path(project)
+def _plan(
+    pid: int, mode: str, preset_name: str, dataset_version_id: int | None, **overrides
+) -> tuple[TrainConfig, dict, DatasetVersion | None]:
+    """The training config for these settings, and what the Tuner needs to know about it."""
+    with Session(engine()) as s:
+        project = s.get(Project, pid)
+        version = s.get(DatasetVersion, dataset_version_id) if dataset_version_id else None
+    path = manage.serving_path(project)
     if not path:
         raise ValueError("Download a base model first")
     shape = manage.read_shape(path)
@@ -506,7 +526,7 @@ def _config(
             "epochs": cfg.epochs_for(version.n_train),
             "train_examples": version.n_train,
         }
-    return cfg, info
+    return cfg, info, version
 
 
 @tool
@@ -526,19 +546,11 @@ def plan_training(
     iterations and epochs, and the key settings. mode: sft | dpo. preset_name: safe | balanced | quality.
     Guidance: for SFT, learning_rate 1e-4 is a good default (2e-4 has diverged on these models);
     1–3 epochs; max_seq_length should cover the data's p95 tokens. For DPO use lr ~5e-6, 1–2 epochs."""
-    pid = ctx.context.project_id
-    with Session(engine()) as s:
-        project = s.get(Project, pid)
-        version = s.get(DatasetVersion, dataset_version_id) if dataset_version_id else None
-    overrides = dict(
-        learning_rate=learning_rate,
-        epochs=epochs,
-        iters=iters,
-        lora_rank=lora_rank,
-        max_seq_length=max_seq_length,
-        batch_size=batch_size,
-    )
-    _, info = _config(project, mode, preset_name, version, overrides)
+    _, info, _ = _plan(
+        ctx.context.project_id, mode, preset_name, dataset_version_id,
+        learning_rate=learning_rate, epochs=epochs, iters=iters, lora_rank=lora_rank,
+        max_seq_length=max_seq_length, batch_size=batch_size,
+    )  # fmt: skip
     return info
 
 
@@ -555,47 +567,39 @@ def start_training(
     max_seq_length: int | None = None,
     batch_size: int | None = None,
     start_from: str = "current",
+    reason: str = "",
 ) -> dict:
-    """Start a training run in the background (you'll be told when it finishes; progress shows live
-    on the canvas). mode sft needs dataset_version_id; mode dpo trains on the user's feedback pairs
-    (needs at least 3). start_from: current (continue from the served model) | base (fresh run).
-    Confirm with the user before starting, since runs take minutes."""
+    """Propose a training run. It starts only when the user confirms it on a card; you'll be told
+    when they do, and again when it finishes (progress shows live on the canvas). mode sft needs
+    dataset_version_id; mode dpo trains on the feedback pairs (needs at least 3). start_from:
+    current (continue from the served model) | base (fresh run). reason: one or two plain
+    sentences, shown on the card, on what this run should teach the model and roughly how long it takes."""
     pid = ctx.context.project_id
     if mode not in ("sft", "dpo"):
         raise ValueError("mode must be sft or dpo")
-    with Session(engine()) as s:
-        project = s.get(Project, pid)
-        version = s.get(DatasetVersion, dataset_version_id) if dataset_version_id else None
+    if mode == "sft" and not dataset_version_id:
+        raise ValueError("SFT needs dataset_version_id (prepare a dataset first)")
+    cfg, info, version = _plan(
+        pid, mode, preset_name, dataset_version_id,
+        learning_rate=learning_rate, epochs=epochs, iters=iters, lora_rank=lora_rank,
+        max_seq_length=max_seq_length, batch_size=batch_size,
+    )  # fmt: skip
     if mode == "sft" and version is None:
         raise ValueError("SFT needs dataset_version_id (prepare a dataset first)")
-    overrides = dict(
-        learning_rate=learning_rate,
-        epochs=epochs,
-        iters=iters,
-        lora_rank=lora_rank,
-        max_seq_length=max_seq_length,
-        batch_size=batch_size,
-    )
-    cfg, info = _config(project, mode, preset_name, version, overrides)
     if not info["fits"]:
         return {"status": "won't fit", **info, "hint": "use preset safe, lower batch_size or max_seq_length"}
     config = {"train": cfg.model_dump(), "start_from": start_from}
     if version:
         config["dataset_version_id"] = version.id
-    job = _submit(mode, config, pid)
-    from slm.sessions import overview
-
-    gpu = overview()["capacity"]
-    ahead = gpu["gpu_running"]
-    if ahead and ahead["job_id"] != job.id:
-        info["queued_behind"] = ahead | {"waiting_before_this": len(gpu["gpu_queue"]) - 1}
-    with Session(engine()) as s:
-        st = _studio(s, pid)
-        st.stage = "train" if mode == "sft" else "refine"
-        s.add(st)
-        s.commit()
-    canvas_changed(pid)
-    return {"status": "started", "job_id": job.id, **info}
+    ahead = overview()["capacity"]["gpu_running"]
+    if ahead:
+        info["would_queue_behind"] = ahead
+    title = (
+        f"Train on {version.n_train} examples ({info['iterations']} steps)"
+        if mode == "sft" and version
+        else "Refine with a preference round (DPO)"
+    )
+    return confirm.propose(pid, mode, title, reason, info, {"config": config}) | info
 
 
 @tool
@@ -632,10 +636,7 @@ def cancel_job(ctx: Ctx, job_id: int) -> str:
 def _generate(
     project: Project, prompt: str, temperature: float, max_tokens: int, target: str = "current", seed: int | None = None
 ) -> dict:
-    from slm.inference.engine import EngineBusy, SamplingParams
-    from slm.inference.engine import engine as infer
-
-    path = _model_path(project)
+    path = manage.serving_path(project)
     if not path:
         raise ValueError("No model downloaded yet")
     where = {"model_path": path, "adapter_path": project.current_adapter_path}
@@ -653,6 +654,17 @@ def _generate(
     return {"text": text.strip(), "tokens_per_sec": stats.get("tokens_per_sec"), "finish": stats.get("finish_reason")}
 
 
+# Two samplings of the same prompt: a steady one and an adventurous one, so they differ enough to compare.
+PARAMS_A, PARAMS_B = {"temperature": 0.7}, {"temperature": 1.05}
+
+
+def _two_answers(project: Project, prompt: str, max_tokens: int) -> tuple[str, str]:
+    return tuple(
+        _generate(project, prompt, p["temperature"], max_tokens, seed=random.randint(0, 10**9))["text"]
+        for p in (PARAMS_A, PARAMS_B)
+    )
+
+
 @tool
 def try_model(
     ctx: Ctx, prompts: list[str], target: str = "current", temperature: float = 0.7, max_tokens: int = 300
@@ -668,7 +680,7 @@ def try_model(
         r = _generate(project, q, temperature, max_tokens, target)
         results.append({"prompt": q, "target": target, **r})
     with Session(engine()) as s:
-        st = _studio(s, pid)
+        st = studio_state(s, pid)
         st.samples = (results + list(st.samples))[:12]
         flag_modified(st, "samples")
         s.add(st)
@@ -682,29 +694,26 @@ def ask_user_to_compare(ctx: Ctx, prompts: list[str]) -> dict:
     """Put side-by-side A/B answers on the canvas for the *user* to judge. Only use this when the
     user has said they want to judge answers themselves; otherwise use ai_review_answers. You'll be
     told when they've finished."""
-    import random
-
     pid = ctx.context.project_id
     with Session(engine()) as s:
         project = s.get(Project, pid)
     items = []
     for q in prompts[:10]:
-        a = _generate(project, q, 0.7, 300, seed=random.randint(0, 10**9))
-        b = _generate(project, q, 1.05, 300, seed=random.randint(0, 10**9))
+        a, b = _two_answers(project, q, 300)
         items.append(
             {
                 "id": f"c{int(time.time() * 1000)}{len(items)}",
                 "prompt": q,
-                "a": a["text"],
-                "b": b["text"],
-                "params_a": {"temperature": 0.7},
-                "params_b": {"temperature": 1.05},
+                "a": a,
+                "b": b,
+                "params_a": PARAMS_A,
+                "params_b": PARAMS_B,
                 "status": "pending",
             }
         )
     identical = sum(1 for i in items if i["a"] == i["b"])
     with Session(engine()) as s:
-        st = _studio(s, pid)
+        st = studio_state(s, pid)
         st.comparisons = [dict(c) for c in st.comparisons if c.get("status") == "pending"] + items
         flag_modified(st, "comparisons")
         st.stage = "evaluate"
@@ -741,16 +750,34 @@ def feedback_summary(ctx: Ctx, limit: int = 15) -> dict:
 
 
 @tool
-def generate_synthetic_examples(ctx: Ctx, kind: str, count: int, focus: str) -> dict:
+def generate_synthetic_examples(ctx: Ctx, kind: str, count: int, focus: str, reason: str = "") -> dict:
     """Have the teacher model (GPT-6) write new training examples: kind "sft" (question + ideal
     answer) or "preference" (ideal vs. weak answer). Two uses:
     - no good public data: write a seed dataset from the goal and the user's example questions
       (100–200 sft examples with a focus covering the range of questions users will ask);
     - after feedback: target a weakness the user's critiques revealed.
-    Examples wait unapproved; spot-check them with review_synthetic_examples, then approve."""
-    job = _submit(
-        "synthesize", {"kind": kind, "count": max(1, min(count, 200)), "focus": focus}, ctx.context.project_id
-    )
+    Examples wait unapproved; spot-check them with review_synthetic_examples, then approve.
+    This costs API calls (one per example). Outside a round the user set in motion it's a proposal
+    they confirm first; give a plain-words `reason` for the card."""
+    pid = ctx.context.project_id
+    count = max(1, min(count, 200))
+    with Session(engine()) as s:
+        unreviewed = sum(
+            count_rows(s, m, m.project_id == pid, *awaiting_review(m)) for m in (PreferencePair, SftExample)
+        )
+    if unreviewed >= MAX_UNREVIEWED:
+        raise ValueError(
+            f"{unreviewed} synthetic examples are still waiting for review. Review and approve (or reject) "
+            "them with review_synthetic_examples before writing more."
+        )
+    args = {"kind": kind, "count": count, "focus": focus}
+    if proposal := _spend(
+        pid, "generate_synthetic_examples", "synthesize",
+        f"Write {count} {'preference pairs' if kind == 'preference' else 'training examples'}",
+        reason, {"kind": kind, "count": count, "focus": focus[:200]}, args,
+    ):  # fmt: skip
+        return proposal
+    job = _submit("synthesize", args, pid)
     job = _wait(job.id, 1800)
     return {"status": job.status, **(job.result or {}), "error": job.error or None}
 
@@ -789,25 +816,17 @@ def review_synthetic_examples(
                 changed += 1
         if approve_all:
             for model in (PreferencePair, SftExample):
-                for row in s.exec(select(model).where(model.project_id == pid, model.approved == False)).all():  # noqa: E712
+                for row in s.exec(select(model).where(model.project_id == pid, *awaiting_review(model))).all():
                     if (model, row.id) not in rejected:
                         row.approved = True
                         s.add(row)
                         changed += 1
         s.commit()
-        pairs = s.exec(
-            select(PreferencePair).where(PreferencePair.project_id == pid, PreferencePair.approved == False).limit(show)
-        ).all()  # noqa: E712
-        sft = s.exec(
-            select(SftExample).where(SftExample.project_id == pid, SftExample.approved == False).limit(show)
-        ).all()  # noqa: E712
-        pending = len(
-            s.exec(select(SftExample.id).where(SftExample.project_id == pid, SftExample.approved == False)).all()
-        ) + len(  # noqa: E712
-            s.exec(
-                select(PreferencePair.id).where(PreferencePair.project_id == pid, PreferencePair.approved == False)
-            ).all()  # noqa: E712
+        pairs, sft = (
+            s.exec(select(m).where(m.project_id == pid, *awaiting_review(m)).limit(show)).all()
+            for m in (PreferencePair, SftExample)
         )
+        pending = sum(count(s, m, m.project_id == pid, *awaiting_review(m)) for m in (PreferencePair, SftExample))
     canvas_changed(pid)
     return {
         "changed": changed,
@@ -829,12 +848,10 @@ def review_synthetic_examples(
 def build_dataset_from_examples(ctx: Ctx, max_seq_length: int = 1024) -> dict:
     """Turn every approved, not-yet-used SFT example (the user's rewritten answers plus approved
     synthetic examples) into a prepared dataset version you can train on."""
-    from slm.data.pipeline import build_feedback_version
-
     pid = ctx.context.project_id
     with Session(engine()) as s:
         project = s.get(Project, pid)
-    v = build_feedback_version(pid, model_path=_model_path(project), max_seq_length=max_seq_length)
+    v = build_feedback_version(pid, model_path=manage.serving_path(project), max_seq_length=max_seq_length)
     canvas_changed(pid)
     return {
         "status": "prepared",
@@ -864,25 +881,26 @@ JUDGE_SCHEMA = {
 
 
 @tool
-def ai_review_answers(ctx: Ctx, prompts: list[str]) -> dict:
+def ai_review_answers(ctx: Ctx, prompts: list[str], reason: str = "") -> dict:
     """Stand in for the human judge. For each prompt the local model writes two answers (A and B);
     GPT-6 picks the better one, writes the ideal answer and critiques the flaws. Each verdict
     becomes training signal automatically: a preference pair (better vs. worse, for DPO) and, when
     the answers were flawed, a corrected example (for SFT). Use 8–12 varied, realistic prompts
-    that did NOT come from the training data. Results show on the canvas."""
-    import random
-
-    from slm.agents.provider import get_provider
-    from slm.feedback import record_feedback
-
+    that did NOT come from the training data. Results show on the canvas.
+    This costs GPU time and API calls. Outside a round the user set in motion it's a proposal they
+    confirm first; give a plain-words `reason` for the card."""
     pid = ctx.context.project_id
+    if proposal := _spend(
+        pid, "ai_review_answers", "review", f"Have GPT-6 review {len(prompts[:12])} answers", reason,
+        {"prompts": len(prompts[:12])}, {"prompts": prompts[:12]},
+    ):  # fmt: skip
+        return proposal
     with Session(engine()) as s:
         project = s.get(Project, pid)
     judge = get_provider()
     verdicts = []
     for q in prompts[:12]:
-        a = _generate(project, q, 0.7, 350, seed=random.randint(0, 10**9))["text"]
-        b = _generate(project, q, 1.05, 350, seed=random.randint(0, 10**9))["text"]
+        a, b = _two_answers(project, q, 350)
         v = judge.json(
             JUDGE_SYSTEM,
             f"Goal: {project.goal}\nSystem prompt: {project.system_prompt or '(none)'}\n\nPrompt: {q}\n\n"
@@ -905,8 +923,8 @@ def ai_review_answers(ctx: Ctx, prompts: list[str]) -> dict:
             choice=choice,
             edited_answer=edited,
             critique=v.get("critique", "") or "reviewed by AI",
-            params_a={"temperature": 0.7},
-            params_b={"temperature": 1.05},
+            params_a=PARAMS_A,
+            params_b=PARAMS_B,
             model_ref="ai-judge",
         )
         verdicts.append(
@@ -925,15 +943,13 @@ def ai_review_answers(ctx: Ctx, prompts: list[str]) -> dict:
             }
         )
     with Session(engine()) as s:
-        st = _studio(s, pid)
+        st = studio_state(s, pid)
         st.comparisons = [dict(c) for c in st.comparisons][-20:] + verdicts
         flag_modified(st, "comparisons")
         st.stage = "refine"
         s.add(st)
         s.commit()
     canvas_changed(pid)
-    from collections import Counter
-
     return {
         "reviewed": len(verdicts),
         "verdicts": dict(Counter(v["choice"] for v in verdicts)),
@@ -946,10 +962,11 @@ def ai_review_answers(ctx: Ctx, prompts: list[str]) -> dict:
 @tool
 def finish_project(ctx: Ctx, summary: str) -> str:
     """Declare the work done, once the model is exported (or you've decided it can't get better).
-    Stops autopilot. summary: two or three sentences on what was built and how good it is."""
+    Stops autopilot until the user wants more: they can always keep improving the model later.
+    summary: two or three sentences on what was built and how good it is."""
     pid = ctx.context.project_id
     with Session(engine()) as s:
-        st = _studio(s, pid)
+        st = studio_state(s, pid)
         st.completed, st.stage, st.note = True, "export", summary[:200]
         s.add(st)
         s.commit()
@@ -966,8 +983,6 @@ def machine_overview(ctx: Ctx) -> dict:
     progress, minutes left), the queue of training runs waiting, and every project's state.
     Only one model trains at a time on this Mac; others queue. Check this before starting a
     training run, and tell the user if theirs will wait behind another project (and roughly how long)."""
-    from slm.sessions import overview
-
     data = overview()
     data["this_project_id"] = ctx.context.project_id
     return data
@@ -979,8 +994,6 @@ def manage_project(ctx: Ctx, project_id: int, action: str) -> dict:
     running job finishes), stop (pause and cancel its queued/running jobs, freeing the GPU), resume
     (turn its autopilot back on). Only act on another project when the user asks you to, e.g. to
     free the GPU for this one; explain what will happen first (a stopped training run is lost)."""
-    from slm.sessions import resume_project, stop_project
-
     if action == "resume":
         return resume_project(project_id)
     if action in ("pause", "stop"):
@@ -998,8 +1011,6 @@ def set_user_level(ctx: Ctx, level: str, evidence: str) -> dict:
     LoRA rank, learning-rate schedules or DPO β suggests expert; "what's a model?" suggests
     beginner. evidence: one short line saying why. It's remembered for all their future projects,
     and you'll adapt your explanations to it. Update it if new evidence contradicts it."""
-    from slm import profile
-
     p = profile.set_level(level, evidence)
     return {"level": p.level, "evidence": p.level_evidence}
 
@@ -1010,8 +1021,6 @@ def remember_about_user(ctx: Ctx, text: str, kind: str = "preference") -> dict:
     (e.g. "prefers the smallest model that works", "wants 4-bit exports", "likes to judge answers
     themselves"), fact (e.g. "teaches high-school physics"), or goal (e.g. "wants to ship models
     to an iPhone app"). Only things that will still be true next time; not project details."""
-    from slm import profile
-
     return profile.remember(text, kind, ctx.context.project_id)
 
 
@@ -1019,15 +1028,15 @@ def remember_about_user(ctx: Ctx, text: str, kind: str = "preference") -> dict:
 
 
 @tool
-def export_model(ctx: Ctx, name: str, quantize_bits: int | None = None) -> dict:
-    """Package the current model: fuse adapters, optionally quantize (4/6/8; skip if the base is
-    already quantized), and write a model card. Runs in the background."""
-    job = _submit(
-        "export",
-        {"name": name, "quantize_bits": quantize_bits, "sampling": {"temperature": 0.7, "top_p": 0.95}},
-        ctx.context.project_id,
-    )
-    return {"status": "exporting", "job_id": job.id}
+def export_model(ctx: Ctx, name: str, quantize_bits: int | None = None, reason: str = "") -> dict:
+    """Propose packaging the current model: fuse adapters, optionally quantize (4/6/8; skip if the
+    base is already quantized), and write a model card. It runs only once the user confirms it on
+    a card. reason: one plain sentence for the card. Afterwards they can chat with the exported
+    model on the "Try it" page."""
+    config = {"name": name, "quantize_bits": quantize_bits, "sampling": {"temperature": 0.7, "top_p": 0.95}}
+    details = {"name": name, "quantize_bits": quantize_bits}
+    return confirm.propose(ctx.context.project_id, "export", f"Export the model as “{name}”", reason, details,
+                           {"config": config})  # fmt: skip
 
 
 ALL_TOOLS = [

@@ -1,73 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 
-import { api, type Checkpoint, type DatasetVersion, type Dataset, fmt, type Job, type MemoryEstimate, type Project } from "../api";
+import {
+  api,
+  type Comparison,
+  fmt,
+  isActive,
+  type Job,
+  type PendingAction,
+  type Sample,
+  type Snapshot,
+  type Stage,
+  STAGES,
+  type TunerMessage,
+} from "../api";
 import { MetricChart } from "../components/Charts";
 import JobLog from "../components/JobLog";
 import Markdown from "../components/Markdown";
-import { useLiveJob, useSystem } from "../hooks";
-import { Badge, Button, cx, MemoryBar, Spinner, StatusBadge, TextArea } from "../ui";
+import { runProgress, useLiveJob, useStudio, useSystem } from "../hooks";
+import { Badge, Button, CodeBlock, cx, ErrorNote, MemoryBar, ProgressBar, Spinner, StatusBadge, TextArea } from "../ui";
 
-// ── types ────────────────────────────────────────────────────────────────────
-
-interface TunerMessage {
-  id: number;
-  role: "user" | "assistant" | "event" | "tool";
-  content: string;
-  meta: {
-    name?: string;
-    args?: Record<string, unknown>;
-    status?: string;
-    output?: string;
-    error?: boolean;
-    kickoff?: boolean;
-    autopilot?: boolean;
-    autopilot_paused?: boolean;
-  } & Record<string, unknown>;
-  created_at: string;
-}
-
-interface Comparison {
-  id: string;
-  prompt: string;
-  a: string;
-  b: string;
-  status: "pending" | "judged";
-  choice?: string;
-  judge?: "ai";
-  critique?: string;
-  ideal?: string;
-}
-
-interface Sample {
-  prompt: string;
-  target: string;
-  text: string;
-  tokens_per_sec?: number;
-}
-
-interface Snapshot {
-  project: Project;
-  stage: Stage;
-  note: string;
-  tuner_busy: boolean;
-  autopilot: boolean;
-  completed: boolean;
-  hardware: { chip: string; total_memory_gb: number; budget_gb: number };
-  model: { repo_id: string; downloaded: boolean; params?: number; bits?: number; size_gb?: number; layers?: number; inference?: MemoryEstimate } | null;
-  datasets: Dataset[];
-  versions: DatasetVersion[];
-  jobs: Job[];
-  checkpoints: (Checkpoint & { warnings: { code: string; message: string }[] })[];
-  samples: Sample[];
-  comparisons: Comparison[];
-  feedback: { judgements: number; pairs_ready: number };
-  exports: { path: string; size_gb: number; min_ram_gb: number }[];
-}
-
-const STAGES = ["goal", "model", "data", "train", "evaluate", "refine", "export"] as const;
-type Stage = (typeof STAGES)[number];
 const STAGE_LABEL: Record<Stage, string> = {
   goal: "Goal",
   model: "Model",
@@ -78,17 +31,27 @@ const STAGE_LABEL: Record<Stage, string> = {
   export: "Export",
 };
 
+const STAGE_VIEW: Record<Stage, React.FC<{ s: Snapshot }>> = {
+  goal: GoalView,
+  model: ModelView,
+  data: DataView,
+  train: TrainView,
+  evaluate: EvaluateView,
+  refine: RefineView,
+  export: ExportView,
+};
+
 const TOOL_LABEL: Record<string, string> = {
   update_project: "Saving the project brief",
   find_base_models: "Searching for base models",
-  choose_base_model: "Choosing the base model",
+  choose_base_model: "Proposing the base model",
   search_datasets: "Searching datasets",
   preview_dataset: "Previewing a dataset",
   import_dataset: "Importing data",
   inspect_dataset: "Inspecting the data",
   prepare_dataset: "Cleaning and preparing the data",
   plan_training: "Planning the training run",
-  start_training: "Starting training",
+  start_training: "Proposing a training run",
   training_progress: "Checking on training",
   cancel_job: "Stopping a job",
   try_model: "Testing the model",
@@ -97,7 +60,7 @@ const TOOL_LABEL: Record<string, string> = {
   generate_synthetic_examples: "Writing training examples",
   review_synthetic_examples: "Reviewing examples",
   build_dataset_from_examples: "Building a dataset",
-  export_model: "Exporting the model",
+  export_model: "Proposing the export",
   ai_review_answers: "Having GPT-6 review the model's answers",
   finish_project: "Wrapping up",
 };
@@ -109,11 +72,7 @@ const QUIET_TOOLS = new Set(["get_status", "set_stage"]);
 export default function Studio() {
   const projectId = Number(useParams().projectId);
   const qc = useQueryClient();
-  const snapshot = useQuery({
-    queryKey: ["studio", projectId],
-    queryFn: () => api.get<Snapshot>(`/api/projects/${projectId}/studio`),
-    refetchInterval: 15000,
-  });
+  const snapshot = useStudio(projectId);
   const messages = useQuery({
     queryKey: ["tuner-messages", projectId],
     queryFn: () => api.get<TunerMessage[]>(`/api/projects/${projectId}/tuner/messages`),
@@ -147,15 +106,8 @@ export default function Studio() {
     return () => es.close();
   }, [projectId, qc]);
 
-  // A new project's conversation starts on its own.
-  const started = useRef(false);
-  useEffect(() => {
-    if (messages.data && messages.data.length === 0 && !started.current) {
-      started.current = true;
-      api.post(`/api/projects/${projectId}/tuner/start`);
-    }
-  }, [messages.data, projectId]);
-
+  // Opening a project never starts anything: the Tuner only begins from an explicit action
+  // (creating the project on Home, or the Start button below).
   useEffect(() => {
     if (snapshot.data) setBusy((b) => b || snapshot.data!.tuner_busy);
   }, [snapshot.data]);
@@ -164,7 +116,7 @@ export default function Studio() {
     <div className="flex h-full flex-col">
       <TopBar snapshot={snapshot.data} />
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-2">
-        <Chat projectId={projectId} messages={messages.data ?? []} streaming={streaming} busy={busy} />
+        <Chat projectId={projectId} messages={messages.data ?? []} streaming={streaming} busy={busy} pending={snapshot.data?.pending_action ?? null} />
         {snapshot.data ? <Canvas snapshot={snapshot.data} messages={messages.data ?? []} /> : <div className="grid place-items-center"><Spinner /></div>}
       </div>
     </div>
@@ -181,9 +133,6 @@ function TopBar({ snapshot }: { snapshot?: Snapshot }) {
   });
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4">
-      <Link to="/" className="grid size-7 place-items-center rounded-lg bg-accent text-sm font-bold text-white" title="All projects">
-        ▲
-      </Link>
       <div className="min-w-0">
         <div className="truncate text-[13px] font-semibold">{snapshot?.project.name ?? "…"}</div>
         <div className="truncate text-[11px] text-faint">{snapshot?.project.goal}</div>
@@ -215,6 +164,11 @@ function TopBar({ snapshot }: { snapshot?: Snapshot }) {
             Autopilot {snapshot.completed ? "done" : snapshot.autopilot ? "on" : "paused"}
           </button>
         )}
+        {!!snapshot?.exports.length && (
+          <Link to={`/p/${snapshot.project.id}/try`} className="rounded-md bg-good-soft px-2.5 py-1 font-medium text-good hover:brightness-110">
+            ▶ Try it
+          </Link>
+        )}
         {snapshot && (
           <Link to={`/p/${snapshot.project.id}/overview`} className="rounded-md px-2 py-1 hover:bg-panel-2 hover:text-fg">
             Advanced
@@ -227,7 +181,19 @@ function TopBar({ snapshot }: { snapshot?: Snapshot }) {
 
 // ── left: chat ───────────────────────────────────────────────────────────────
 
-function Chat({ projectId, messages, streaming, busy }: { projectId: number; messages: TunerMessage[]; streaming: string; busy: boolean }) {
+function Chat({
+  projectId,
+  messages,
+  streaming,
+  busy,
+  pending,
+}: {
+  projectId: number;
+  messages: TunerMessage[];
+  streaming: string;
+  busy: boolean;
+  pending: PendingAction | null;
+}) {
   const [input, setInput] = useState("");
   const { data: sys } = useSystem();
   const send = useMutation({
@@ -248,8 +214,6 @@ function Chat({ projectId, messages, streaming, busy }: { projectId: number; mes
   const visible = messages.filter(
     (m) => !(m.role === "tool" && QUIET_TOOLS.has(m.meta.name ?? "")) && !m.meta.kickoff && !m.meta.autopilot,
   );
-  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
-  const wantsGo = !busy && !!lastAssistant && /[“"']go[”"']/i.test(lastAssistant.content) && messages.at(-1)?.id === lastAssistant.id;
 
   return (
     <section className="flex min-h-0 flex-col border-r border-line">
@@ -268,6 +232,7 @@ function Chat({ projectId, messages, streaming, busy }: { projectId: number; mes
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        {messages.length === 0 && !busy && <StartTuner projectId={projectId} />}
         {groupTools(visible).map((item) =>
           Array.isArray(item) ? <ToolGroup key={item[0].id} steps={item} /> : <ChatItem key={item.id} m={item} />,
         )}
@@ -286,16 +251,7 @@ function Chat({ projectId, messages, streaming, busy }: { projectId: number; mes
       </div>
 
       <div className="border-t border-line p-4">
-        {wantsGo && (
-          <div className="mb-2 flex gap-2">
-            <Button size="sm" variant="primary" onClick={() => submit("go")}>
-              Go
-            </Button>
-            <Button size="sm" onClick={() => submit("Explain that a bit more first.")}>
-              Explain more
-            </Button>
-          </div>
-        )}
+        {pending && <ConfirmCard projectId={projectId} action={pending} />}
         <form
           className="flex gap-2"
           onSubmit={(e) => {
@@ -314,7 +270,13 @@ function Chat({ projectId, messages, streaming, busy }: { projectId: number; mes
                 submit(input);
               }
             }}
-            placeholder={busy ? "The Tuner is building your model. Type anything to steer it." : "Type to steer the Tuner (optional)…"}
+            placeholder={
+              pending
+                ? "Say yes, or tell the Tuner what to change…"
+                : busy
+                  ? "The Tuner is building your model. Type anything to steer it."
+                  : "Type to steer the Tuner (optional)…"
+            }
           />
           <Button type="submit" variant="primary" disabled={!input.trim()}>
             Send
@@ -367,6 +329,122 @@ function ToolGroup({ steps }: { steps: TunerMessage[] }) {
   );
 }
 
+function StartTuner({ projectId }: { projectId: number }) {
+  const qc = useQueryClient();
+  const start = useMutation({
+    mutationFn: () => api.post(`/api/projects/${projectId}/tuner/start`),
+    onSuccess: () => {
+      for (const k of ["studio", "sessions"]) qc.invalidateQueries({ queryKey: [k] });
+    },
+  });
+  return (
+    <div className="rounded-xl border border-line bg-panel p-4 text-[13px] text-muted">
+      <p>
+        The Tuner hasn't started on this project. Once started, it prepares everything itself and asks you before each run
+        (downloading a model, training, exporting).
+      </p>
+      <ErrorNote error={start.error} />
+      <Button className="mt-3" size="sm" variant="primary" loading={start.isPending} onClick={() => start.mutate()}>
+        Start the Tuner
+      </Button>
+    </div>
+  );
+}
+
+const ACTION_ICON: Record<PendingAction["kind"], string> = { model: "◆", sft: "▲", dpo: "▲", export: "⬇", synthesize: "✎", review: "⚖", import: "⇣" };
+
+/** The Tuner's proposed run. It only starts from here (or a plain "yes" in the chat). */
+function ConfirmCard({ projectId, action }: { projectId: number; action: PendingAction }) {
+  const qc = useQueryClient();
+  const [why, setWhy] = useState("");
+  const [asking, setAsking] = useState(false);
+  const decide = useMutation({
+    mutationFn: (go: boolean) =>
+      api.post(`/api/projects/${projectId}/studio/${go ? "confirm" : "decline"}`, { action_id: action.id, reason: why }),
+    onSettled: () => {
+      setAsking(false);
+      setWhy("");
+      for (const k of ["studio", "sessions"]) qc.invalidateQueries({ queryKey: [k] });
+    },
+  });
+  const facts = actionFacts(action);
+  return (
+    <div className="mb-3 rounded-xl border border-accent/50 bg-accent-soft/40 p-3.5" role="group" aria-label="Waiting for your go-ahead">
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-accent text-[11px] text-white">{ACTION_ICON[action.kind]}</span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-accent">Waiting for your go-ahead</div>
+          <div className="text-[14px] font-semibold">{action.title}</div>
+          {action.reason && <p className="mt-0.5 text-[13px] text-muted">{action.reason}</p>}
+          {facts.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {facts.map((f) => (
+                <Badge key={f}>{f}</Badge>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      {asking && (
+        <TextArea
+          rows={2}
+          className="mt-3 w-full"
+          autoFocus
+          value={why}
+          onChange={(e) => setWhy(e.target.value)}
+          placeholder="Optional: what would you rather do? (e.g. “use fewer examples”)"
+        />
+      )}
+      <ErrorNote error={decide.error} />
+      <div className="mt-3 flex gap-2">
+        {asking ? (
+          <>
+            <Button size="sm" loading={decide.isPending} onClick={() => decide.mutate(false)}>
+              Send “not now”
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setAsking(false)}>
+              Back
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button size="sm" variant="primary" loading={decide.isPending} onClick={() => decide.mutate(true)}>
+              Go ahead
+            </Button>
+            <Button size="sm" onClick={() => setAsking(true)}>
+              Not now
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function actionFacts(a: PendingAction): string[] {
+  const d = a.details as Record<string, number | string | boolean | null | undefined>;
+  const out: string[] = [];
+  if (a.kind === "model") {
+    if (d.params_b) out.push(`${d.params_b}B parameters`);
+    out.push(d.on_this_mac ? "already on this Mac" : "needs a download");
+  } else if (a.kind === "sft" || a.kind === "dpo") {
+    if (d.train_examples) out.push(`${d.train_examples} examples`);
+    if (d.iterations) out.push(`${d.iterations} steps`);
+    if (d.epochs) out.push(`${Number(d.epochs).toFixed(1)} epochs`);
+    if (d.memory_gb) out.push(`${d.memory_gb} GB of ${d.budget_gb} GB`);
+    if (d.would_queue_behind) out.push("will queue behind another run");
+  } else if (a.kind === "export") {
+    out.push(d.quantize_bits ? `${d.quantize_bits}-bit` : "no extra quantizing");
+  } else if (a.kind === "synthesize") {
+    out.push(`${d.count} ${d.kind === "preference" ? "preference pairs" : "examples"}`, "uses the OpenAI API");
+  } else if (a.kind === "review") {
+    out.push(`${d.prompts} questions`, "runs the model, then uses the OpenAI API");
+  } else if (a.kind === "import") {
+    out.push(`up to ${Number(d.max_rows).toLocaleString()} rows`, "downloads from Hugging Face");
+  }
+  return out;
+}
+
 function ChatItem({ m }: { m: TunerMessage }) {
   if (m.role === "user")
     return (
@@ -402,6 +480,8 @@ function eventLabel(m: TunerMessage): string {
     return `— ${kind} ${job[3]} —`;
   }
   if (m.content.startsWith("[Feedback]")) return "— You finished judging the answers —";
+  if (m.meta.confirmed) return m.meta.error ? m.content : "— You said go ahead —";
+  if (m.meta.declined) return "— You said not now —";
   return m.content;
 }
 
@@ -425,8 +505,7 @@ function Canvas({ snapshot: s, messages }: { snapshot: Snapshot; messages: Tuner
   const reached = STAGES.slice(0, STAGES.indexOf(s.stage) + 1);
   // Show every stage that has content or has been reached.
   const visible = STAGES.filter((st) => reached.includes(st) || done[st]);
-  const scroller = useRef<HTMLDivElement>(null);
-  const activeJob = s.jobs.find((j) => j.status === "running" || j.status === "queued");
+  const activeJob = s.jobs.find(isActive);
   // Keep the current stage in view: when the stage changes, and when a job starts (cards above
   // may have grown since). Delayed a beat so freshly rendered cards have their final height.
   useEffect(() => {
@@ -445,11 +524,18 @@ function Canvas({ snapshot: s, messages }: { snapshot: Snapshot; messages: Tuner
                 onClick={() => document.getElementById(`stage-${st}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
                 className={cx(
                   "flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium transition",
-                  st === s.stage ? "bg-accent text-white" : done[st] ? "text-good" : "text-faint",
+                  // A finished stage shows its tick even when it's the current one (e.g. Export at the end).
+                  st === s.stage && !done[st] ? "bg-accent text-white" : done[st] ? "text-good" : "text-faint",
+                  st === s.stage && done[st] && "bg-good-soft",
                 )}
               >
-                <span className={cx("grid size-4 place-items-center rounded-full text-[9px]", st === s.stage ? "bg-white/25" : done[st] ? "bg-good-soft" : "bg-panel-2")}>
-                  {done[st] && st !== s.stage ? "✓" : i + 1}
+                <span
+                  className={cx(
+                    "grid size-4 place-items-center rounded-full text-[9px]",
+                    done[st] ? "bg-good text-white" : st === s.stage ? "bg-white/25" : "bg-panel-2",
+                  )}
+                >
+                  {done[st] ? "✓" : i + 1}
                 </span>
                 {STAGE_LABEL[st]}
               </button>
@@ -460,29 +546,43 @@ function Canvas({ snapshot: s, messages }: { snapshot: Snapshot; messages: Tuner
         {s.note && <p className="mt-2 text-xs text-muted">{s.note}</p>}
       </div>
 
-      <div ref={scroller} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
-        {visible.map((st) => (
-          <div key={st} id={`stage-${st}`} className="scroll-mt-4">
-            <StageCard stage={st} active={st === s.stage} done={done[st]}>
-              {st === "goal" && <GoalView s={s} />}
-              {st === "model" && <ModelView s={s} />}
-              {st === "data" && <DataView s={s} />}
-              {st === "train" && <TrainView s={s} />}
-              {st === "evaluate" && <EvaluateView s={s} />}
-              {st === "refine" && <RefineView s={s} />}
-              {st === "export" && <ExportView s={s} />}
-            </StageCard>
-          </div>
-        ))}
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+        {visible.map((st) => {
+          const View = STAGE_VIEW[st];
+          return (
+            <div key={st} id={`stage-${st}`} className="scroll-mt-4">
+              <StageCard stage={st} active={st === s.stage} done={done[st]}>
+                <View s={s} />
+              </StageCard>
+            </div>
+          );
+        })}
       </div>
 
-      {s.completed && (
-        <div className="border-t border-good/40 bg-good-soft px-5 py-2.5 text-[13px] text-good">
-          ✓ Done. {s.note}
-        </div>
-      )}
+      {s.completed && <DoneBanner s={s} />}
       <Console messages={messages} activeJob={activeJob} />
     </section>
+  );
+}
+
+/** Finished, but not closed: try the model, or ask the Tuner to make it better. */
+function DoneBanner({ s }: { s: Snapshot }) {
+  const improve = useMutation({
+    mutationFn: () =>
+      api.post(`/api/projects/${s.project.id}/tuner/message`, { text: "I'd like to keep improving this model. What would you suggest?" }),
+  });
+  return (
+    <div className="flex items-center gap-3 border-t border-good/40 bg-good-soft px-5 py-2.5 text-[13px] text-good">
+      <span className="min-w-0 flex-1">✓ Done. {s.note}</span>
+      <Button size="sm" variant="ghost" loading={improve.isPending} disabled={improve.isSuccess} onClick={() => improve.mutate()}>
+        Keep improving
+      </Button>
+      {!!s.exports.length && (
+        <Link to={`/p/${s.project.id}/try`} className="shrink-0 rounded-md bg-good px-3 py-1 font-medium text-white hover:brightness-110">
+          Try your model →
+        </Link>
+      )}
+    </div>
   );
 }
 
@@ -491,8 +591,8 @@ function StageCard({ stage, active, done, children }: { stage: Stage; active: bo
     <div className={cx("rounded-xl border bg-panel transition", active ? "border-accent/60 shadow-[0_0_0_3px_var(--accent-soft)]" : "border-line")}>
       <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
         <span className="text-[13px] font-semibold">{STAGE_LABEL[stage]}</span>
-        {active && <Badge tone="accent">now</Badge>}
-        {done && !active && <Badge tone="good">done</Badge>}
+        {active && !done && <Badge tone="accent">now</Badge>}
+        {done && <Badge tone="good">done</Badge>}
       </div>
       <div className="p-4">{children}</div>
     </div>
@@ -521,7 +621,7 @@ function GoalView({ s }: { s: Snapshot }) {
 }
 
 function ModelView({ s }: { s: Snapshot }) {
-  const download = s.jobs.find((j) => j.kind === "download" && (j.status === "running" || j.status === "queued"));
+  const download = s.jobs.find((j) => j.kind === "download" && isActive(j));
   if (!s.model) return <Empty>The Tuner is choosing a base model that fits this Mac.</Empty>;
   return (
     <div className="space-y-3">
@@ -551,7 +651,7 @@ function ModelView({ s }: { s: Snapshot }) {
 }
 
 function DataView({ s }: { s: Snapshot }) {
-  const prepping = s.jobs.find((j) => ["import_dataset", "prepare_dataset", "synthesize"].includes(j.kind) && (j.status === "running" || j.status === "queued"));
+  const prepping = s.jobs.find((j) => ["import_dataset", "prepare_dataset", "synthesize"].includes(j.kind) && isActive(j));
   if (!s.datasets.length && !s.versions.length && !prepping) return <Empty>The Tuner is looking for training data that matches the goal.</Empty>;
   return (
     <div className="space-y-3">
@@ -615,15 +715,10 @@ function TrainView({ s }: { s: Snapshot }) {
 }
 
 function LiveRun({ jobId }: { jobId: number }) {
-  const { job, metrics, progress } = useLiveJob(jobId);
+  const live = useLiveJob(jobId);
+  const { job, metrics } = live;
   if (!job) return null;
-  const train = metrics.filter((m) => m.split === "train");
-  const last = train.at(-1)?.values;
-  const total = progress?.total || (job.result.total_iters as number) || 0;
-  const cur = progress?.current ?? train.at(-1)?.iteration ?? 0;
-  const pct = job.status === "succeeded" ? 100 : total ? Math.min(100, (cur / total) * 100) : 0;
-  const eta = last?.it_per_sec && total > cur ? Math.ceil((total - cur) / last.it_per_sec / 60) : null;
-  const warnings = (job.result.warnings as { code: string; message: string }[] | undefined) ?? [];
+  const { current: cur, total, pct, minutesLeft: eta, last, lastVal, warnings } = runProgress(live);
   const isDpo = job.kind === "dpo";
   return (
     <div className="space-y-3">
@@ -634,12 +729,10 @@ function LiveRun({ jobId }: { jobId: number }) {
           {cur}/{total || "?"} steps{eta != null && job.status === "running" ? ` · ~${eta} min left` : ""}
         </span>
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-panel-2">
-        <div className={cx("h-full transition-all", job.status === "failed" ? "bg-bad" : "bg-accent")} style={{ width: `${pct}%` }} />
-      </div>
+      <ProgressBar pct={pct} failed={job.status === "failed"} />
       <div className="grid grid-cols-4 gap-2 text-xs">
         <Fact label="Train loss" value={fmt.num(last?.loss)} />
-        <Fact label="Val loss" value={fmt.num(metrics.filter((m) => m.split === "val").at(-1)?.values.loss)} />
+        <Fact label="Val loss" value={fmt.num(lastVal?.loss)} />
         {isDpo ? <Fact label="Prefers chosen" value={last?.accuracy != null ? `${Math.round(last.accuracy * 100)}%` : "–"} /> : <Fact label="Tokens/sec" value={last ? String(Math.round(last.tokens_per_sec)) : "–"} />}
         <Fact label="Peak memory" value={fmt.gb(last?.peak_mem_gb)} />
       </div>
@@ -663,11 +756,9 @@ function LiveRun({ jobId }: { jobId: number }) {
 
 function EvaluateView({ s }: { s: Snapshot }) {
   const pending = s.comparisons.filter((c) => c.status === "pending");
-  const groups = useMemo(() => {
-    const byPrompt = new Map<string, Sample[]>();
-    for (const x of s.samples) byPrompt.set(x.prompt, [...(byPrompt.get(x.prompt) ?? []), x]);
-    return [...byPrompt.entries()].slice(0, 6);
-  }, [s.samples]);
+  const byPrompt = new Map<string, Sample[]>();
+  for (const x of s.samples) byPrompt.set(x.prompt, [...(byPrompt.get(x.prompt) ?? []), x]);
+  const groups = [...byPrompt.entries()].slice(0, 6);
   if (!groups.length && !s.comparisons.length) return <Empty>The Tuner will test the model on your example questions here.</Empty>;
   return (
     <div className="space-y-4">
@@ -801,7 +892,7 @@ function RefineView({ s }: { s: Snapshot }) {
 }
 
 function ExportView({ s }: { s: Snapshot }) {
-  if (!s.exports.length) return <Empty>When you're happy, the Tuner packages the model here.</Empty>;
+  if (!s.exports.length) return <Empty>When you're happy, the Tuner packages the model here (it asks you first).</Empty>;
   return (
     <div className="space-y-3">
       {s.exports.map((e) => (
@@ -810,8 +901,14 @@ function ExportView({ s }: { s: Snapshot }) {
             <span className="font-medium">{e.path.split("/").pop()}</span>
             <Badge>{fmt.gb(e.size_gb)}</Badge>
             <Badge tone="good">runs on {e.min_ram_gb} GB+ Macs</Badge>
+            <Link
+              to={`/p/${s.project.id}/try?export=${e.job_id}`}
+              className="ml-auto rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white hover:brightness-110"
+            >
+              ▶ Try it
+            </Link>
           </div>
-          <pre className="overflow-x-auto rounded-md bg-bg px-3 py-2 font-mono text-[11.5px] text-muted">mlx_lm.generate --model {e.path} --prompt "Hello"</pre>
+          <CodeBlock text={`mlx_lm.generate --model ${e.path} --prompt "Hello"`} />
         </div>
       ))}
     </div>

@@ -6,8 +6,10 @@ from sqlmodel import Session, select
 from sse_starlette.sse import EventSourceResponse
 
 from slm.agents import actions
+from slm.agents.base import set_proposal_status
 from slm.api.common import SessionDep, get_or_404, project_or_404, topic_stream
 from slm.data import scout_tools
+from slm.data.format import guess_mapping
 from slm.db import AgentEvent, Dataset, Job, Metric, Proposal
 from slm.train.worker import log_tail, worker
 
@@ -96,7 +98,6 @@ def hf_dataset_preview(repo_id: str, config: str | None = None, split: str | Non
         data = scout_tools.preview_rows(repo_id, config, split, n=8)
     except Exception as e:
         raise HTTPException(502, f"Preview failed (gated or unsupported dataset?): {e}") from e
-    from slm.data.format import guess_mapping
 
     return data | {"suggested_mapping": guess_mapping(data["columns"])}
 
@@ -142,7 +143,6 @@ def approve_proposal(proposal_id: int, body: ApproveIn) -> dict:
 
 @router.post("/proposals/{proposal_id}/reject")
 def reject_proposal(proposal_id: int, s: Session = SessionDep) -> dict:
-    from slm.agents.base import set_proposal_status
 
     prop = get_or_404(s, Proposal, proposal_id)
     if prop.status != "pending":

@@ -12,7 +12,7 @@ from slm.data import format as fmt
 from slm.data import split as splitting
 from slm.data.length import Measurer, fit_to_length
 from slm.data.scout_tools import read_raw
-from slm.db import Dataset, DatasetVersion, PreferencePair, SftExample, engine
+from slm.db import Dataset, DatasetVersion, PreferencePair, SftExample, engine, ready
 
 
 def load_tokenizer(model_path: str):
@@ -154,11 +154,7 @@ def build_preference_version(
     """Collect approved, not-yet-trained preference pairs (human + synthetic) into a DPO dataset."""
     with Session(engine()) as s:
         pairs = s.exec(
-            select(PreferencePair).where(
-                PreferencePair.project_id == project_id,
-                PreferencePair.approved == True,  # noqa: E712
-                PreferencePair.used_in_job_id == None,  # noqa: E711
-            )
+            select(PreferencePair).where(PreferencePair.project_id == project_id, *ready(PreferencePair))
         ).all()
         pair_ids = [p.id for p in pairs]
         records = []
@@ -189,13 +185,7 @@ def build_preference_version(
 def feedback_sft_records(project_id: int) -> tuple[list[dict], list[int]]:
     """Approved, not-yet-trained SFT examples from edited answers and synthetic generation."""
     with Session(engine()) as s:
-        rows = s.exec(
-            select(SftExample).where(
-                SftExample.project_id == project_id,
-                SftExample.approved == True,  # noqa: E712
-                SftExample.used_in_job_id == None,  # noqa: E711
-            )
-        ).all()
+        rows = s.exec(select(SftExample).where(SftExample.project_id == project_id, *ready(SftExample))).all()
         return [{"messages": r.messages} for r in rows], [r.id for r in rows]
 
 

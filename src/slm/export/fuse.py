@@ -1,7 +1,6 @@
 """Fuse adapters into standalone models and package exports with a model card."""
 
 import json
-import shutil
 import sys
 from datetime import date
 from pathlib import Path
@@ -84,7 +83,9 @@ def write_model_card(dest: Path, *, name: str, project: dict, lineage: list[dict
     )
 
 
-def copy_model(src: Path, dest: Path) -> None:
-    if dest.exists():
-        shutil.rmtree(dest)
-    shutil.copytree(src, dest)
+def unique_dest(folder: Path, name: str) -> Path:
+    """`folder/name`, or `name-2`, `name-3`… if that's taken, so an export never overwrites another."""
+    dest, n = folder / name, 2
+    while dest.exists():
+        dest, n = folder / f"{name}-{n}", n + 1
+    return dest

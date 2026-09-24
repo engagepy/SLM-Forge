@@ -15,13 +15,11 @@ export function MetricChart({
   metrics,
   series,
   height = 220,
-  log,
   format = (v: number) => v.toFixed(3),
 }: {
   metrics: MetricPoint[];
   series: Series[];
   height?: number;
-  log?: boolean;
   format?: (v: number) => string;
 }) {
   const byIter = new Map<number, Record<string, number>>();
@@ -47,8 +45,7 @@ export function MetricChart({
         <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
         <XAxis dataKey="iteration" tick={{ fill: "var(--faint)", fontSize: 11 }} stroke="var(--border)" />
         <YAxis
-          scale={log ? "log" : "auto"}
-          domain={log ? ["auto", "auto"] : [0, "auto"]}
+          domain={[0, "auto"]}
           allowDataOverflow={false}
           tick={{ fill: "var(--faint)", fontSize: 11 }}
           stroke="var(--border)"

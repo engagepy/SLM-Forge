@@ -3,11 +3,12 @@
 import json
 from pathlib import Path
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import scan_cache_dir, snapshot_download
 from sqlmodel import Session, select
 
 from slm import hardware
 from slm.db import ModelRecord, engine
+from slm.models.hub import fit_verdict, rough_training_gb
 
 # Everything mlx_lm.load needs; skips PyTorch .bin / ONNX / GGUF duplicates.
 ALLOW_PATTERNS = [
@@ -67,11 +68,15 @@ def local_path_for(repo_id: str) -> str | None:
         return rec.local_path if rec else None
 
 
+def serving_path(project) -> str | None:
+    """The model a project serves right now: its latest fused model, or else its downloaded base."""
+    return project.current_model_path or local_path_for(project.base_model or "")
+
+
 def local_models() -> list[dict]:
     """Chat/text-generation models already in the Hugging Face cache that MLX can train.
 
     Vision-language, speech and embedding models are skipped, as are incomplete snapshots."""
-    from huggingface_hub import scan_cache_dir
 
     out = []
     try:
@@ -94,7 +99,6 @@ def local_models() -> list[dict]:
             shape = hardware.ModelShape.from_config(cfg)
         except Exception:
             continue
-        from slm.models.hub import fit_verdict, rough_training_gb
 
         train_gb = rough_training_gb(shape.params, shape.bits)
         out.append(

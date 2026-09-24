@@ -54,7 +54,7 @@ def synth_job(ctx: JobContext) -> None:
 def _train_config(project_id: int, mode: str, preset_name: str, overrides: dict | None) -> dict:
     with Session(engine()) as s:
         project = s.get(Project, project_id)
-        model_path = project.current_model_path or manage.local_path_for(project.base_model or "")
+        model_path = manage.serving_path(project)
     if not model_path:
         raise ValueError("Download the project's base model first")
     cfg = preset(preset_name, manage.read_shape(model_path), mode)

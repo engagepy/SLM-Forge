@@ -37,3 +37,8 @@ class Bus:
 
 
 bus = Bus()
+
+
+def canvas_changed(project_id: int) -> None:
+    """Tell a project's Studio to re-read its snapshot."""
+    bus.publish(f"tuner:{project_id}", {"type": "canvas"})

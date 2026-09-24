@@ -2,17 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { api, DEFAULT_SAMPLING, fmt } from "../api";
-import { useOverview, useProjectId, waitForJob } from "../hooks";
-import { Badge, Button, Card, Empty, ErrorNote, Field, Input, Mono, Select } from "../ui";
-
-interface ExportRow {
-  job_id: number;
-  path: string;
-  size_gb: number;
-  min_ram_gb: number;
-  created_at: string;
-}
+import { api, DEFAULT_SAMPLING, type ExportRow, fmt, isServing } from "../api";
+import { useOverview, useProjectId, followJob } from "../hooks";
+import { Badge, Button, Card, CodeBlock, Empty, ErrorNote, Field, Input, Mono, Select } from "../ui";
 
 export default function ExportPage() {
   const projectId = useProjectId();
@@ -30,8 +22,7 @@ export default function ExportPage() {
         quantize_bits: bits === "none" ? null : Number(bits),
         sampling: { temperature: DEFAULT_SAMPLING.temperature, top_p: DEFAULT_SAMPLING.top_p, repetition_penalty: DEFAULT_SAMPLING.repetition_penalty },
       });
-      const job = await waitForJob(job_id, (j) => setStatus(j.status));
-      if (job.status !== "succeeded") throw new Error(job.error || `Export ${job.status}`);
+      await followJob(job_id, "Export", setStatus);
     },
     onSettled: () => {
       setStatus(null);
@@ -62,7 +53,7 @@ export default function ExportPage() {
         {checkpoints.length ? (
           <ul className="divide-y divide-line">
             {checkpoints.map((c) => {
-              const serving = project.current_adapter_path === c.adapter_path || (!!c.fused_path && project.current_model_path === c.fused_path);
+              const serving = isServing(project, c);
               return (
                 <li key={c.id} className="flex items-center gap-3 px-4 py-2.5 text-[13px]">
                   <Badge tone={c.kind === "dpo" ? "accent" : "info"}>{c.kind.toUpperCase()}</Badge>
@@ -125,15 +116,13 @@ export default function ExportPage() {
             {exports.data.map((e) => (
               <li key={e.job_id} className="space-y-1.5 px-4 py-3">
                 <div className="flex items-center gap-2 text-[13px]">
-                  <span className="font-medium">{e.path.split("/").pop()}</span>
+                  <span className="font-medium">{e.name}</span>
                   <Badge>{fmt.gb(e.size_gb)}</Badge>
                   <Badge tone="good">runs on {e.min_ram_gb} GB+ Macs</Badge>
                   <span className="ml-auto text-[11px] text-faint">{fmt.ago(e.created_at)}</span>
                 </div>
-                <div className="font-mono text-[11px] text-muted">{e.path}</div>
-                <pre className="overflow-x-auto rounded-md bg-bg px-3 py-2 font-mono text-[11.5px] text-muted">
-                  mlx_lm.generate --model {e.path} --prompt "Hello"
-                </pre>
+                <CodeBlock text={e.path} />
+                <CodeBlock text={`mlx_lm.generate --model ${e.path} --prompt "Hello"`} />
               </li>
             ))}
           </ul>

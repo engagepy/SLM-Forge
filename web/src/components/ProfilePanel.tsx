@@ -22,7 +22,7 @@ export default function ProfilePanel() {
   const refresh = (next: Profile) => qc.setQueryData(["profile"], next);
   const setLevel = useMutation({ mutationFn: (level: string) => api.post<Profile>("/api/profile/level", { level }), onSuccess: refresh });
   const forget = useMutation({
-    mutationFn: (id: string) => fetch(`/api/profile/notes/${id}`, { method: "DELETE" }).then((r) => r.json() as Promise<Profile>),
+    mutationFn: (id: string) => api.delete<Profile>(`/api/profile/notes/${id}`),
     onSuccess: refresh,
   });
   const reset = useMutation({ mutationFn: () => api.post<Profile>("/api/profile/reset"), onSuccess: refresh });

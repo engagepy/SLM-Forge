@@ -4,7 +4,7 @@ import { Link } from "react-router";
 
 import { api, fmt, type Dataset, type DatasetVersion, type Mapping, type Proposal } from "../api";
 import ProposalCard from "../components/ProposalCard";
-import { useProjectId, waitForJob } from "../hooks";
+import { useProjectId, followJob } from "../hooks";
 import { Badge, Button, Card, Collapsible, cx, Empty, ErrorNote, Field, Input, NumberField, Select, Spinner, Toggle, useSpotlight } from "../ui";
 
 export default function DataPage() {
@@ -112,8 +112,7 @@ function ScoutPanel({ projectId }: { projectId: number }) {
     mutationFn: async () => {
       const { job_id } = await api.post<{ job_id: number }>(`/api/projects/${projectId}/agents/scout`, { request });
       setJobId(job_id);
-      const job = await waitForJob(job_id, (j) => setJobStatus(j.status));
-      if (job.status !== "succeeded") throw new Error(job.error || `Scout ${job.status}`);
+      const job = await followJob(job_id, "Scout", setJobStatus);
       return job;
     },
   });
@@ -233,8 +232,7 @@ function HubSearch({ projectId }: { projectId: number }) {
         max_rows: maxRows,
         license: row.license,
       });
-      const job = await waitForJob(job_id, (j) => setImportStatus(j.status));
-      if (job.status !== "succeeded") throw new Error(job.error || `Import ${job.status}`);
+      await followJob(job_id, "Import", setImportStatus);
     },
     onSettled: () => {
       setImportStatus(null);
@@ -343,8 +341,7 @@ function MappingEditor({ dataset, projectId, onPrepared }: { dataset: Dataset; p
         max_seq_length: maxSeq,
         include_feedback: includeFeedback,
       });
-      const job = await waitForJob(job_id, (j) => setPrepStatus(j.status));
-      if (job.status !== "succeeded") throw new Error(job.error || `Prepare ${job.status}`);
+      const job = await followJob(job_id, "Prepare", setPrepStatus);
       return job.result as { dataset_version_id: number; n_train?: number; kept?: number; input_rows?: number };
     },
     onSettled: () => {

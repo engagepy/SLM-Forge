@@ -2,10 +2,12 @@
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 from sqlmodel import Session, select
 
+from slm.agents.base import set_proposal_status
 from slm.config import get_settings
 from slm.data import pipeline, scout_tools
 from slm.data.clean import CleaningRules
@@ -13,8 +15,10 @@ from slm.db import (
     Checkpoint,
     Dataset,
     DatasetVersion,
+    Metric,
     PreferencePair,
     Project,
+    Proposal,
     SftExample,
     engine,
 )
@@ -22,6 +26,7 @@ from slm.export import fuse as fusing
 from slm.models import manage
 from slm.train import runner
 from slm.train.config import TrainConfig
+from slm.train.diagnose import diagnose
 from slm.train.worker import JobContext, worker
 
 
@@ -57,10 +62,8 @@ def _project(s: Session, project_id: int | None) -> Project:
 
 
 def _serving_model(project: Project) -> str:
-    if project.current_model_path:
-        return project.current_model_path
-    if project.base_model and (p := manage.local_path_for(project.base_model)):
-        return p
+    if path := manage.serving_path(project):
+        return path
     raise ValueError("Project has no downloaded base model yet")
 
 
@@ -139,8 +142,6 @@ def prepare_dataset_job(ctx: JobContext) -> None:
     }
     # A pending DataPrep suggestion for this dataset has now been acted on; close it so the
     # UI doesn't keep offering it. (Approving it directly already marks it executed.)
-    from slm.agents.base import set_proposal_status
-    from slm.db import Proposal
 
     with Session(engine()) as s:
         stale = s.exec(
@@ -177,7 +178,6 @@ def _train(ctx: JobContext, cfg: TrainConfig, *, model_path: str, data_dir: str,
 
 
 def _final_metrics(job_id: int) -> dict:
-    from slm.db import Metric
 
     with Session(engine()) as s:
         rows = s.exec(select(Metric).where(Metric.job_id == job_id).order_by(Metric.iteration)).all()
@@ -194,8 +194,6 @@ def _final_metrics(job_id: int) -> dict:
 
 
 def _warnings(ctx: JobContext) -> list[dict]:
-    from slm.db import Metric
-    from slm.train.diagnose import diagnose
 
     with Session(engine()) as s:
         rows = s.exec(select(Metric).where(Metric.job_id == ctx.job_id).order_by(Metric.iteration)).all()
@@ -328,23 +326,6 @@ def dpo_job(ctx: JobContext) -> None:
     }
 
 
-@worker.register("fuse")
-def fuse_job(ctx: JobContext) -> None:
-    with Session(engine()) as s:
-        ckpt = s.get(Checkpoint, ctx.config["checkpoint_id"])
-    dest = _fuse(ctx, ckpt.base_model_path, ckpt.adapter_path, ctx.run_dir / "fused")
-    with Session(engine()) as s:
-        ckpt = s.get(Checkpoint, ctx.config["checkpoint_id"])
-        ckpt.fused_path = str(dest)
-        s.add(ckpt)
-        project = _project(s, ckpt.project_id)
-        if project.current_adapter_path == ckpt.adapter_path:
-            project.current_model_path, project.current_adapter_path = str(dest), None
-            s.add(project)
-        s.commit()
-    ctx.result = {"fused_path": str(dest)}
-
-
 def served_ancestry(s: Session, project: Project) -> list[Checkpoint]:
     """The chain of checkpoints behind the served model, oldest first.
 
@@ -378,8 +359,11 @@ def export_job(ctx: JobContext) -> None:
         project_info = project.model_dump(include={"name", "goal", "base_model", "system_prompt"})
         lineage = [{"kind": ck.kind, "job_id": ck.job_id, "metrics": ck.metrics} for ck in served_ancestry(s, project)]
 
-    name = _slug(c.get("name") or f"{project_info['name']}-v{len(lineage)}")
-    dest = get_settings().exports_dir / name
+    # A new folder every time: re-exporting under a used name must never replace an earlier model.
+    dest = fusing.unique_dest(
+        get_settings().exports_dir, _slug(c.get("name") or f"{project_info['name']}-v{len(lineage)}")
+    )
+    name = dest.name
     staged = Path(model_path)
     if adapter:
         staged = _fuse(ctx, model_path, adapter, ctx.run_dir / "fused")
@@ -389,15 +373,11 @@ def export_job(ctx: JobContext) -> None:
         already_quantized = bool(json.load(f).get("quantization"))
     if bits and not already_quantized:
         ctx.note(f"Quantizing to {bits}-bit ...")
-        if dest.exists():
-            import shutil
-
-            shutil.rmtree(dest)
         _run(ctx, fusing.quantize_command(staged, dest, bits))
     else:
         if bits and already_quantized:
             ctx.note("Model is already quantized; exporting as-is.")
-        fusing.copy_model(staged, dest)
+        shutil.copytree(staged, dest)
 
     fusing.write_model_card(dest, name=name, project=project_info, lineage=lineage, sampling=c.get("sampling", {}))
     size = manage.dir_size_gb(dest)

@@ -18,33 +18,27 @@ from slm.db import (
     Job,
     ModelRecord,
     PreferencePair,
-    StudioState,
     TunerMessage,
+    count,
     now,
+    ready,
+    studio_state,
 )
+from slm.events import canvas_changed
 from slm.feedback import record_feedback
 from slm.models import manage
-from slm.tuner.session import tuner
+from slm.sessions import export_jobs, overview, resume_project, stop_project
+from slm.tuner import confirm
+from slm.tuner.session import save_message, tuner
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["studio"])
-
-
-def _state(s: Session, pid: int) -> StudioState:
-    st = s.get(StudioState, pid)
-    if st is None:
-        st = StudioState(project_id=pid)
-        s.add(st)
-        s.commit()
-        s.refresh(st)
-    return st
 
 
 @router.get("/studio")
 def studio_snapshot(project_id: int, s: Session = SessionDep) -> dict:
     """Everything the canvas renders, in one request."""
     p = project_or_404(s, project_id)
-    st = _state(s, project_id)
-    hw = hardware.detect()
+    st = studio_state(s, project_id)
     model = None
     if p.base_model:
         rec = s.exec(select(ModelRecord).where(ModelRecord.repo_id == p.base_model)).first()
@@ -61,7 +55,6 @@ def studio_snapshot(project_id: int, s: Session = SessionDep) -> dict:
             }
     jobs = s.exec(select(Job).where(Job.project_id == project_id).order_by(Job.id.desc()).limit(30)).all()
     ckpts = s.exec(select(Checkpoint).where(Checkpoint.project_id == project_id).order_by(Checkpoint.id)).all()
-    by_job = {j.id: j for j in jobs}
     return {
         "project": p.model_dump(mode="json"),
         "stage": st.stage,
@@ -69,7 +62,8 @@ def studio_snapshot(project_id: int, s: Session = SessionDep) -> dict:
         "tuner_busy": tuner.is_busy(project_id),
         "autopilot": st.autopilot,
         "completed": st.completed,
-        "hardware": hw.to_dict(),
+        # The run waiting for the user's go-ahead (what gets submitted stays server-side).
+        "pending_action": {k: v for k, v in (st.pending_action or {}).items() if k != "payload"} or None,
         "model": model,
         "datasets": [
             d.model_dump(mode="json", exclude={"raw_path"})
@@ -82,26 +76,15 @@ def studio_snapshot(project_id: int, s: Session = SessionDep) -> dict:
             ).all()
         ],
         "jobs": [j.model_dump(mode="json", exclude={"config", "log_path"}) for j in jobs],
-        "checkpoints": [
-            c.model_dump(mode="json")
-            | {"warnings": (by_job.get(c.job_id).result or {}).get("warnings", []) if by_job.get(c.job_id) else []}
-            for c in ckpts
-        ],
+        "checkpoints": [c.model_dump(mode="json") for c in ckpts],
         "samples": st.samples,
         "comparisons": st.comparisons[-20:],
         "feedback": {
-            "judgements": len(s.exec(select(Feedback.id).where(Feedback.project_id == project_id)).all()),
-            "pairs_ready": len(
-                s.exec(
-                    select(PreferencePair.id).where(
-                        PreferencePair.project_id == project_id,
-                        PreferencePair.approved == True,  # noqa: E712
-                        PreferencePair.used_in_job_id == None,  # noqa: E711
-                    )
-                ).all()
-            ),
+            "judgements": count(s, Feedback, Feedback.project_id == project_id),
+            "pairs_ready": count(s, PreferencePair, PreferencePair.project_id == project_id, *ready(PreferencePair)),
         },
-        "exports": [j.result for j in jobs if j.kind == "export" and j.status == "succeeded"],
+        # Every export, however old (the job list above only covers the latest 30).
+        "exports": [j.result | {"job_id": j.id} for j in export_jobs(s, project_id)],
     }
 
 
@@ -118,24 +101,65 @@ class MessageIn(BaseModel):
 @router.post("/tuner/message")
 def tuner_message(project_id: int, body: MessageIn, s: Session = SessionDep) -> dict:
     project_or_404(s, project_id)
-    if not body.text.strip():
+    text = body.text.strip()
+    if not text:
         raise HTTPException(422, "empty message")
-    tuner.send(project_id, body.text.strip())
+    if confirm.is_plain_yes(text) and confirm.pending(project_id):
+        # "yes" to a proposal is the same as pressing Go ahead.
+        save_message(project_id, "user", text)
+        try:
+            confirm.confirm(project_id)
+        except (LookupError, ValueError):
+            pass  # the Tuner is told what went wrong
+        return {"queued": True, "confirmed": True}
+    tuner.send(project_id, text)
     return {"queued": True}
+
+
+class DecisionIn(BaseModel):
+    action_id: str | None = None
+    reason: str = ""
+
+
+@router.post("/studio/confirm")
+def confirm_action(project_id: int, body: DecisionIn, s: Session = SessionDep) -> dict:
+    """The user's go-ahead for the run the Tuner proposed: only this (or a plain "yes") starts it."""
+    project_or_404(s, project_id)
+    try:
+        return confirm.confirm(project_id, body.action_id)
+    except LookupError as e:
+        raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@router.post("/studio/decline")
+def decline_action(project_id: int, body: DecisionIn, s: Session = SessionDep) -> dict:
+    project_or_404(s, project_id)
+    try:
+        return confirm.decline(project_id, body.action_id, body.reason)
+    except LookupError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @router.post("/tuner/start")
 def tuner_start(project_id: int, s: Session = SessionDep) -> dict:
-    """Kick off a new project's conversation (no-op if it has already started)."""
+    """Start the Tuner on a project: an explicit user action (creating a model on Home, or pressing
+    "Start the Tuner"). Opening a project never calls this. No-op if it has already started."""
     p = project_or_404(s, project_id)
     if s.exec(select(TunerMessage.id).where(TunerMessage.project_id == project_id)).first():
         return {"started": False}
+    st = studio_state(s, project_id)
+    st.autopilot, st.completed, st.stalled_nudges = True, False, 0
+    s.add(st)
+    s.commit()
+    tuner.unhalt(project_id)
     goal = p.goal or "(not given yet)"
     tuner.send(
         project_id,
-        f"[New project] The user just opened the Studio. Their description of the model: {goal}. "
-        "Greet them in one line, restate the goal, and start building. Run the whole pipeline yourself "
-        "without asking them anything.",
+        f"[New project] The user just started the Tuner. Their description of the model: {goal}. "
+        "Greet them in one line, restate the goal as a small, fun model you'll build, then do the groundwork "
+        "and propose the base model for them to confirm.",
         role="event",
         meta={"kickoff": True},
     )
@@ -157,7 +181,7 @@ class JudgeIn(BaseModel):
 @router.post("/studio/judge")
 def judge(project_id: int, body: JudgeIn, s: Session = SessionDep) -> dict:
     p = project_or_404(s, project_id)
-    st = _state(s, project_id)
+    st = studio_state(s, project_id)
     # Deep copy: mutating the loaded dicts in place makes SQLAlchemy see "no change" and skip the write.
     comps = copy.deepcopy(st.comparisons)
     item = next((c for c in comps if c.get("id") == body.comparison_id), None)
@@ -200,8 +224,6 @@ def judge(project_id: int, body: JudgeIn, s: Session = SessionDep) -> dict:
             role="event",
             meta={"feedback": True},
         )
-    from slm.tuner.tools import canvas_changed
-
     canvas_changed(project_id)
     return out | {"batch_done": batch_done}
 
@@ -212,19 +234,13 @@ class AutopilotIn(BaseModel):
 
 @router.post("/studio/autopilot")
 def set_autopilot(project_id: int, body: AutopilotIn, s: Session = SessionDep) -> dict:
-    """Switch autopilot. Turning it on wakes the Tuner to carry on from wherever things are."""
+    """Switch autopilot. On wakes the Tuner to carry on; off pauses it (a running job still finishes)."""
     project_or_404(s, project_id)
-    st = _state(s, project_id)
-    st.autopilot, st.stalled_nudges = body.on, 0
     if body.on:
-        st.completed = False
-    s.add(st)
-    s.commit()
-    if body.on and not tuner.is_busy(project_id):
-        tuner.send(
-            project_id, "[Autopilot on] Carry on from where things stand.", role="event", meta={"autopilot": True}
-        )
-    return {"autopilot": st.autopilot}
+        resume_project(project_id)
+    else:
+        stop_project(project_id, cancel_jobs=False)
+    return {"autopilot": body.on}
 
 
 # ── sessions across projects ────────────────────────────────────────────────
@@ -235,8 +251,6 @@ sessions_router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 @sessions_router.get("")
 def list_sessions() -> dict:
     """Every project's live state, plus what the GPU is doing and what's queued."""
-    from slm.sessions import overview
-
     return overview()
 
 
@@ -246,15 +260,11 @@ class StopIn(BaseModel):
 
 @sessions_router.post("/{project_id}/stop")
 def stop_session(project_id: int, body: StopIn, s: Session = SessionDep) -> dict:
-    from slm.sessions import stop_project
-
     project_or_404(s, project_id)
     return stop_project(project_id, body.cancel_jobs)
 
 
 @sessions_router.post("/{project_id}/resume")
 def resume_session(project_id: int, s: Session = SessionDep) -> dict:
-    from slm.sessions import resume_project
-
     project_or_404(s, project_id)
     return resume_project(project_id)

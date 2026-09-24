@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { api, fmt, type Job, type Project } from "../api";
+import { api, fmt, isServing, type Job, type Project } from "../api";
 import { useOverview, useProjectId } from "../hooks";
 import { Badge, Button, Card, cx, Field, StatusBadge, TextArea } from "../ui";
 
@@ -88,7 +88,7 @@ export default function OverviewPage() {
                   <span className="font-mono text-muted">{project.base_model}</span>
                 </li>
                 {checkpoints.map((c, i) => {
-                  const serving = project.current_adapter_path === c.adapter_path || project.current_model_path === c.fused_path;
+                  const serving = isServing(project, c);
                   // No parent after the first checkpoint means a fresh run branched from the base model.
                   const fromBase = i > 0 && c.parent_id == null;
                   return (

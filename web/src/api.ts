@@ -1,8 +1,8 @@
 // Typed client for the SLM Forge API.
 
-export type Json = Record<string, unknown>;
+type Json = Record<string, unknown>;
 
-export interface Hardware {
+interface Hardware {
   chip: string;
   total_memory_gb: number;
   gpu_working_set_gb: number;
@@ -188,7 +188,7 @@ export interface DatasetVersion {
   created_at: string;
 }
 
-export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 export interface Job {
   id: number;
@@ -250,7 +250,96 @@ export interface SftExample {
   used_in_job_id: number | null;
 }
 
-export class ApiError extends Error {
+// ── the Studio ──────────────────────────────────────────────────────────────
+
+export interface TunerMessage {
+  id: number;
+  role: "user" | "assistant" | "event" | "tool";
+  content: string;
+  meta: {
+    name?: string;
+    args?: Record<string, unknown>;
+    status?: string;
+    output?: string;
+    error?: boolean;
+    kickoff?: boolean;
+    autopilot?: boolean;
+    autopilot_paused?: boolean;
+    confirmed?: string;
+    declined?: string;
+  } & Record<string, unknown>;
+  created_at: string;
+}
+
+export interface Comparison {
+  id: string;
+  prompt: string;
+  a: string;
+  b: string;
+  status: "pending" | "judged";
+  choice?: string;
+  judge?: "ai";
+  critique?: string;
+  ideal?: string;
+}
+
+export interface Sample {
+  prompt: string;
+  target: string;
+  text: string;
+  tokens_per_sec?: number;
+}
+
+/** A run the Tuner proposed; nothing starts until the user confirms it. */
+export interface PendingAction {
+  id: string;
+  kind: "model" | "sft" | "dpo" | "export" | "synthesize" | "review" | "import";
+  title: string;
+  reason: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface Snapshot {
+  project: Project;
+  pending_action: PendingAction | null;
+  stage: Stage;
+  note: string;
+  tuner_busy: boolean;
+  autopilot: boolean;
+  completed: boolean;
+  model: { repo_id: string; downloaded: boolean; params?: number; bits?: number; size_gb?: number; layers?: number; inference?: MemoryEstimate } | null;
+  datasets: Dataset[];
+  versions: DatasetVersion[];
+  jobs: Job[];
+  checkpoints: Checkpoint[];
+  samples: Sample[];
+  comparisons: Comparison[];
+  feedback: { judgements: number; pairs_ready: number };
+  exports: { job_id: number; path: string; size_gb: number; min_ram_gb: number }[];
+}
+
+export const STAGES = ["goal", "model", "data", "train", "evaluate", "refine", "export"] as const;
+export type Stage = (typeof STAGES)[number];
+
+export const isActive = (j: Job) => j.status === "running" || j.status === "queued";
+
+/** Is the project serving this checkpoint (its adapter, or its fused model)? */
+export const isServing = (p: Project, c: Checkpoint) =>
+  p.current_adapter_path === c.adapter_path || (!!c.fused_path && p.current_model_path === c.fused_path);
+
+/** A finished model, from GET /projects/{id}/exports. */
+export interface ExportRow {
+  job_id: number;
+  name: string;
+  path: string;
+  size_gb: number;
+  min_ram_gb: number;
+  on_disk: boolean;
+  created_at: string | null;
+}
+
+class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
     super(message);
@@ -284,10 +373,11 @@ export const api = {
   get: <T>(url: string) => request<T>("GET", url),
   post: <T>(url: string, body?: unknown) => request<T>("POST", url, body ?? {}),
   patch: <T>(url: string, body: unknown) => request<T>("PATCH", url, body),
+  delete: <T>(url: string) => request<T>("DELETE", url),
   upload: <T>(url: string, form: FormData) => request<T>("POST", url, form),
 };
 
-export interface SseEvent {
+interface SseEvent {
   type: string;
   [k: string]: unknown;
 }

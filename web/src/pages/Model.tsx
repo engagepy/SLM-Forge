@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
-import { api, fmt, type Job, type MemoryEstimate, type ModelCandidate, type Preset } from "../api";
-import { useOverview, useProjectId, waitForJob } from "../hooks";
+import { api, fmt, type MemoryEstimate, type ModelCandidate, type Preset } from "../api";
+import { useOverview, useProjectId, followJob } from "../hooks";
 import { Badge, Button, Card, cx, Empty, ErrorNote, Input, MemoryBar, Spinner, Toggle } from "../ui";
 
 const FIT = {
@@ -167,8 +167,7 @@ function ModelDetail({ repoId, projectId, locked, inUse }: { repoId: string; pro
     mutationFn: async () => {
       await api.patch(`/api/projects/${projectId}`, { base_model: repoId });
       const { job_id } = await api.post<{ job_id: number }>("/api/models/download", { repo_id: repoId, project_id: projectId });
-      const job: Job = await waitForJob(job_id, (j) => setStatus(j.status));
-      if (job.status !== "succeeded") throw new Error(job.error || `Download ${job.status}`);
+      const job = await followJob(job_id, "Download", setStatus);
       return job;
     },
     onSettled: () => {

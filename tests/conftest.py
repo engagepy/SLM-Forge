@@ -22,6 +22,16 @@ def fresh_db():
 
 
 @pytest.fixture
+def client():
+    """The API. No `with` block, so the lifespan (and the background worker) doesn't start: jobs just queue."""
+    from fastapi.testclient import TestClient
+
+    from slm.api.app import app
+
+    return TestClient(app)
+
+
+@pytest.fixture
 def session(fresh_db):
     with Session(fresh_db) as s:
         yield s

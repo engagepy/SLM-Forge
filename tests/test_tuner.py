@@ -5,7 +5,6 @@ import json
 
 import pytest
 from agents.tool_context import ToolContext
-from fastapi.testclient import TestClient
 from sqlmodel import select
 
 from slm.db import Dataset, Job, PreferencePair, Project, SftExample, StudioState, TunerMessage
@@ -95,9 +94,12 @@ def test_review_uses_unambiguous_ids(session, project):
     assert session.get(PreferencePair, pair_id) is None  # rejected wins over approve_all
 
 
-def test_long_jobs_wake_the_tuner_and_short_ones_do_not(session, project, monkeypatch):
+def test_long_jobs_wake_the_tuner_only_on_autopilot_and_never_when_cancelled(session, project, monkeypatch):
     sent = []
     monkeypatch.setattr(tuner, "send", lambda pid, text, role="user", meta=None: sent.append((pid, role, text)))
+    st = StudioState(project_id=project.id, autopilot=True)
+    session.add(st)
+    session.commit()
     done = Job(id=5, project_id=project.id, kind="sft", status="succeeded", config={"notify": True},
                result={"metrics": {"val_loss": 1.2}, "warnings": [{"code": "diverged"}]})  # fmt: skip
     on_job_finished(done)
@@ -106,21 +108,51 @@ def test_long_jobs_wake_the_tuner_and_short_ones_do_not(session, project, monkey
     assert "sft job 5 succeeded" in sent[0][2] and "diverged" in sent[0][2]
     assert "val_loss" in job_update_text(done)
 
+    # Regression: cancelling a run woke the agent, which immediately started new training.
+    on_job_finished(Job(id=7, project_id=project.id, kind="sft", status="cancelled", config={"notify": True}))
+    assert len(sent) == 1
 
-@pytest.fixture
-def client():
-    from slm.api.app import app
+    # Paused: the result is noted quietly, but the agent isn't run.
+    st.autopilot = False
+    session.add(st)
+    session.commit()
+    on_job_finished(Job(id=8, project_id=project.id, kind="sft", status="succeeded", config={"notify": True}))
+    assert len(sent) == 1
+    quiet = session.exec(select(TunerMessage)).all()[-1]
+    assert quiet.meta.get("quiet") and "sft job 8 succeeded" in quiet.content
 
-    return TestClient(app)
+
+def test_halted_project_cannot_even_propose_until_the_user_speaks(session, project, monkeypatch):
+    from slm.tuner.session import Tuner
+
+    t = Tuner()
+    monkeypatch.setattr("slm.tuner.session.tuner", t)
+    t.halt(project.id)
+    out = call(project.id, "export_model", name="x")
+    assert "stopped this project" in str(out)
+    assert not session.exec(select(Job)).all()
+    st = session.get(StudioState, project.id)
+    assert st is None or not st.pending_action
+    # A halted project records events without running the agent...
+    t.send(project.id, "[Job update] something", role="event")
+    assert not t.is_busy(project.id)
+    # ...and the user's own message lifts the halt.
+    monkeypatch.setattr(t, "_event_loop", lambda: (_ for _ in ()).throw(RuntimeError("would run")))
+    with pytest.raises(RuntimeError, match="would run"):
+        t.send(project.id, "please export it")
+    assert not t.is_halted(project.id)
 
 
-def test_studio_snapshot_and_kickoff(client, project, monkeypatch):
+def test_opening_a_project_starts_nothing_only_explicit_start_does(client, project, monkeypatch):
     sent = []
     monkeypatch.setattr(tuner, "send", lambda pid, text, role="user", meta=None: sent.append(role))
+    # Regression: opening an older project in the Studio started the Tuner on autopilot.
     snap = client.get(f"/api/projects/{project.id}/studio").json()
     assert snap["stage"] == "goal" and snap["tuner_busy"] is False and snap["model"] is None
+    assert snap["autopilot"] is False and sent == []
     assert client.post(f"/api/projects/{project.id}/tuner/start").json() == {"started": True}
     assert sent == ["event"]
+    assert client.get(f"/api/projects/{project.id}/studio").json()["autopilot"] is True
 
 
 def test_judging_the_last_comparison_records_feedback_and_wakes_the_tuner(client, session, project, monkeypatch):
@@ -183,7 +215,7 @@ def fresh_autopilot(project):
 def test_autopilot_nudges_when_idle(session, fresh_autopilot):
     from slm.tuner.session import AUTOPILOT_TEXT, autopilot_nudge
 
-    session.add(StudioState(project_id=fresh_autopilot.id))
+    session.add(StudioState(project_id=fresh_autopilot.id, autopilot=True))
     session.commit()
     assert autopilot_nudge(fresh_autopilot.id) == AUTOPILOT_TEXT
     # The nudge is recorded in the transcript but flagged so the chat can hide it.
@@ -217,7 +249,7 @@ def test_autopilot_pauses_after_nudges_without_progress_and_resets_on_progress(s
     from slm.tuner.session import autopilot_nudge, reset_stall
 
     pid = fresh_autopilot.id
-    session.add(StudioState(project_id=pid))
+    session.add(StudioState(project_id=pid, autopilot=True))
     session.commit()
     assert autopilot_nudge(pid)  # first nudge sets the baseline
     session.add(Job(project_id=pid, kind="prepare_dataset", status="succeeded"))  # progress
@@ -286,3 +318,268 @@ def test_every_defined_tool_is_registered():
         if isinstance(n, ast.FunctionDef) and any(getattr(d, "id", None) == "tool" for d in n.decorator_list)
     }
     assert defined == {t.name for t in ALL_TOOLS}
+
+
+def test_successful_export_completes_the_project(session, project, monkeypatch):
+    monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
+    session.add(StudioState(project_id=project.id, stage="export"))
+    session.commit()
+    on_job_finished(Job(project_id=project.id, kind="export", status="failed", config={"notify": True}))
+    session.expire_all()
+    assert session.get(StudioState, project.id).completed is False  # a failed export isn't done
+    on_job_finished(Job(project_id=project.id, kind="export", status="succeeded", config={}))
+    session.expire_all()
+    assert session.get(StudioState, project.id).completed is True
+
+
+# ── runs wait for the user's go-ahead ───────────────────────────────────────
+
+
+@pytest.fixture
+def submitted(session, monkeypatch):
+    """Record jobs instead of running them."""
+    jobs = []
+
+    def submit(kind, config, project_id):
+        job = Job(project_id=project_id, kind=kind, status="queued", config=config)
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        jobs.append(job)
+        return job
+
+    monkeypatch.setattr(tools.worker, "submit", submit)
+    return jobs
+
+
+def test_runs_are_proposed_and_start_only_when_the_user_confirms(client, session, project, submitted, monkeypatch):
+    from slm.tuner import session as tsession
+
+    sent = []
+    monkeypatch.setattr(tuner, "send", lambda pid, text, role="user", meta=None: sent.append(text))
+    tsession._last_signature.clear()
+    session.add(StudioState(project_id=project.id, autopilot=True))
+    session.commit()
+
+    # Regression: the Tuner used to start exports and training runs on its own.
+    out = call(project.id, "export_model", name="chef", reason="Package it so you can use it.")
+    assert out["status"] == "waiting for the user's confirmation"
+    assert submitted == [] and not session.exec(select(Job)).all()
+    snap = client.get(f"/api/projects/{project.id}/studio").json()
+    action = snap["pending_action"]
+    assert action["kind"] == "export" and "payload" not in action and action["reason"]
+    assert tsession.autopilot_nudge(project.id) is None  # waiting on the user, not nudging
+    assert "waiting_for_user_to_confirm" in call(project.id, "get_status")
+
+    r = client.post(f"/api/projects/{project.id}/studio/confirm", json={"action_id": action["id"]})
+    assert r.status_code == 200 and [j.kind for j in submitted] == ["export"]
+    assert submitted[0].config["notify"] is True and submitted[0].config["name"] == "chef"
+    assert len(sent) == 1 and sent[0].startswith("[Confirmed]")
+    assert client.get(f"/api/projects/{project.id}/studio").json()["pending_action"] is None
+    # Confirming twice doesn't start a second run.
+    assert client.post(f"/api/projects/{project.id}/studio/confirm", json={}).status_code == 409
+    assert len(submitted) == 1
+
+
+def test_choosing_a_base_model_is_a_proposal_too(client, session, project, submitted, monkeypatch):
+    from slm.models import manage
+
+    monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
+    monkeypatch.setattr(manage, "local_path_for", lambda repo: None)
+    monkeypatch.setattr(manage, "register_local", lambda repo: None)
+    out = call(project.id, "choose_base_model", repo_id="org/tiny-0.5B", reason="Small and quick.")
+    assert out["status"] == "waiting for the user's confirmation"
+    session.expire_all()
+    assert session.get(Project, project.id).base_model is None and submitted == []
+    client.post(f"/api/projects/{project.id}/studio/confirm", json={})
+    session.expire_all()
+    assert session.get(Project, project.id).base_model == "org/tiny-0.5B"
+    assert [(j.kind, j.config["repo_id"]) for j in submitted] == [("download", "org/tiny-0.5B")]
+
+
+def test_declining_starts_nothing_and_tells_the_tuner(client, session, project, submitted, monkeypatch):
+    sent = []
+    monkeypatch.setattr(tuner, "send", lambda pid, text, role="user", meta=None: sent.append(text))
+    call(project.id, "export_model", name="chef")
+    r = client.post(f"/api/projects/{project.id}/studio/decline", json={"reason": "train it more first"})
+    assert r.status_code == 200 and submitted == []
+    assert sent and sent[0].startswith("[Declined]") and "train it more first" in sent[0]
+    assert client.get(f"/api/projects/{project.id}/studio").json()["pending_action"] is None
+
+
+def test_a_plain_yes_in_the_chat_confirms_but_other_messages_do_not(client, session, project, submitted, monkeypatch):
+    from slm.tuner.confirm import is_plain_yes
+
+    sent = []
+    monkeypatch.setattr(tuner, "send", lambda pid, text, role="user", meta=None: sent.append((role, text)))
+    assert is_plain_yes("Yes!") and is_plain_yes("go ahead") and is_plain_yes("ok 👍")
+    assert not is_plain_yes("yes but use a smaller model") and not is_plain_yes("no")
+    call(project.id, "export_model", name="chef")
+    client.post(f"/api/projects/{project.id}/tuner/message", json={"text": "yes, but call it sous-chef"})
+    assert submitted == [] and sent[-1] == ("user", "yes, but call it sous-chef")  # steering, not a go-ahead
+    client.post(f"/api/projects/{project.id}/tuner/message", json={"text": "Go ahead."})
+    assert [j.kind for j in submitted] == ["export"]
+    assert sent[-1][0] == "event" and sent[-1][1].startswith("[Confirmed]")
+    users = [m.content for m in session.exec(select(TunerMessage).where(TunerMessage.role == "user")).all()]
+    assert "Go ahead." in users  # the reply still shows in the transcript
+
+
+def test_stopping_a_project_withdraws_its_proposal(session, project, monkeypatch):
+    from slm.sessions import stop_project
+    from slm.tuner.confirm import pending
+
+    call(project.id, "export_model", name="x")
+    assert pending(project.id)
+    monkeypatch.setattr(tuner, "halt", lambda pid: None)
+    stop_project(project.id)
+    assert pending(project.id) == {}
+
+
+def test_tuner_turns_are_announced_on_the_jobs_feed(project):
+    from slm.events import bus
+    from slm.tuner.session import _busy_changed
+
+    got = []
+
+    async def listen():
+        async with bus.subscribe("jobs") as q:
+            _busy_changed(project.id, True)
+            got.append(await asyncio.wait_for(q.get(), 1))
+
+    asyncio.run(listen())
+    assert got == [{"type": "tuner", "project_id": project.id, "busy": True}]
+
+
+# ── trying the exported model ───────────────────────────────────────────────
+
+
+def test_generate_can_target_an_export(client, session, project, tmp_path, monkeypatch):
+    from slm.api import routes_feedback
+
+    model_dir = tmp_path / "chef"
+    model_dir.mkdir()
+    job = Job(project_id=project.id, kind="export", status="succeeded", result={"path": str(model_dir), "size_gb": 0.3})
+    other = Job(project_id=project.id, kind="sft", status="succeeded")
+    session.add_all([job, other])
+    session.commit()
+    p = session.get(Project, project.id)
+    assert routes_feedback._target(session, p, f"export:{job.id}") == {
+        "model_path": str(model_dir),
+        "adapter_path": None,
+    }
+
+    listed = client.get(f"/api/projects/{project.id}/exports").json()
+    assert listed[0]["name"] == "chef" and listed[0]["on_disk"] is True
+
+    def status(target: str) -> int:
+        body = {"messages": [{"role": "user", "content": "hi"}], "target": target}
+        return client.post(f"/api/projects/{project.id}/generate", json=body).status_code
+
+    assert status(f"export:{other.id}") == 404  # not an export
+    model_dir.rmdir()
+    assert status(f"export:{job.id}") == 409  # moved or deleted since
+    assert client.get(f"/api/projects/{project.id}/exports").json()[0]["on_disk"] is False
+
+
+def test_a_proposal_shows_the_project_as_needing_the_user(project):
+    from slm.sessions import overview
+
+    call(project.id, "export_model", name="chef")
+    item = next(x for x in overview()["sessions"] if x["project_id"] == project.id)
+    assert item["state"] == "waiting" and "chef" in item["awaiting"]
+
+
+# ── a finished project stays open ───────────────────────────────────────────
+
+
+def test_a_new_run_reopens_a_finished_project_but_chat_does_not(client, session, project, submitted, monkeypatch):
+    monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
+    session.add(StudioState(project_id=project.id, completed=True, stage="export"))
+    session.commit()
+    client.post(f"/api/projects/{project.id}/tuner/message", json={"text": "thanks, it's great"})
+    session.expire_all()
+    assert session.get(StudioState, project.id).completed is True
+    call(project.id, "export_model", name="chef-v2")
+    client.post(f"/api/projects/{project.id}/studio/confirm", json={})
+    session.expire_all()
+    st = session.get(StudioState, project.id)
+    assert st.completed is False and st.stage == "export" and [j.kind for j in submitted] == ["export"]
+
+
+def test_the_snapshot_lists_every_export_not_just_recent_ones(client, session, project):
+    session.add(Job(project_id=project.id, kind="export", status="succeeded", result={"path": "/x/chef"}))
+    session.add_all(Job(project_id=project.id, kind="prepare_dataset", status="succeeded") for _ in range(35))
+    session.commit()
+    snap = client.get(f"/api/projects/{project.id}/studio").json()
+    assert len(snap["jobs"]) == 30 and [e["path"] for e in snap["exports"]] == ["/x/chef"]
+
+
+# ── spending needs a mandate ────────────────────────────────────────────────
+
+
+def _open_project(session, project, **state):
+    """A project outside a round: finished, or with autopilot paused."""
+    session.add(StudioState(project_id=project.id, **({"completed": True, "autopilot": True} | state)))
+    session.commit()
+
+
+def test_a_question_after_the_export_cannot_start_spending(client, session, project, submitted, monkeypatch):
+    # Regression: "What would you suggest?" on a finished project started writing 150 examples.
+    monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
+    _open_project(session, project)
+    out = call(project.id, "generate_synthetic_examples", kind="sft", count=150, focus="forces")
+    assert "needs their go-ahead" in str(out) and submitted == []  # no reason given: refused outright
+    out = call(project.id, "generate_synthetic_examples", kind="sft", count=150, focus="forces", reason="Fix forces.")
+    assert out["status"] == "waiting for the user's confirmation" and submitted == []
+    snap = client.get(f"/api/projects/{project.id}/studio").json()
+    assert snap["pending_action"]["kind"] == "synthesize" and snap["pending_action"]["details"]["count"] == 150
+
+    # Confirming grants exactly one call, and reopens the round.
+    client.post(f"/api/projects/{project.id}/studio/confirm", json={})
+    session.expire_all()
+    st = session.get(StudioState, project.id)
+    assert st.granted == ["generate_synthetic_examples"] and st.autopilot and not st.completed
+    monkeypatch.setattr(tools, "_wait", lambda job_id, timeout: submitted[-1])
+    call(project.id, "generate_synthetic_examples", kind="sft", count=150, focus="forces")
+    assert [j.kind for j in submitted] == ["synthesize"]
+    session.expire_all()
+    assert session.get(StudioState, project.id).granted == []
+
+
+@pytest.mark.parametrize("state", [{"completed": True}, {"completed": False, "autopilot": False}])
+def test_spending_tools_propose_when_no_round_is_in_motion(session, project, submitted, monkeypatch, state):
+    monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
+    _open_project(session, project, **state)
+    out = call(project.id, "import_dataset", repo_id="org/data", reason="Broader questions.")
+    assert out["status"] == "waiting for the user's confirmation" and submitted == []
+    from slm.tuner.confirm import pending
+
+    assert pending(project.id)["kind"] == "import" and pending(project.id)["payload"]["args"]["repo_id"] == "org/data"
+
+
+def test_inside_a_round_spending_tools_run_without_asking(session, project, submitted, monkeypatch):
+    session.add(StudioState(project_id=project.id, autopilot=True, completed=False))
+    session.commit()
+    monkeypatch.setattr(tools, "_wait", lambda job_id, timeout: submitted[-1])
+    call(project.id, "generate_synthetic_examples", kind="sft", count=20, focus="x")
+    assert [j.kind for j in submitted] == ["synthesize"]
+
+
+def test_no_spending_while_a_proposal_waits(session, project, submitted, monkeypatch):
+    monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
+    session.add(StudioState(project_id=project.id, autopilot=True))
+    session.commit()
+    call(project.id, "export_model", name="chef")  # a card is now waiting
+    out = call(project.id, "ai_review_answers", prompts=["q1", "q2"], reason="Check it.")
+    assert "already waiting" in str(out) and submitted == []
+
+
+def test_unreviewed_examples_block_writing_more(session, project, submitted):
+    session.add(StudioState(project_id=project.id, autopilot=True))
+    session.add_all(
+        SftExample(project_id=project.id, messages=[{"role": "user", "content": str(i)}], approved=False)
+        for i in range(tools.MAX_UNREVIEWED)
+    )
+    session.commit()
+    out = call(project.id, "generate_synthetic_examples", kind="sft", count=50, focus="more")
+    assert "waiting for review" in str(out) and submitted == []

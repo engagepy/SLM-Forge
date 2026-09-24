@@ -73,6 +73,14 @@ export function Button({
   );
 }
 
+export function ProgressBar({ pct, failed = false }: { pct: number; failed?: boolean }) {
+  return (
+    <div className="h-1.5 overflow-hidden rounded-full bg-panel-2">
+      <div className={cx("h-full transition-all", failed ? "bg-bad" : "bg-accent")} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
 export function Spinner({ className }: { className?: string }) {
   return (
     <span
@@ -100,7 +108,7 @@ export function Badge({ tone = "neutral", children, className }: { tone?: Tone; 
   );
 }
 
-export const statusTone: Record<string, Tone> = {
+const statusTone: Record<string, Tone> = {
   queued: "neutral",
   running: "info",
   succeeded: "good",
@@ -179,7 +187,6 @@ export function Slider({
   min,
   max,
   step,
-  format,
 }: {
   label: ReactNode;
   hint?: ReactNode;
@@ -188,7 +195,6 @@ export function Slider({
   min: number;
   max: number;
   step: number;
-  format?: (v: number) => string;
 }) {
   const id = useId();
   return (
@@ -200,7 +206,7 @@ export function Slider({
         <input
           type="number"
           className="num w-20 rounded-md border border-line bg-bg px-1.5 py-0.5 text-right text-xs focus:border-accent focus:outline-none"
-          value={format ? format(value) : value}
+          value={value}
           step={step}
           min={min}
           max={max}
@@ -307,8 +313,8 @@ export function ErrorNote({ error }: { error: unknown }) {
   return <div className="rounded-lg border border-bad/30 bg-bad-soft px-3 py-2 text-xs text-bad">{String((error as Error).message ?? error)}</div>;
 }
 
-export function Collapsible({ title, children, defaultOpen = false }: { title: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
+export function Collapsible({ title, children }: { title: ReactNode; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
   return (
     <div className="rounded-lg border border-line">
       <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-muted hover:text-fg">
@@ -316,6 +322,36 @@ export function Collapsible({ title, children, defaultOpen = false }: { title: R
         <span className={cx("transition", open && "rotate-90")}>›</span>
       </button>
       {open && <div className="border-t border-line p-3">{children}</div>}
+    </div>
+  );
+}
+
+/** A command or path the user will want to paste somewhere: monospace, with a copy button. */
+export function CodeBlock({ text, label, className }: { text: string; label?: ReactNode; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <div className={className}>
+      {label && <div className="mb-0.5 text-[11px] text-faint">{label}</div>}
+      <div className="group flex items-start gap-1 rounded-md bg-bg pr-1">
+        <pre className="min-w-0 flex-1 overflow-x-auto py-2 pl-3 font-mono text-[11.5px] text-muted">{text}</pre>
+        <button
+          type="button"
+          onClick={copy}
+          title="Copy"
+          className={cx(
+            "mt-1 shrink-0 rounded px-1.5 py-0.5 text-[11px] transition",
+            copied ? "bg-good-soft text-good" : "bg-panel-2 text-faint opacity-60 group-hover:opacity-100 hover:text-fg",
+          )}
+        >
+          {copied ? "copied" : "copy"}
+        </button>
+      </div>
     </div>
   );
 }

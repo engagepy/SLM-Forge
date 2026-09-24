@@ -4,7 +4,7 @@ import { Link } from "react-router";
 
 import { api, DEFAULT_SAMPLING, postStream, type PreferencePair, type SamplingParams, type SftExample } from "../api";
 import SamplingControls from "../components/SamplingControls";
-import { useOverview, useProjectId, waitForJob } from "../hooks";
+import { useOverview, useProjectId, followJob } from "../hooks";
 import { Badge, Button, Card, Collapsible, cx, Empty, ErrorNote, Field, Spinner, Stat, TextArea } from "../ui";
 
 type Choice = "a" | "b" | "tie" | "both_bad";
@@ -101,7 +101,6 @@ function Compare({ projectId, systemPrompt }: { projectId: number; systemPrompt:
   const pick = (c: Choice) => {
     setChoice(c);
     if (c === "a" || c === "b") setEdited(cands[c]);
-    else if (!edited) setEdited("");
   };
   const needsText = choice === "both_bad" && !edited.trim() && !critique.trim();
 
@@ -213,8 +212,7 @@ function SidePanel({ projectId }: { projectId: number }) {
   const observe = useMutation({
     mutationFn: async () => {
       const { job_id } = await api.post<{ job_id: number }>(`/api/projects/${projectId}/agents/observe`, { use_llm: true });
-      const job = await waitForJob(job_id, (j) => setStatus(j.status));
-      if (job.status !== "succeeded") throw new Error(job.error || `Observer ${job.status}`);
+      const job = await followJob(job_id, "Observer", setStatus);
       return job.result as { assessment?: string; notes?: string[]; rule_proposals?: string[]; observed?: number };
     },
     onSettled: () => {

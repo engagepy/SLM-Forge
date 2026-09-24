@@ -2,14 +2,11 @@
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, select
 
-from slm import hardware
-from slm.api.common import SessionDep
+from slm import hardware, profile
 from slm.config import agent_key_configured, get_settings
-from slm.db import ModelRecord
 from slm.inference.engine import engine as infer
-from slm.models import hub, manage
+from slm.models import hub
 from slm.train.config import preset
 from slm.train.worker import worker
 
@@ -88,28 +85,11 @@ def download_model(req: DownloadReq) -> dict:
     return {"job_id": job.id}
 
 
-@router.get("/models/local")
-def local_models(s: Session = SessionDep) -> list[dict]:
-    rows = s.exec(select(ModelRecord).order_by(ModelRecord.downloaded_at.desc())).all()
-    return [r.model_dump(mode="json", exclude={"config"}) for r in rows]
-
-
-@router.get("/models/local/{model_id}/estimate")
-def local_estimate(model_id: int, s: Session = SessionDep) -> dict:
-    rec = s.get(ModelRecord, model_id)
-    if rec is None:
-        raise HTTPException(404)
-    shape = manage.read_shape(rec.local_path)
-    return hardware.estimate_inference(shape).to_dict()
-
-
 # ── the user profile the Tuner keeps ────────────────────────────────────────
 
 
 @router.get("/profile")
 def get_profile() -> dict:
-    from slm import profile
-
     return profile.get().model_dump(mode="json")
 
 
@@ -120,8 +100,6 @@ class LevelIn(BaseModel):
 @router.post("/profile/level")
 def set_profile_level(body: LevelIn) -> dict:
     """The user correcting the Tuner's read of their level."""
-    from slm import profile
-
     try:
         return profile.set_level(body.level, "set by you").model_dump(mode="json")
     except ValueError as e:
@@ -130,8 +108,6 @@ def set_profile_level(body: LevelIn) -> dict:
 
 @router.delete("/profile/notes/{note_id}")
 def forget_note(note_id: str) -> dict:
-    from slm import profile
-
     if not profile.forget(note_id):
         raise HTTPException(404, "no such note")
     return profile.get().model_dump(mode="json")
@@ -139,7 +115,5 @@ def forget_note(note_id: str) -> dict:
 
 @router.post("/profile/reset")
 def reset_profile() -> dict:
-    from slm import profile
-
     profile.reset()
     return profile.get().model_dump(mode="json")

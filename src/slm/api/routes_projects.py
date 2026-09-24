@@ -5,9 +5,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlmodel import Session, func, select
+from sqlmodel import Session, select
 
 from slm import hardware
+from slm.agents.base import set_proposal_status
 from slm.api.common import SessionDep, get_or_404, project_or_404
 from slm.config import get_settings
 from slm.data import format as fmt
@@ -17,13 +18,16 @@ from slm.db import (
     Dataset,
     DatasetVersion,
     Feedback,
-    Job,
     PreferencePair,
     Project,
     Proposal,
     SftExample,
+    awaiting_review,
+    count,
+    ready,
 )
 from slm.models import manage
+from slm.sessions import export_jobs, on_disk
 from slm.train.config import TrainConfig, preset
 from slm.train.worker import worker
 
@@ -79,10 +83,6 @@ def update_project(project_id: int, body: ProjectPatch, s: Session = SessionDep)
     return p.model_dump(mode="json")
 
 
-def _count(s: Session, model, *where) -> int:
-    return s.exec(select(func.count()).select_from(model).where(*where)).one()
-
-
 @router.get("/{project_id}")
 def project_overview(project_id: int, s: Session = SessionDep) -> dict:
     p = project_or_404(s, project_id)
@@ -91,28 +91,15 @@ def project_overview(project_id: int, s: Session = SessionDep) -> dict:
         "project": p.model_dump(mode="json"),
         "base_model_downloaded": bool(p.base_model and manage.local_path_for(p.base_model)),
         "counts": {
-            "datasets": _count(s, Dataset, Dataset.project_id == project_id),
-            "dataset_versions": _count(s, DatasetVersion, DatasetVersion.project_id == project_id),
-            "feedback": _count(s, Feedback, Feedback.project_id == project_id),
-            "pairs_ready": _count(
-                s,
-                PreferencePair,
-                PreferencePair.project_id == project_id,
-                PreferencePair.approved == True,
-                PreferencePair.used_in_job_id == None,  # noqa: E711,E712
+            "datasets": count(s, Dataset, Dataset.project_id == project_id),
+            "dataset_versions": count(s, DatasetVersion, DatasetVersion.project_id == project_id),
+            "feedback": count(s, Feedback, Feedback.project_id == project_id),
+            "pairs_ready": count(s, PreferencePair, PreferencePair.project_id == project_id, *ready(PreferencePair)),
+            "sft_ready": count(s, SftExample, SftExample.project_id == project_id, *ready(SftExample)),
+            "awaiting_review": sum(
+                count(s, m, m.project_id == project_id, *awaiting_review(m)) for m in (PreferencePair, SftExample)
             ),
-            "sft_ready": _count(
-                s,
-                SftExample,
-                SftExample.project_id == project_id,
-                SftExample.approved == True,
-                SftExample.used_in_job_id == None,  # noqa: E711,E712
-            ),
-            "awaiting_review": _count(
-                s, PreferencePair, PreferencePair.project_id == project_id, PreferencePair.approved == False
-            )  # noqa: E712
-            + _count(s, SftExample, SftExample.project_id == project_id, SftExample.approved == False),  # noqa: E712
-            "pending_proposals": _count(s, Proposal, Proposal.project_id == project_id, Proposal.status == "pending"),
+            "pending_proposals": count(s, Proposal, Proposal.project_id == project_id, Proposal.status == "pending"),
         },
         "checkpoints": [c.model_dump(mode="json") for c in checkpoints],
     }
@@ -169,16 +156,9 @@ def upload_dataset(
     s.refresh(ds)
     if proposal_id:
         # This upload fulfils a guided-acquisition proposal.
-        from slm.agents.base import set_proposal_status
 
         set_proposal_status(proposal_id, "executed", {"dataset_id": ds.id})
     return ds.model_dump(mode="json") | {"suggested_mapping": fmt.guess_mapping(columns)}
-
-
-@router.get("/{project_id}/datasets/{dataset_id}/rows")
-def dataset_rows(project_id: int, dataset_id: int, limit: int = 20, s: Session = SessionDep) -> dict:
-    ds = get_or_404(s, Dataset, dataset_id)
-    return {"columns": ds.columns, "rows": scout_tools.read_raw(Path(ds.raw_path), limit=min(limit, 200))}
 
 
 class MappingIn(BaseModel):
@@ -219,7 +199,7 @@ def version_sample(
 
 
 def _model_path(p: Project) -> str:
-    path = p.current_model_path or (manage.local_path_for(p.base_model) if p.base_model else None)
+    path = manage.serving_path(p)
     if not path:
         raise HTTPException(409, "Download the project's base model first")
     return path
@@ -323,12 +303,6 @@ def activate_checkpoint(project_id: int, checkpoint_id: int, s: Session = Sessio
     return p.model_dump(mode="json")
 
 
-@router.post("/{project_id}/checkpoints/{checkpoint_id}/fuse")
-def fuse_checkpoint(project_id: int, checkpoint_id: int, s: Session = SessionDep) -> dict:
-    get_or_404(s, Checkpoint, checkpoint_id)
-    return {"job_id": worker.submit("fuse", {"checkpoint_id": checkpoint_id}, project_id).id}
-
-
 class ExportIn(BaseModel):
     name: str = ""
     quantize_bits: int | None = None
@@ -346,9 +320,8 @@ def export_model(project_id: int, body: ExportIn, s: Session = SessionDep) -> di
 
 @router.get("/{project_id}/exports")
 def list_exports(project_id: int, s: Session = SessionDep) -> list[dict]:
-    jobs = s.exec(
-        select(Job)
-        .where(Job.project_id == project_id, Job.kind == "export", Job.status == "succeeded")
-        .order_by(Job.id.desc())
-    ).all()
-    return [{"job_id": j.id, **j.result, "created_at": j.finished_at} for j in jobs]
+    return [
+        {"job_id": j.id, **j.result, "name": Path(j.result.get("path", "")).name, "on_disk": on_disk(j),
+         "created_at": j.finished_at}
+        for j in export_jobs(s, project_id)
+    ]  # fmt: skip

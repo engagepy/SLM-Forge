@@ -1,7 +1,4 @@
-from fastapi.testclient import TestClient
-
 from slm import profile
-from slm.api.app import app
 
 
 def test_profile_starts_unknown_and_prompt_asks_to_infer():
@@ -36,8 +33,8 @@ def test_bad_values_rejected():
         profile.remember("x", "mood")
 
 
-def test_profile_api_lets_the_user_correct_and_forget():
-    c = TestClient(app)
+def test_profile_api_lets_the_user_correct_and_forget(client):
+    c = client
     note = profile.remember("wants 4-bit exports", "preference")
     assert c.post("/api/profile/level", json={"level": "intermediate"}).json()["level_evidence"] == "set by you"
     assert [n["text"] for n in c.get("/api/profile").json()["notes"]] == ["wants 4-bit exports"]

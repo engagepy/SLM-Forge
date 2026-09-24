@@ -2,15 +2,39 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 
-import { api, type Job, type MetricPoint, type Overview, type SystemStatus } from "./api";
+import { api, isActive, type Job, type MetricPoint, type Overview, postStream, type Snapshot, type SystemStatus } from "./api";
 import { type ToastInput, useToast } from "./ui";
 
 export function useProjectId(): number {
   return Number(useParams().projectId);
 }
 
+// Pushed updates (the jobs feed) cover every change of state; polling only refreshes live numbers
+// while something runs, plus a slow safety net when idle.
+export const IDLE_POLL_MS = 60_000;
+
 export function useSystem() {
-  return useQuery({ queryKey: ["system"], queryFn: () => api.get<SystemStatus>("/api/system"), refetchInterval: 5000 });
+  return useQuery({
+    queryKey: ["system"],
+    queryFn: () => api.get<SystemStatus>("/api/system"),
+    refetchInterval: (q) => {
+      const running = q.state.data?.worker.running;
+      return running && Object.values(running).some((j) => j != null) ? 5000 : IDLE_POLL_MS;
+    },
+  });
+}
+
+/** Everything the Studio canvas shows. Canvas and job events push every change; polling only catches
+ * up while work is in flight. */
+export function useStudio(projectId: number) {
+  return useQuery({
+    queryKey: ["studio", projectId],
+    queryFn: () => api.get<Snapshot>(`/api/projects/${projectId}/studio`),
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      return d && (d.tuner_busy || d.jobs.some(isActive)) ? 15000 : IDLE_POLL_MS;
+    },
+  });
 }
 
 export function useOverview(projectId: number) {
@@ -47,19 +71,25 @@ export function useJobsFeed() {
   const toast = useToast();
   useEventSource(
     "/api/stream/jobs",
-    (_t, ev) => {
+    (type, ev) => {
+      if (type === "tuner") {
+        // A Tuner started or stopped thinking somewhere: only the sessions list shows that.
+        qc.invalidateQueries({ queryKey: ["sessions"] });
+        return;
+      }
       qc.invalidateQueries({ queryKey: ["jobs"] });
       qc.invalidateQueries({ queryKey: ["system"] });
+      qc.invalidateQueries({ queryKey: ["sessions"] });
       const status = ev.status as string;
       if (status === "succeeded" || status === "failed") {
         toast(jobToast(ev as unknown as Job));
         // A finished job can create datasets, versions, checkpoints, examples or proposals.
-        for (const k of ["overview", "datasets", "exports", "examples", "proposals", "models-local", "studio"]) {
+        for (const k of ["overview", "datasets", "exports", "examples", "proposals", "studio", "sessions"]) {
           qc.invalidateQueries({ queryKey: [k] });
         }
       }
     },
-    ["status"],
+    ["status", "tuner"],
   );
 }
 
@@ -79,11 +109,24 @@ export function useProjectFeed(projectId: number) {
   );
 }
 
-export interface LiveJob {
+interface LiveJob {
   job: Job | undefined;
   metrics: MetricPoint[];
   log: string[];
   progress: { current: number; total: number } | null;
+}
+
+/** Where a training run is: steps done, percent, minutes left, the latest values and any warnings. */
+export function runProgress({ job, metrics, progress }: LiveJob) {
+  const train = metrics.filter((m) => m.split === "train");
+  const last = train.at(-1)?.values;
+  const lastVal = metrics.filter((m) => m.split === "val").at(-1)?.values;
+  const total = progress?.total || (job?.result.total_iters as number) || 0;
+  const current = progress?.current ?? train.at(-1)?.iteration ?? 0;
+  const pct = job?.status === "succeeded" ? 100 : total ? Math.min(100, (current / total) * 100) : 0;
+  const minutesLeft = last?.it_per_sec && total > current ? Math.ceil((total - current) / last.it_per_sec / 60) : null;
+  const warnings = (job?.result.warnings as { code: string; message: string }[] | undefined) ?? [];
+  return { current, total, pct, minutesLeft, last, lastVal, warnings };
 }
 
 /** A job's detail plus live logs/metrics streamed as they arrive. */
@@ -133,7 +176,7 @@ export function useLiveJob(jobId: number | null): LiveJob {
 }
 
 /** Poll a job until it finishes; resolves with the final job. */
-export async function waitForJob(jobId: number, onTick?: (j: Job) => void): Promise<Job> {
+async function waitForJob(jobId: number, onTick?: (j: Job) => void): Promise<Job> {
   for (;;) {
     const { job } = await api.get<{ job: Job }>(`/api/jobs/${jobId}?log_lines=0`);
     onTick?.(job);
@@ -142,13 +185,19 @@ export async function waitForJob(jobId: number, onTick?: (j: Job) => void): Prom
   }
 }
 
+/** Follow a job to the end, reporting its status as it goes; throws unless it succeeded. */
+export async function followJob(jobId: number, what: string, onStatus: (status: string) => void): Promise<Job> {
+  const job = await waitForJob(jobId, (j) => onStatus(j.status));
+  if (job.status !== "succeeded") throw new Error(job.error || `${what} ${job.status}`);
+  return job;
+}
+
 const JOB_LABEL: Record<string, string> = {
   download: "Model downloaded",
   import_dataset: "Dataset imported",
   prepare_dataset: "Data prepared",
   sft: "Fine-tuning finished",
   dpo: "Preference round finished",
-  fuse: "Adapter fused",
   export: "Model exported",
   agent_scout: "DataScout finished",
   agent_prep: "DataPrep suggested a mapping",
@@ -184,7 +233,7 @@ const JOB_PAGE: Record<string, string> = {
 };
 
 /** Turn a finished job into a one-glance summary with a link to its result. */
-export function jobToast(job: Job): ToastInput {
+function jobToast(job: Job): ToastInput {
   const base = job.project_id != null ? `/p/${job.project_id}` : "";
   const r = job.result as Record<string, unknown>;
   const page = JOB_PAGE[job.kind];
@@ -231,4 +280,62 @@ export function jobToast(job: Job): ToastInput {
       break;
   }
   return { tone: "good", title: JOB_LABEL[job.kind] ?? `${job.kind} finished`, body, action: to ? { label, to } : undefined };
+}
+
+// ── chatting with a local model ─────────────────────────────────────────────
+
+export interface ChatMsg {
+  role: "user" | "assistant";
+  content: string;
+  stats?: { tokens_per_sec: number; generation_tokens: number; seconds: number; finish_reason: string | null };
+}
+
+/** A streamed conversation with one of the project's models (POST /generate). `bottom` goes on an
+ * element after the last message, to keep it in view as tokens arrive. */
+export function useChatStream(projectId: number) {
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const abort = useRef<AbortController | null>(null);
+  const bottom = useRef<HTMLDivElement>(null);
+  // Block body: scrollIntoView() returns a Promise in current Chrome, and an effect must not return one.
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ block: "end" });
+  }, [messages]);
+
+  /** `body` builds the request from the conversation so far (the new message included). */
+  async function send(text: string, body: (history: { role: string; content: string }[]) => object) {
+    const t = text.trim();
+    if (!t || busy) return;
+    const history: ChatMsg[] = [...messages, { role: "user", content: t }];
+    setMessages([...history, { role: "assistant", content: "" }]);
+    setBusy(true);
+    setError(null);
+    abort.current = new AbortController();
+    const patchLast = (fn: (m: ChatMsg) => ChatMsg) =>
+      setMessages((m) => [...m.slice(0, -1), fn(m[m.length - 1])]);
+    try {
+      await postStream(
+        `/api/projects/${projectId}/generate`,
+        body(history.map(({ role, content }) => ({ role, content }))),
+        (ev) => {
+          if (ev.type === "token") patchLast((m) => ({ ...m, content: m.content + String(ev.text) }));
+          else if (ev.type === "done") patchLast((m) => ({ ...m, stats: ev as unknown as ChatMsg["stats"] }));
+          else if (ev.type === "error") setError(new Error(String(ev.message)));
+        },
+        abort.current.signal,
+      );
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") setError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const reset = () => {
+    abort.current?.abort();
+    setMessages([]);
+    setError(null);
+  };
+  return { messages, busy, error, bottom, send, stop: () => abort.current?.abort(), reset };
 }

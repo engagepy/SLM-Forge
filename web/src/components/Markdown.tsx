@@ -1,5 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 
+import { CodeBlock } from "../ui";
+
 /** The Markdown the Tuner writes (paragraphs, lists, headings, **bold**, *italic*, `code`,
  * links), rendered as React elements. No HTML strings, so model output can't inject markup. */
 export default function Markdown({ text }: { text: string }) {
@@ -17,11 +19,7 @@ export default function Markdown({ text }: { text: string }) {
       i++;
       while (i < lines.length && !lines[i].startsWith("```")) code.push(lines[i++]);
       i++;
-      blocks.push(
-        <pre key={i} className="overflow-x-auto rounded-lg bg-bg px-3 py-2 font-mono text-[12px] text-muted">
-          {code.join("\n")}
-        </pre>,
-      );
+      blocks.push(<CodeBlock key={i} text={code.join("\n")} />);
       continue;
     }
     const heading = line.match(/^(#{1,4})\s+(.*)/);

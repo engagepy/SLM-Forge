@@ -2,13 +2,15 @@
 
 Build your own small language model on a Mac, by talking to an agent.
 
-Describe what the model should do in one sentence. That's the only input needed. The **Tuner**,
-a GPT-6 Luna agent built on the OpenAI Agents SDK, runs everything on autopilot. It picks the
-smallest base model that can do the job (preferring ones already on your Mac), finds or writes
-training data, cleans it, fine-tunes with [MLX](https://github.com/ml-explore/mlx), tests the
-result, has GPT-6 review and correct the model's answers, refines with that feedback, and exports
-the model. It explains each decision in plain language as it goes. You can steer it at any time
-by typing, judge answers yourself if you want to, or pause autopilot.
+Describe what the model should do in one sentence. The **Tuner**, a GPT-6 Luna agent built on
+the OpenAI Agents SDK, takes it from there. It aims for a small, finished model you enjoy talking
+to: the smallest base model that can do the job (preferring ones already on your Mac), a few
+hundred short training examples it finds or writes, a quick fine-tune with
+[MLX](https://github.com/ml-explore/mlx), an honest before/after test, an optional refinement round
+where GPT-6 reviews and corrects the answers, and an export. It does the groundwork on its own and
+explains each decision in plain language, but **every run waits for your go-ahead**: downloading
+the base model, each training run and the export. At the end you chat with the finished model on
+the **Try it** page. You can steer the Tuner at any time by typing, or pause it.
 
 ```
 You ──chat──▶ Tuner (GPT-6 Luna) ──tools──▶ models · data · training · evaluation · export
@@ -23,15 +25,32 @@ Training and inference run locally on Apple Silicon. Only the agents call out to
 The main screen is split in two:
 
 - **Left: the Tuner.** A conversation that streams token by token. The agent's actions appear
-  as compact steps ("26 steps · searched datasets ×17…"). It never waits for you: when a turn
-  ends and nothing is running, autopilot tells it to carry on, and a finished job wakes it to
-  interpret the result. Autopilot stops when the Tuner calls `finish_project`, or pauses itself
-  (and says so) after two nudges without progress. There's an on/off switch in the top bar.
+  as compact steps ("26 steps · searched datasets ×17…"). When the next step is a run, the Tuner
+  proposes it and a card appears above the input with **Go ahead** and **Not now** (a plain
+  "yes" in the chat works too). Nothing starts until you confirm. Between runs, autopilot keeps
+  it working on the groundwork, and a finished job wakes it to interpret the result. Autopilot
+  stops when the Tuner calls `finish_project`, or pauses itself (and says so) after two nudges
+  without progress. There's an on/off switch in the top bar.
+  Only creating a project (or pressing **Start the Tuner**) starts it; opening a project from
+  the sidebar never does. Pausing or stopping a project also cancels the Tuner's current turn and
+  blocks new jobs until you resume it or type a message.
 - **Right: the live canvas.** A stage rail (Goal → Model → Data → Train → Evaluate → Refine →
   Export) above cards that fill in as the work happens: the chosen model with its memory
   footprint, training sets with cleaning stats, live loss curves, before/after answers, A/B
   comparisons you judge with one click, and the exported model. The console underneath streams
   the agent's tool calls and the running job's output.
+
+Once a model is exported, **Try it** (`/p/:id/try`, linked from the Studio and Home) opens a chat
+with the exported model itself: the fused, quantized folder on disk, exactly as it would run
+elsewhere. The page also shows the folder and the command to run it outside SLM Forge.
+
+Finishing doesn't close a project. **Keep improving** on the Done banner (or just asking the Tuner)
+starts another round from the current model, and the new export gets a new name (`-v2`, or `-2`
+if the name is taken), so earlier models are never overwritten.
+
+Talking to the Tuner never costs anything. Between the export and your next go-ahead, anything
+that spends (writing examples with GPT-6, an AI review, a download) is a card you confirm, and
+questions get answers rather than actions.
 
 The previous hands-on screens are still there under **Advanced** in the Studio's top bar.
 
@@ -92,23 +111,25 @@ agents and the UI don't care which one is behind them.
 
 ## How the Tuner works
 
-- **One agent, 23 tools** (`src/slm/tuner/`) wrapping the tested platform code: `get_status`,
+- **One agent, 27 tools** (`src/slm/tuner/`) wrapping the tested platform code: `get_status`,
   `find_base_models`, `choose_base_model`, `search_datasets`, `prepare_dataset`,
   `generate_synthetic_examples`, `start_training`, `try_model`, `ask_user_to_compare`,
   `export_model` and more. Quick jobs (imports, data prep, synthesis) are awaited inside the
-  tool; long ones (downloads, training, export) return at once, and the finished job wakes the
-  Tuner with a `[Job update]` turn.
+  tool. Runs (`choose_base_model`, `start_training`, `export_model`) only record a proposal
+  (`tuner/confirm.py`); your confirmation submits the job, and the finished job wakes the Tuner
+  with a `[Job update]` turn.
 - **Its instructions carry what running this platform taught us:** learning rate 1e-4 is safe
   and 2e-4 diverged; near-duplicates make validation loss meaningless; `max_seq_length` must
   cover the data's p95 tokens; when public data is poor, write a seed set with the teacher model.
-- **When no clean public dataset fits**, the Tuner has GPT-6 write one (150–200 examples in the
-  goal's style), reviews a sample, approves it, and trains on it.
+- **Small, simple data by default:** the Tuner usually has GPT-6 write 150–300 short,
+  characterful examples in the goal's style, reviews a sample, approves the rest and trains on
+  them. It uses public data only when a clean, on-goal set with short answers exists.
 - **AI feedback instead of human clicks:** `ai_review_answers` has the local model answer each
   prompt twice, and GPT-6 picks the better answer, writes the ideal one and critiques the flaws.
   Each verdict becomes a DPO preference pair and, where the model was wrong, a corrected SFT
   example. Human A/B judging is still available when you ask for it.
-- **Smallest model that does the job:** 0.5–1.5B for narrow tasks, up to 3B for explanations,
-  bigger only when evaluation shows it's needed. Models already in the local Hugging Face cache
+- **Smallest model that does the job:** about 0.5B by default, 1–1.5B when answers need real
+  explanation, 3B only if you ask or a smaller model has clearly failed. Models already in the local Hugging Face cache
   are listed first and registered instantly, with no re-download.
 - **Turns run on one long-lived event loop.** The SDK's shared OpenAI client binds to the first
   loop it runs on, so a fresh `asyncio.run()` per turn fails with "Event loop is closed". Tools
@@ -135,7 +156,7 @@ Design decisions worth knowing:
 - **Training runs as a subprocess** (`mlx_lm lora`, `mlx_lm_lora.train`) from a generated YAML
   config, and its log is parsed into metrics. A crash or OOM can't take down the server, and
   all GPU memory comes back when the job ends.
-- **Three job lanes**, one job each: `gpu` (train/fuse/export; evicts the chat model first),
+- **Three job lanes**, one job each: `gpu` (training and export; evicts the chat model first),
   `io` (downloads, imports, data prep) and `agent` (LLM agent runs).
 - **All in-process MLX work runs on one dedicated thread.** MLX's thread-local compile cache
   holds Python objects; on the main thread it's destroyed after the interpreter shuts down

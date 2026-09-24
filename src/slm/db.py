@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import JSON, Column
-from sqlmodel import Field, Session, SQLModel, create_engine
+from sqlmodel import Field, Session, SQLModel, create_engine, func, select
 
 from slm.config import get_settings
 
@@ -193,9 +193,15 @@ class StudioState(SQLModel, table=True):
     note: str = ""  # one line the Tuner wants on the canvas right now
     comparisons: list = json_field([])  # A/B tasks waiting for the human
     samples: list = json_field([])  # recent model outputs the Tuner showed
-    autopilot: bool = True  # the Tuner keeps going on its own until the model is exported
+    autopilot: bool = False  # on only once the Tuner is started for this project; then it keeps going
     completed: bool = False  # set by the Tuner's finish_project
     stalled_nudges: int = 0  # autopilot nudges in a row that made no progress
+    # A run the Tuner proposed and the user hasn't confirmed yet ({} = none). Runs (downloads,
+    # training, export) never start without the user's go-ahead; see tuner/confirm.py.
+    pending_action: dict = json_field({})
+    # One-shot go-aheads for tools that spend (API calls, downloads), granted when the user confirms
+    # such a proposal; the tool consumes its entry when it runs. See tuner/confirm.py.
+    granted: list = json_field([])
     updated_at: datetime = Field(default_factory=now)
 
 
@@ -207,6 +213,34 @@ class UserProfile(SQLModel, table=True):
     level_evidence: str = ""  # why the Tuner thinks so, in its words
     notes: list = json_field([])  # [{id, kind, text, project_id, created_at}]
     updated_at: datetime = Field(default_factory=now)
+
+
+# ── query helpers ───────────────────────────────────────────────────────────
+
+
+def count(s: Session, model, *where) -> int:
+    return s.exec(select(func.count()).select_from(model).where(*where)).one()
+
+
+def ready(model) -> tuple:
+    """Filters for approved examples (PreferencePair or SftExample) no run has used yet."""
+    return (model.approved == True, model.used_in_job_id == None)  # noqa: E711,E712
+
+
+def awaiting_review(model) -> tuple:
+    """Filters for examples (e.g. synthetic ones) nobody has approved yet."""
+    return (model.approved == False,)  # noqa: E712
+
+
+def studio_state(s: Session, project_id: int) -> "StudioState":
+    """The project's Studio state, created on first use."""
+    st = s.get(StudioState, project_id)
+    if st is None:
+        st = StudioState(project_id=project_id)
+        s.add(st)
+        s.commit()
+        s.refresh(st)
+    return st
 
 
 _engine = None
