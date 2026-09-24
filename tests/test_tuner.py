@@ -77,6 +77,37 @@ def test_prepare_dataset_rejects_a_mapping_that_maps_nothing(session, project, t
     assert not session.exec(select(Job)).all()  # nothing was queued
 
 
+def test_prepare_dataset_passes_the_plan_through(session, project, tmp_path, monkeypatch):
+    # Regression: the prompt promised "a different seed is a fresh batch" and DataPrep returned
+    # max_chars, but prepare_dataset accepted neither, so both were silently lost.
+    raw = tmp_path / "raw.jsonl"
+    raw.write_text("\n".join(json.dumps({"q": f"q{i}", "a": f"answer {i}"}) for i in range(5)))
+    ds = Dataset(project_id=project.id, name="r", source="upload", raw_path=str(raw), columns=["q", "a"])
+    session.add(ds)
+    session.commit()
+    submitted = {}
+
+    def fake_submit(kind, config, pid):
+        submitted.update(config)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(tools, "_submit", fake_submit)
+    call(
+        project.id,
+        "prepare_dataset",
+        dataset_id=ds.id,
+        format="instruction",
+        prompt_column="q",
+        response_column="a",
+        max_examples=3,
+        min_answer_chars=4,
+        max_chars=900,
+        seed=7,
+    )
+    assert submitted["seed"] == 7 and submitted["max_examples"] == 3
+    assert submitted["rules"] == {"min_chars": 4, "long_examples": "auto", "max_chars": 900}
+
+
 def test_review_uses_unambiguous_ids(session, project):
     # A pair and an SFT example can share the same numeric id; "p1" and "s1" must not collide.
     session.add(PreferencePair(project_id=project.id, prompt="q", chosen="good", rejected="bad", approved=False))

@@ -54,7 +54,7 @@ class PrepPlan(BaseModel):
     mapping: dict[str, str] = {}
     min_chars: int = 2
     max_chars: int | None = None
-    max_seq_length: int = 512
+    max_seq_length: int = 1024
     expected_kept_fraction: float = 1.0
     notes: str = ""
 
@@ -152,8 +152,8 @@ records and how to clean them:
 - mapping: format chat | instruction | text | preference, with the column for each field. A value
   may be a constant written as "=text" and may include {column} placeholders, e.g. the prompt
   "=How do I make {title}?" when the prompt column isn't phrased like a user would.
-- min_chars / max_chars on the answer to drop trivial and outsized rows; max_seq_length to cover
-  the typical row (512 for short answers, 1024 for paragraphs).
+- min_chars (on the answer) and max_chars (on the whole record) to drop trivial and outsized
+  rows; max_seq_length to cover the typical row (512 for short answers, 1024 for paragraphs).
 - Always call check_mapping before answering, and fix the mapping if rows fail.
 - expected_kept_fraction: your estimate after cleaning; notes: one or two sentences of reasoning."""
 

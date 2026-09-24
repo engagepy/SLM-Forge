@@ -591,7 +591,9 @@ def prepare_dataset(
     max_seq_length: int = 1024,
     max_examples: int | None = None,
     min_answer_chars: int = 2,
+    max_chars: int | None = None,
     long_examples: str = "auto",
+    seed: int = 0,
 ) -> dict:
     """Turn raw rows into clean training records: map columns, fix encoding, remove duplicates and
     junk, split train/valid/test and measure token lengths. Waits for the result.
@@ -603,8 +605,10 @@ def prepare_dataset(
     Examples longer than max_seq_length are handled here rather than silently truncated during
     training (which cuts off the end of answers): long_examples="auto" drops over-long Q&A/chat
     examples and splits long raw text into windows; "keep" leaves them to be truncated.
-    max_examples: after cleaning and deduplication, train on a seeded random sample of this many
-    (the plan's data target); the rest of the import stays on disk as a pool for later rounds.
+    max_examples: after cleaning and deduplication, train on a random sample of this many (the
+    plan's data target); the rest of the import stays on disk as a pool for later rounds, and a
+    different seed draws a fresh sample from it. min_answer_chars / max_chars are DataPrep's plan:
+    records with a shorter answer, or longer than max_chars in total, are dropped.
     The result's "length" report shows the length distribution and how many didn't fit: if a
     large share was dropped, raise max_seq_length (check memory with plan_training) or pick data
     with shorter examples."""
@@ -636,7 +640,9 @@ def prepare_dataset(
             "mapping": mapping,
             "max_seq_length": max_seq_length,
             "max_examples": max_examples,
-            "rules": {"min_chars": min_answer_chars, "long_examples": long_examples},
+            "rules": {"min_chars": min_answer_chars, "long_examples": long_examples}
+            | ({"max_chars": max_chars} if max_chars else {}),
+            "seed": seed,
         },
         ctx.context.project_id,
     )
