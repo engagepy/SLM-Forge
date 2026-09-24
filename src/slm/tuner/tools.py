@@ -315,6 +315,7 @@ def get_status(ctx: Ctx) -> dict:
                     "path": j.result.get("path"),
                     "size_gb": j.result.get("size_gb"),
                     "min_ram_gb": j.result.get("min_ram_gb"),
+                    "system_prompt_built_in": bool(j.result.get("system_prompt_built_in")),
                 }
                 for j in exports
             ],

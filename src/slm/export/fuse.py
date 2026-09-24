@@ -30,56 +30,71 @@ def quantize_command(src: Path, dest: Path, bits: int, group_size: int = 64) -> 
     ]  # fmt: skip
 
 
-# The chat template's default system message: what the model is told when the caller gives no
-# system prompt. Qwen-style templates spell it out as a literal in an else-branch after checking
-# for a system message, sometimes wrapped in the role markup ('<|im_start|>system\n...<|im_end|>\n').
-_DEFAULT_SYSTEM = re.compile(r"(\[0\]\['role'\] == 'system' %\}.*?\{%-? else -?%\}\s*\{\{-? ')([^']*)(' -?\}\})", re.S)
+# Chat templates disagree on what happens without a system message: Qwen2.5 prints a fixed
+# sentence, SmolLM and Granite build one in code, Qwen3, Llama, Gemma and Phi print nothing. Rather
+# than rewriting each family's default, the bake prepends one block that makes the project's prompt
+# messages[0] whenever the caller gave no system message. Every template then follows its own
+# "system message given" path, and a caller's explicit system prompt still wins.
+_BAKE_OPEN = "{#- slm-forge: the model's system prompt, used when the caller gives none -#}"
+_BAKE_CLOSE = "{#- /slm-forge -#}"
+_BAKED = re.compile(re.escape(_BAKE_OPEN) + ".*?" + re.escape(_BAKE_CLOSE), re.S)
 
 
 def _jinja_literal(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+    return text.replace("\\", "\\\\").replace("'", "\\'").replace("\r", "\\r").replace("\n", "\\n")
 
 
-def _swap_default(template: str, system_prompt: str) -> tuple[str, int]:
-    """Replace the default system sentence in every else-branch, keeping any role markup around it."""
-    literal = _jinja_literal(system_prompt)
+def _inject_default(template: str, system_prompt: str) -> str:
+    block = (
+        f"{_BAKE_OPEN}{{%- if messages and messages[0]['role'] != 'system' %}}"
+        f"{{%- set messages = [{{'role': 'system', 'content': '{_jinja_literal(system_prompt)}'}}] + messages %}}"
+        f"{{%- endif %}}{_BAKE_CLOSE}"
+    )
+    return block + _BAKED.sub("", template, count=1)
 
-    def swap(m: re.Match) -> str:
-        body = m.group(2)
-        pre = post = ""
-        if "system\\n" in body:  # the literal carries the markup: keep it
-            cut = body.index("system\\n") + len("system\\n")
-            pre, body = body[:cut], body[cut:]
-        if "<|im_end|>" in body:
-            cut = body.index("<|im_end|>")
-            body, post = body[:cut], body[cut:]
-        return m.group(1) + pre + literal + post + m.group(3)
 
-    return _DEFAULT_SYSTEM.subn(swap, template)
+def renders_with_default(template: str, system_prompt: str) -> bool:
+    """Render the template the way tokenizers do and check the prompt reaches the model text."""
+    from transformers.utils.chat_template_utils import render_jinja_template
+
+    try:
+        rendered, _ = render_jinja_template(
+            conversations=[[{"role": "user", "content": "Hello"}]],
+            chat_template=template,
+            add_generation_prompt=True,
+            bos_token="<s>",
+            eos_token="</s>",
+        )
+    except Exception:
+        return False
+    return system_prompt.strip() in rendered[0]
 
 
 def bake_system_prompt(model_dir: Path, system_prompt: str) -> bool:
     """Make the project's system prompt the model's default, so `mlx_lm.generate --prompt ...`
     (and any other loader) behaves like the app does. The model was trained with that prompt in
-    every example; without it, it answers like the untouched base model. Returns False when the
-    template has no default to replace (the README then says to pass --system-prompt)."""
+    every example; without it, it answers like the untouched base model. The change is verified
+    by rendering; returns False (template untouched) when it can't be, and the README then says to
+    pass --system-prompt. Baking again replaces the earlier prompt."""
     if not system_prompt.strip():
         return False
     jinja = model_dir / "chat_template.jinja"
     cfg_path = model_dir / "tokenizer_config.json"
     if jinja.exists():
-        template, n = _swap_default(jinja.read_text(), system_prompt)
-        if n:
-            jinja.write_text(template)
-        return bool(n)
+        template = _inject_default(jinja.read_text(), system_prompt)
+        if not renders_with_default(template, system_prompt):
+            return False
+        jinja.write_text(template)
+        return True
     if cfg_path.exists():
         cfg = json.loads(cfg_path.read_text())
         if isinstance(cfg.get("chat_template"), str):
-            template, n = _swap_default(cfg["chat_template"], system_prompt)
-            if n:
-                cfg["chat_template"] = template
-                cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
-            return bool(n)
+            template = _inject_default(cfg["chat_template"], system_prompt)
+            if not renders_with_default(template, system_prompt):
+                return False
+            cfg["chat_template"] = template
+            cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+            return True
     return False
 
 

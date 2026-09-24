@@ -361,7 +361,7 @@ def job_update_text(job: Job, instruct: bool = True) -> str:
     parts = [f"[Job update] {job.kind} job {job.id} {job.status}."]
     if job.error:
         parts.append(f"Error: {job.error[:400]}")
-    for key in ("metrics", "warnings", "path", "size_gb", "min_ram_gb", "local_path"):
+    for key in ("metrics", "warnings", "path", "size_gb", "min_ram_gb", "system_prompt_built_in", "local_path"):
         if key in r:
             parts.append(f"{key}: {json.dumps(r[key], default=str)[:600]}")
     if instruct:

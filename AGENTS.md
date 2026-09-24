@@ -254,8 +254,12 @@ Every rule here cost a failed round on this Mac (Apple M1 Pro, 16 GB) in Septemb
    into the target format or leave it out; a format or system-prompt change means retraining from
    base.
 3. **The export must carry its system prompt.** Every example had it; `mlx_lm.generate` without it
-   fell back to Qwen's default and the model behaved like the base. `bake_system_prompt` makes it the
-   chat template's default.
+   fell back to Qwen's default and the model behaved like the base. `bake_system_prompt` prepends a
+   block to the chat template that makes the prompt `messages[0]` when the caller gives none, and
+   verifies it by rendering. Templates differ too much to rewrite their defaults (Qwen2.5 prints a
+   sentence, SmolLM/Granite build one in code, Qwen3/Llama/Gemma/Phi print nothing); the real
+   templates live in `tests/fixtures/templates/`. The job result's `system_prompt_built_in` is the
+   only source of truth for "runs with no flags"; Try it never adds the prompt to an export.
 4. **Tiny top-ups hurt.** 6-, 22- and 33-example rounds on top of a big run raised validation loss
    (0.625 → 0.696) and the worst checkpoint got exported. Batch data properly; never export a
    checkpoint that scored below an earlier one (`serve_checkpoint` first).

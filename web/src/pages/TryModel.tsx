@@ -175,6 +175,12 @@ export default function TryModel() {
                   This model is no longer at {chosen.path}. It may have been moved or deleted.
                 </p>
               )}
+              {chosen.on_disk && !chosen.system_prompt_built_in && !!project.data?.project.system_prompt && (
+                <p className="rounded-lg border border-warn/40 bg-warn-soft px-3 py-2 text-[13px] text-warn">
+                  This export has no built-in system prompt, so it answers here exactly as on the command line without{" "}
+                  <code>--system-prompt</code>: like the base model. Newer exports build the prompt in.
+                </p>
+              )}
               {!messages.length && (
                 <div className="mx-auto mt-10 max-w-md text-center">
                   <div className="mx-auto grid size-11 place-items-center rounded-full bg-accent-soft text-lg text-accent">✦</div>

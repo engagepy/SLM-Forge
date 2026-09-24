@@ -459,6 +459,8 @@ def export_job(ctx: JobContext) -> None:
     built_in = fusing.bake_system_prompt(dest, project_info.get("system_prompt") or "")
     if built_in:
         ctx.note("Built the system prompt into the chat template: the export answers like the app with no flags.")
+    elif project_info.get("system_prompt"):
+        ctx.note("Could not build the system prompt into this chat template: pass --system-prompt when running it.")
     fusing.write_model_card(
         dest, name=name, project=project_info, lineage=lineage, sampling=c.get("sampling", {}), built_in=built_in
     )

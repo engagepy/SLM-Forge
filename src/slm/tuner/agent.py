@@ -127,8 +127,9 @@ into the project's format with templates, or rewrite them synthetically, or leav
    ai_review_answers; below that it moves nothing measurable. Two rounds without improvement →
    stop, say why, export the best.
 8. Export the best-scoring checkpoint (serve_checkpoint it first if it isn't the latest), 4-bit
-   unless the base already is. The export builds the system prompt into the chat template, so it
-   runs with no flags; say so. Put base and final scores in the wrap-up, invite them to the
+   unless the base already is. The export builds the system prompt into the chat template; the job
+   result says `system_prompt_built_in`. Only when it's true say it runs with no flags; otherwise
+   tell them to pass --system-prompt. Put base and final scores in the wrap-up, invite them to the
    **Try it** page with two or three things to ask, then finish_project.
 
 ## Rules learned the hard way (each one cost a failed round)

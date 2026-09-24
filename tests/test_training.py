@@ -207,41 +207,65 @@ def test_trainer_truncation_warnings_are_counted():
     )
 
 
-QWEN_TEMPLATE = (
-    "{%- if tools %}\n"
-    "    {{- '<|im_start|>system\\n' }}\n"
-    "    {%- if messages[0]['role'] == 'system' %}\n"
-    "        {{- messages[0]['content'] }}\n"
-    "    {%- else %}\n"
-    "        {{- 'You are Qwen, created by Alibaba Cloud. You are a helpful assistant.' }}\n"
-    "    {%- endif %}\n"
-    "{%- else %}\n"
-    "    {%- if messages[0]['role'] == 'system' %}\n"
-    "        {{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}\n"
-    "    {%- else %}\n"
-    "        {{- '<|im_start|>system\\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\\n' }}\n"
-    "    {%- endif %}\n"
-    "{%- endif %}"
+TEMPLATES = sorted((Path(__file__).parent / "fixtures" / "templates").glob("*.jinja"))
+PROMPT = (
+    "Return only JSON: {\"events\": []}. Don't infer what isn't stated.\nIt's 100% 'strict' \\ {% not jinja %} {{ x }}"
 )
 
 
-def test_the_system_prompt_is_built_into_the_exported_chat_template(tmp_path):
+def _render(template_dir: Path, messages: list[dict]) -> str:
+    """Render the way tokenizers do (transformers' sandboxed Jinja with strftime_now etc.)."""
+    from transformers.utils.chat_template_utils import render_jinja_template
+
+    template = (template_dir / "chat_template.jinja").read_text()
+    rendered, _ = render_jinja_template(
+        conversations=[messages], chat_template=template, add_generation_prompt=True, bos_token="<s>", eos_token="</s>"
+    )
+    return rendered[0]
+
+
+@pytest.mark.parametrize("fixture", TEMPLATES, ids=lambda p: p.stem)
+def test_the_system_prompt_is_built_into_every_template_family(tmp_path, fixture):
     # Regression: `mlx_lm.generate --prompt "Hello"` on an export answered like the plain base
-    # model, because nothing supplied the system prompt every training example carried.
+    # model, because nothing supplied the system prompt every training example carried. The first
+    # fix rewrote Qwen2.5's default sentence, which 3 of the 13 catalog models have; the fixtures are
+    # the real templates of the others (Qwen3, Llama 3.2, SmolLM2/3, Gemma 3, Granite 3.3, Phi-4).
+    from slm.export.fuse import bake_system_prompt
+
+    (tmp_path / "chat_template.jinja").write_text(fixture.read_text())
+    hello = [{"role": "user", "content": "Hello"}]
+    assert PROMPT not in _render(tmp_path, hello)
+    assert bake_system_prompt(tmp_path, PROMPT) is True
+    after = _render(tmp_path, hello)
+    assert PROMPT in after and "Hello" in after
+    for default in ("You are Qwen", "named SmolLM", "You are Granite"):
+        assert default not in after  # the template's own default no longer shows
+    # A caller's explicit system message still wins.
+    own = _render(tmp_path, [{"role": "system", "content": "Be terse."}, *hello])
+    assert "Be terse." in own and PROMPT not in own
+    # Baking again replaces the prompt instead of stacking a second one.
+    assert bake_system_prompt(tmp_path, "New prompt.") is True
+    again = _render(tmp_path, hello)
+    assert "New prompt." in again and PROMPT not in again and again.count("New prompt.") == 1
+
+
+def test_baking_falls_back_to_tokenizer_config_and_refuses_what_it_cannot_verify(tmp_path):
+    import json
+
     from slm.export.fuse import bake_system_prompt, run_command
 
-    (tmp_path / "chat_template.jinja").write_text(QWEN_TEMPLATE)
-    prompt = "Return only JSON: {\"events\": []}. Don't infer what isn't stated."
-    assert bake_system_prompt(tmp_path, prompt) is True
-    out = (tmp_path / "chat_template.jinja").read_text()
-    assert "You are Qwen" not in out
-    assert out.count("Return only JSON") == 2  # both branches
-    assert "'<|im_start|>system\\nReturn only JSON" in out and "isn\\'t stated.<|im_end|>\\n' }}" in out  # markup kept
+    assert bake_system_prompt(tmp_path, PROMPT) is False  # no template at all
     assert bake_system_prompt(tmp_path, "") is False
-    (tmp_path / "chat_template.jinja").write_text("{{ messages }}")
-    assert bake_system_prompt(tmp_path, prompt) is False  # nothing to replace: the README says --system-prompt
-    assert run_command("/m", prompt, built_in=True) == 'mlx_lm.generate --model "/m" --prompt "Hello"'
-    assert "--system-prompt" in run_command("/m", prompt, built_in=False)
+    cfg = tmp_path / "tokenizer_config.json"
+    cfg.write_text(json.dumps({"chat_template": TEMPLATES[0].read_text()}))
+    assert bake_system_prompt(tmp_path, PROMPT) is True
+    assert "slm-forge" in json.loads(cfg.read_text())["chat_template"]
+    # A template that never prints the system message: left untouched, so the README says --system-prompt.
+    (tmp_path / "chat_template.jinja").write_text("{{ 'no system here' }}")
+    assert bake_system_prompt(tmp_path, PROMPT) is False
+    assert (tmp_path / "chat_template.jinja").read_text() == "{{ 'no system here' }}"
+    assert run_command("/m", PROMPT, built_in=True) == 'mlx_lm.generate --model "/m" --prompt "Hello"'
+    assert "--system-prompt" in run_command("/m", PROMPT, built_in=False)
 
 
 def test_a_continued_run_resumes_the_adapter_in_its_own_lora_shape(tmp_path):

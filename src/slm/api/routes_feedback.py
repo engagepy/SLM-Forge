@@ -75,7 +75,9 @@ def _stream_events(gens: list[tuple[str | None, list[dict], SamplingParams, dict
 def generate(project_id: int, body: GenerateIn, s: Session = SessionDep):
     p = project_or_404(s, project_id)
     where = _target(s, p, body.target)
-    messages = _with_system(p, body.messages)
+    # An export is tried exactly as it runs elsewhere: its own template supplies the system prompt
+    # (or doesn't), so Try it can't make an unbaked export look better than the CLI.
+    messages = body.messages if body.target.startswith("export:") else _with_system(p, body.messages)
     return EventSourceResponse(iterate_in_threadpool(_stream_events([(None, messages, body.params, where)])))
 
 
