@@ -6,7 +6,18 @@ about. Quick jobs (dataset import, preparation, synthesis) are awaited inside th
 Tuner is woken when they're confirmed and again when they finish.
 """
 
-from slm.tuner.tools._core import MAX_UNREVIEWED, REGISTRY, Ctx, TunerContext, _spend, _submit, _wait, tool
+from slm.tuner.tools._core import (
+    MAX_SYNTHETIC_PER_CALL,
+    MAX_SYNTHETIC_TOTAL,
+    MAX_UNREVIEWED,
+    REGISTRY,
+    Ctx,
+    TunerContext,
+    _spend,
+    _submit,
+    _wait,
+    tool,
+)
 from slm.tuner.tools.data import (
     build_dataset_from_examples,
     generate_synthetic_examples,
@@ -74,4 +85,16 @@ ALL_TOOLS = [
     remember_about_user,
 ]
 
-__all__ = ["ALL_TOOLS", "REGISTRY", "MAX_UNREVIEWED", "Ctx", "TunerContext", "tool", "_spend", "_submit", "_wait"]
+__all__ = [
+    "ALL_TOOLS",
+    "REGISTRY",
+    "MAX_UNREVIEWED",
+    "MAX_SYNTHETIC_PER_CALL",
+    "MAX_SYNTHETIC_TOTAL",
+    "Ctx",
+    "TunerContext",
+    "tool",
+    "_spend",
+    "_submit",
+    "_wait",
+]

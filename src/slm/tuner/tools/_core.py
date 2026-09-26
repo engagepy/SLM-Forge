@@ -96,6 +96,11 @@ def _version_brief(v: DatasetVersion) -> dict:
 # freely, because reaching the goal is the mandate. Outside one (the project is finished, or autopilot
 # is paused) each call is a proposal the user confirms; confirming grants that one call.
 MAX_UNREVIEWED = 150  # synthetic examples nobody has looked at yet: review before writing more
+# The teacher model writes small sets only: a seed when nothing public fits, or a top-up for a gap.
+# The dataset itself comes from public data (scout → import → prepare); writing thousands of
+# examples with an API is not what this tool is for.
+MAX_SYNTHETIC_PER_CALL = 50
+MAX_SYNTHETIC_TOTAL = 200  # per project, SFT examples and preference pairs together
 
 
 def _spend(pid: int, tool_name: str, kind: str, title: str, reason: str, details: dict, args: dict) -> dict | None:

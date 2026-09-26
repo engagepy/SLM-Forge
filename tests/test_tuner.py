@@ -566,29 +566,29 @@ def test_a_question_after_the_export_cannot_start_spending(client, session, proj
     # Regression: "What would you suggest?" on a finished project started writing 150 examples.
     monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
     _open_project(session, project)
-    out = call(project.id, "generate_synthetic_examples", kind="sft", count=150, focus="forces")
+    out = call(project.id, "generate_synthetic_examples", kind="sft", count=40, focus="forces")
     assert "needs their go-ahead" in str(out) and submitted == []  # no reason given: refused outright
-    out = call(project.id, "generate_synthetic_examples", kind="sft", count=150, focus="forces", reason="Fix forces.")
+    out = call(project.id, "generate_synthetic_examples", kind="sft", count=40, focus="forces", reason="Fix forces.")
     assert out["status"] == "waiting for the user's confirmation" and submitted == []
     snap = client.get(f"/api/projects/{project.id}/studio").json()
-    assert snap["pending_action"]["kind"] == "synthesize" and snap["pending_action"]["details"]["count"] == 150
+    assert snap["pending_action"]["kind"] == "synthesize" and snap["pending_action"]["details"]["count"] == 40
 
     # Confirming grants exactly one call with exactly these arguments, and does NOT reopen the round.
     client.post(f"/api/projects/{project.id}/studio/confirm", json={})
     session.expire_all()
     st = session.get(StudioState, project.id)
-    expected_grant = {"tool": "generate_synthetic_examples", "args": {"kind": "sft", "count": 150, "focus": "forces"}}
+    expected_grant = {"tool": "generate_synthetic_examples", "args": {"kind": "sft", "count": 40, "focus": "forces"}}
     assert st.granted == [expected_grant] and st.completed is True  # a spend card is no mandate for the round
     monkeypatch.setattr(tools.data, "_wait", lambda job_id, timeout: submitted[-1])
     # Different arguments (200 where 150 were approved): no grant, a new card instead.
-    out = call(project.id, "generate_synthetic_examples", kind="sft", count=200, focus="forces", reason="More.")
+    out = call(project.id, "generate_synthetic_examples", kind="sft", count=50, focus="forces", reason="More.")
     assert out["status"] == "waiting for the user's confirmation" and submitted == []
     client.post(f"/api/projects/{project.id}/studio/decline", json={})
     session.expire_all()
     assert session.get(StudioState, project.id).granted == []  # a decision clears leftover grants
-    call(project.id, "generate_synthetic_examples", kind="sft", count=150, focus="forces", reason="Fix forces.")
+    call(project.id, "generate_synthetic_examples", kind="sft", count=40, focus="forces", reason="Fix forces.")
     client.post(f"/api/projects/{project.id}/studio/confirm", json={})
-    call(project.id, "generate_synthetic_examples", kind="sft", count=150, focus="forces")
+    call(project.id, "generate_synthetic_examples", kind="sft", count=40, focus="forces")
     assert [j.kind for j in submitted] == ["synthesize"]
     session.expire_all()
     assert session.get(StudioState, project.id).granted == []
@@ -1056,3 +1056,27 @@ def test_halt_cancels_the_turn_while_a_tool_is_running(session, project, monkeyp
     rows = _transcript(session, project.id)
     assert tuner.is_halted(project.id)
     assert not any(r.role == "assistant" for r in rows)  # the cancelled turn never answered
+    tuner.unhalt(project.id)  # the singleton outlives this test; later tests reuse project id 1
+
+
+def test_the_teacher_model_writes_small_sets_only(session, project, submitted, monkeypatch):
+    # The user's rule: the dataset comes from public data; the API writes seeds and top-ups only.
+    from slm.tuner.tools import MAX_SYNTHETIC_PER_CALL, MAX_SYNTHETIC_TOTAL
+
+    monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
+    monkeypatch.setattr(tools.data, "_wait", lambda job_id, timeout: submitted[-1])
+    session.add(StudioState(project_id=project.id, autopilot=True))  # a round in motion: no card needed
+    session.commit()
+    out = call(project.id, "generate_synthetic_examples", kind="sft", count=5000, focus="everything")
+    assert submitted, out
+    assert submitted[-1].config["count"] == MAX_SYNTHETIC_PER_CALL  # a huge ask is clamped, not honoured
+    session.add_all(
+        SftExample(
+            project_id=project.id, messages=[{"role": "user", "content": f"q{i}"}], source="synthetic", approved=True
+        )
+        for i in range(MAX_SYNTHETIC_TOTAL)
+    )
+    session.commit()
+    out = call(project.id, "generate_synthetic_examples", kind="sft", count=10, focus="more")
+    assert "limit is 200" in str(out) and "scout_datasets" in str(out)
+    assert len(submitted) == 1  # nothing else was written

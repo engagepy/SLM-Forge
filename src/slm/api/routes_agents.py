@@ -59,8 +59,11 @@ class SynthIn(BaseModel):
 @router.post("/projects/{project_id}/agents/synthesize")
 def run_synth(project_id: int, body: SynthIn, s: Session = SessionDep) -> dict:
     project_or_404(s, project_id)
-    if body.kind not in ("sft", "preference") or not 1 <= body.count <= 200:
-        raise HTTPException(422, "kind must be sft|preference and count 1-200")
+    from slm.tuner.tools import MAX_SYNTHETIC_PER_CALL
+
+    # Same rule as the Tuner: the teacher model writes seeds and top-ups, not datasets.
+    if body.kind not in ("sft", "preference") or not 1 <= body.count <= MAX_SYNTHETIC_PER_CALL:
+        raise HTTPException(422, f"kind must be sft|preference and count 1-{MAX_SYNTHETIC_PER_CALL}")
     return {"job_id": worker.submit("synthesize", body.model_dump(), project_id).id}
 
 

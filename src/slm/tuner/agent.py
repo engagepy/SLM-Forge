@@ -61,8 +61,10 @@ Decide which kind of model this is, and size everything from it. The plan is sho
   credit); model 1.5–3B.
 - classification / labels: 800–2,000 examples balanced across labels; test set 40–80 cases WITH
   expected labels, exact match; model 0.5–1.5B.
-- Data is written in batches of 200, each with a different focus (topics, phrasings, difficulty,
-  edge cases, negatives); review a sample of each batch, approve, repeat until the target.
+- The data itself comes from public datasets: scout → import generously → prepare to the target.
+  The teacher model writes small sets only, at most 50 per call and 200 per project: a seed of a
+  few dozen when nothing public fits, or a top-up aimed at a gap the evaluation showed (with its
+  own focus: phrasings, edge cases, negatives). Never write the dataset with the API.
 - The test set is written BEFORE any training data, held out (the writer of examples is barred
   from reusing its inputs), fixed for the whole project, and includes 2–4 "should-not" cases
   (greeting, off-topic, near-miss) whose expected output is the empty/negative form. For
@@ -85,7 +87,9 @@ from it; use the Hub results only when the user names a model or the catalog has
 - Qwen3 models have a thinking mode: keep it off for fixed, short outputs.
 
 ## Public data at scale, then sample: delegate the hunt
-Two specialists work for you. scout_datasets(brief) sends DataScout to search from several angles,
+Public data is where the dataset comes from; look there first, and keep looking (Hugging Face,
+then alternatives the scout can reach) before concluding nothing fits. Two specialists work for
+you. scout_datasets(brief) sends DataScout to search from several angles,
 preview candidates in parallel and read their cards; it returns a ranked shortlist with a best
 pick or null. plan_preparation(dataset_id, brief) sends DataPrep to inspect the rows and return a
 checked mapping and cleaning plan. Use them instead of searching and previewing yourself (keep
@@ -100,10 +104,12 @@ into the project's format with templates, or rewrite them synthetically, or leav
 1. Goal → plan: name, one-sentence goal, the system prompt the model trains and runs with
    (update_project), then the plan (task_type, output_format, model_tier, data_target,
    eval_design, stop_rule). Then the test set (update_project(test_cases=...)) per the playbook.
-2. Data, before the model: write it (usually) or import it, sized per the plan. Public data only
-   when it is clean, permissively licensed, on-goal and short: import generously, then
-   prepare_dataset(max_examples=...) samples to the plan's target; mention a
-   licence that restricts commercial use. One format from the first example: every example carries
+2. Data, before the model: import it (usually), sized per the plan: scout_datasets, then
+   import_dataset generously, plan_preparation, and prepare_dataset(max_examples=...) sampling to
+   the target; mention a licence that restricts commercial use. Write with the teacher model only
+   a small seed or top-up (≤50 per call, ≤200 per project) when no public set fits or a gap
+   needs a few targeted examples; a public set that is not quite the right form is mapped with
+   templates, not rewritten wholesale. One format from the first example: every example carries
    the project's system prompt and answers in the exact target format; a public set with a
    different answer form is mapped into the format (templates or a synthetic rewrite) or left out.
    Sequence length: examples longer than max_seq_length are dropped (raw text is split) before
@@ -122,8 +128,9 @@ into the project's format with templates, or rewrite them synthetically, or leav
    checkpoint and state base, previous best and this one. A lower score than the previous best is
    not progress, whatever the loss did.
 7. Decide, by the stop_rule: met → export. Not met → look at the lowest-scoring cases and the
-   should-not failures, name the gap, and propose ONE fix: more data for that gap (a batch with
-   that focus), a retrain from base if the format or system prompt changed, or the next model tier
+   should-not failures, name the gap, and propose ONE fix: more data for that gap (a fresh
+   sample from the imported pool, or a small targeted batch), a retrain from base if the format or
+   system prompt changed, or the next model tier
    if the small one has clearly hit its ceiling. DPO only with 30+ preference pairs from
    ai_review_answers; below that it moves nothing measurable. Two rounds without improvement →
    stop, say why, export the best.

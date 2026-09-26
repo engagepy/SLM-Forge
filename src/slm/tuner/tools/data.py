@@ -21,7 +21,18 @@ from slm.db import (
 )
 from slm.events import canvas_changed
 from slm.models import manage
-from slm.tuner.tools._core import MAX_UNREVIEWED, Ctx, _own_dataset, _spend, _submit, _version_brief, _wait, tool
+from slm.tuner.tools._core import (
+    MAX_SYNTHETIC_PER_CALL,
+    MAX_SYNTHETIC_TOTAL,
+    MAX_UNREVIEWED,
+    Ctx,
+    _own_dataset,
+    _spend,
+    _submit,
+    _version_brief,
+    _wait,
+    tool,
+)
 from slm.tuner.util import clip as _clip
 
 
@@ -208,19 +219,27 @@ def prepare_dataset(
 
 @tool
 def generate_synthetic_examples(ctx: Ctx, kind: str, count: int, focus: str, reason: str = "") -> dict:
-    """Have the teacher model (GPT-6) write new training examples: kind "sft" (question + ideal
-    answer) or "preference" (ideal vs. weak answer). Two uses:
-    - no good public data: write a seed dataset from the goal and the user's example questions
-      (100–200 sft examples with a focus covering the range of questions users will ask);
-    - after feedback: target a weakness the user's critiques revealed.
-    Examples wait unapproved; spot-check them with review_synthetic_examples, then approve.
-    This costs API calls (one per example). Outside a round the user set in motion it's a proposal
-    they confirm first; give a plain-words `reason` for the card."""
+    """Have the teacher model (GPT-6) write a SMALL set of training examples: kind "sft" (question +
+    ideal answer) or "preference" (ideal vs. weak answer). At most 50 per call and 200 per project:
+    the dataset itself comes from public data (scout_datasets → import_dataset → prepare_dataset).
+    Two uses: a seed of a few dozen when nothing public fits, and a targeted top-up for a gap the
+    evaluation showed. Examples wait unapproved; spot-check them with review_synthetic_examples,
+    then approve. This costs API calls (one per example). Outside a round the user set in motion
+    it's a proposal they confirm first; give a plain-words `reason` for the card."""
     pid = ctx.context.project_id
-    count = max(1, min(count, 200))
+    count = max(1, min(count, MAX_SYNTHETIC_PER_CALL))
     with Session(engine()) as s:
         unreviewed = sum(
             count_rows(s, m, m.project_id == pid, *awaiting_review(m)) for m in (PreferencePair, SftExample)
+        )
+        written = sum(
+            count_rows(s, m, m.project_id == pid, m.source == "synthetic") for m in (PreferencePair, SftExample)
+        )
+    if written + count > MAX_SYNTHETIC_TOTAL:
+        raise ValueError(
+            f"This project already has {written} synthetic examples; the limit is {MAX_SYNTHETIC_TOTAL}. The teacher "
+            "model writes seeds and top-ups only. Get the dataset from public data instead: scout_datasets, "
+            "import_dataset, then prepare_dataset(max_examples=...)."
         )
     if unreviewed >= MAX_UNREVIEWED:
         raise ValueError(

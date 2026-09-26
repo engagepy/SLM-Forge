@@ -135,10 +135,12 @@ taught it.
   with a `[Job update]` turn.
 - **Its instructions carry what running this platform taught us:** learning rate 1e-4 is safe
   and 2e-4 diverged; near-duplicates make validation loss meaningless; `max_seq_length` must
-  cover the data's p95 tokens; when public data is poor, write a seed set with the teacher model.
-- **Small, simple data by default:** the Tuner usually has GPT-6 write 150–300 short,
-  characterful examples in the goal's style, reviews a sample, approves the rest and trains on
-  them. It uses public data only when a clean, on-goal set with short answers exists.
+  cover the data's p95 tokens; when public data is poor, write a small seed set, never the dataset.
+- **Public data first, small synthetic sets only:** the Tuner's DataScout hunts the Hugging Face
+  Hub (and the alternatives it can reach), imports generously and samples down to the plan's
+  target. The teacher model writes at most 50 examples per call and 200 per project: a seed of a
+  few dozen when nothing public fits, or a top-up aimed at a gap the evaluation showed. It never
+  writes the dataset itself.
 - **Before/after is a number.** The Tuner writes a test set sized to the task (10–80 cases, with
   exact expected outputs wherever the task is deterministic) and scores every checkpoint on it with
   `evaluate_model`: exact match first, the judge (0–10 against the goal) only where there is no

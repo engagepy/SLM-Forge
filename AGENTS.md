@@ -16,7 +16,8 @@ SLM Forge is a local web app for building small language models on Apple Silicon
 2. The **Tuner** agent does the rest, aiming for a small, finished model the user enjoys:
    - picks the smallest suitable Hugging Face model (about 0.5B by default), preferring ones
      already on the Mac;
-   - finds or (usually) writes a few hundred short examples, then cleans and formats them;
+   - finds public data (Hugging Face first), imports it and cleans and formats it; the teacher
+     model writes at most 50 examples per call and 200 per project (seeds and top-ups only);
    - trains with SFT (LoRA via `mlx-lm`) and evaluates;
    - optionally refines once with DPO (`mlx-lm-lora`) on AI-judged feedback;
    - exports. The user then chats with the exported model on **Try it** (`/p/:id/try`).
@@ -231,7 +232,9 @@ scripts/smoke.py   end-to-end GPU smoke test
     one call *with those arguments* (`StudioState.granted` holds `{tool, args}`; a call with other
     arguments proposes again) and does not reopen the round. Only runs reopen it;
   - while any proposal is pending they refuse; with no `reason` they refuse.
-- `generate_synthetic_examples` refuses while `MAX_UNREVIEWED` examples await review.
+- `generate_synthetic_examples` refuses while `MAX_UNREVIEWED` examples await review, clamps a call to
+  `MAX_SYNTHETIC_PER_CALL` (50) and refuses past `MAX_SYNTHETIC_TOTAL` (200) per project: the dataset
+  comes from public data, the API writes seeds and top-ups only.
 - A new spending tool must call `_spend` first. Put the cost in its docstring and in the prompt's
   "What things cost" list.
 
