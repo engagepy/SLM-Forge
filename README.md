@@ -2,14 +2,15 @@
 
 https://github.com/user-attachments/assets/c8da6840-0540-457b-82c3-006df82cad4f
 
-*20-second tour: type what the model should do, the Tuner does the groundwork and asks before each run, the score goes up, and you chat with the result. [Watch with sound (MP4)](docs/brag/brag.mp4).*
+*20-second tour: type what the model should do, the Tuner does the groundwork and asks before each run, the score goes up, and you chat with the result.*
 
 Build your own small language model on a Mac, by talking to an agent.
 
 Describe what the model should do in one sentence. The **Tuner**, a GPT-6 Luna agent built on
 the OpenAI Agents SDK, takes it from there. It aims for a small, finished model you enjoy talking
-to: the smallest base model that can do the job (preferring ones already on your Mac), a few
-hundred short training examples it finds or writes, a quick fine-tune with
+to: the smallest base model that can do the job (preferring ones already on your Mac), training
+data found on Hugging Face (with at most a small set written by GPT-6 to fill gaps), a quick
+fine-tune with
 [MLX](https://github.com/ml-explore/mlx), an honest before/after test, an optional refinement round
 where GPT-6 reviews and corrects the answers, and an export. It does the groundwork on its own and
 explains each decision in plain language, but **every run waits for your go-ahead**: downloading
