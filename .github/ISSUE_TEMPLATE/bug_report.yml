@@ -1,0 +1,38 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Start a project with the goal …\n2. …"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The server output or the job log (Studio console). Remove any keys or private data first.
+      render: text
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and memory
+      placeholder: "M2 Pro, 32 GB, macOS 26.1"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SLM Forge version or commit
+      placeholder: "0.1.0, or the output of git rev-parse --short HEAD"
+    validations:
+      required: true
