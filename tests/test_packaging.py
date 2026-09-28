@@ -73,3 +73,21 @@ def test_an_hf_token_in_env_reaches_hugging_face(tmp_path, monkeypatch):
         assert get_token() == "hf_from_shell"
     finally:
         config.get_settings.cache_clear()
+
+
+def test_a_missing_key_names_the_exact_file(client, monkeypatch, tmp_path):
+    # Regression: an installed copy said "set OPENAI_API_KEY in .env" and the user couldn't tell
+    # which .env; the app now names the file it reads (the app home's, or SLM_DOTENV's).
+    import pytest
+
+    from slm.agents.provider import OpenAIProvider, ProviderError
+
+    target = tmp_path / "home" / ".env"
+    monkeypatch.setenv("SLM_DOTENV", str(target))
+    assert config.env_file() == target
+    assert client.get("/api/system").json()["agents"]["env_file"] == str(target)
+    monkeypatch.delenv("SLM_DOTENV")
+    assert config.env_file() == config.APP_HOME / ".env"
+    monkeypatch.setattr(config.get_settings(), "openai_api_key", None)
+    with pytest.raises(ProviderError, match="Add OPENAI_API_KEY=... to .*\\.env and restart"):
+        OpenAIProvider()

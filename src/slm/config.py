@@ -28,6 +28,19 @@ def env_files() -> tuple[Path, ...]:
     return tuple(dict.fromkeys([APP_HOME / ".env", Path.cwd() / ".env"]))
 
 
+def env_file() -> Path:
+    """The one .env file to tell people about: the app home's (the repo's .env in a clone,
+    ~/Library/Application Support/SLM Forge/.env when installed), or SLM_DOTENV's."""
+    import os
+
+    return Path(override) if (override := os.environ.get("SLM_DOTENV")) else APP_HOME / ".env"
+
+
+def key_help(key: str) -> str:
+    """Where to put a missing key, naming the actual file (a bare ".env" left installed users guessing)."""
+    return f"Add {key}=... to {env_file()} and restart SLM Forge"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=env_files(), env_prefix="SLM_", extra="ignore")
 

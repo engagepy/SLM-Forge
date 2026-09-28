@@ -26,6 +26,7 @@ export interface SystemStatus {
     key_configured: boolean;
     key_env: string | null;
     tuner: { ready: boolean; key_env: string; model: string };
+    env_file: string;
   };
   workspace: string;
   disk: {
