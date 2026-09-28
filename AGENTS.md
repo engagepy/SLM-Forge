@@ -35,8 +35,10 @@ exported model.
 
 The Studio (`/p/:id`) is the main screen: the Tuner chat on the left and a live canvas of stages on
 the right. **Home** (`/`) is the central place: running sessions, a new-model form and the user
-profile. A sessions sidebar appears on both. The older manual screens are under **Advanced**
-(`/p/:id/overview`, `/model`, `/data`, `/train`, …).
+profile. A sessions sidebar appears on both. **Advanced** is the same project for ML experts, one
+switch away in the top bar: the same frame (sidebar, metrics bar, project header) and the Studio's
+stepper, each stage opening its expert screen (`/p/:id/overview` for Goal, `/data`, `/model`,
+`/train`, `/evaluate`, `/feedback` for Refine, `/export`; plus `/playground` and `/agents`).
 
 ## Set up on a new Mac
 
@@ -156,11 +158,14 @@ src/slm/
                    confirm.py (proposed runs: propose / confirm / decline)
   api/             app.py (lifespan starts worker), routes_* (projects, studio, feedback, agents, system)
 web/src/
-  App.tsx          routes; / and /p/:id wrapped in SessionsSidebar; /p/:id/* = AdvancedLayout
+  App.tsx          routes; every page but Advanced's inner routes is wrapped in SessionsSidebar;
+                   /p/:id/* = AdvancedLayout (MetricsBar + ProjectHeader + StageStepper, like the Studio)
   pages/studio/    the Studio: index (page), Chat, ConfirmCard, Canvas, stages, ExportActions (GGUF,
                    Hugging Face), Evaluate, Console, bits; pages/TryModel.tsx (chat with an export);
                    pages/Home.tsx; other pages = Advanced
-  components/      SessionsSidebar, ProfilePanel, Markdown (safe renderer), Charts, JobLog, …
+  components/      StageStepper (stageDone: the one definition of a finished stage), MetricsBar
+                   (with the Studio/Advanced switch), ProjectHeader, SessionsSidebar, ThemeToggle,
+                   ProfilePanel, Markdown (safe renderer), Charts, JobLog, …
   hooks.ts, ui.tsx, api.ts
 tests/             one file per area; conftest gives a temp workspace; fixtures/templates (real chat
                    templates, see its README); test_jobs (handlers with FakeTrainer / FakeHub)
@@ -313,6 +318,9 @@ docs/brag/         the promo video shown in the README
   - With autopilot off, a finished job only leaves a quiet event in the transcript.
 
 ### API and frontend
+- **The Studio and Advanced never disagree.** Both draw the stepper from `StageStepper` and
+  compute ticks with `stageDone` (and `stageSkipped`: Refine on a finished project without DPO).
+  Don't write another "is this step done" rule on a page; extend `stageDone`.
 - **SSE streams:** `/api/projects/{id}/tuner/stream`, the job streams and the jobs feed. The Tuner
   stream sends turn_start, delta, tool_start and tool_end, message, turn_end, canvas and error.
   The jobs feed carries job `status` events and `tuner` busy/idle events. `useJobsFeed`

@@ -4,7 +4,8 @@ import { Link } from "react-router";
 
 import { api, DEFAULT_SAMPLING, postStream, type PreferencePair, type SamplingParams, type SftExample } from "../api";
 import SamplingControls from "../components/SamplingControls";
-import { useOverview, useProjectId, followJob } from "../hooks";
+import { useOverview, useProjectId, useStudio, followJob } from "../hooks";
+import { RefineView } from "./studio/stages";
 import { Badge, Button, Card, Collapsible, cx, Empty, ErrorNote, Field, LinkButton, Spinner, Stat, TextArea } from "../ui";
 
 type Choice = "a" | "b" | "tie" | "both_bad";
@@ -17,6 +18,7 @@ const SIDE_DEFAULTS: Record<"a" | "b", SamplingParams> = {
 export default function FeedbackPage() {
   const projectId = useProjectId();
   const { data: ov } = useOverview(projectId);
+  const { data: snap } = useStudio(projectId);
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-6">
       <div>
@@ -26,6 +28,12 @@ export default function FeedbackPage() {
           answer also creates a supervised example. The Observer reads your critiques and decides what to generate next.
         </p>
       </div>
+      {/* The Studio's Refine card, when it adds something the counts below don't: AI reviews, DPO rounds. */}
+      {snap && (snap.comparisons.some((c) => c.judge === "ai") || snap.checkpoints.some((c) => c.kind === "dpo")) && (
+        <Card title="Refine" subtitle="What the Studio shows for this stage: AI reviews, your judgements, preference pairs and DPO rounds">
+          <RefineView s={snap} />
+        </Card>
+      )}
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
         <Compare projectId={projectId} systemPrompt={ov?.project.system_prompt ?? ""} />
         <SidePanel projectId={projectId} />

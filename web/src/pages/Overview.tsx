@@ -2,39 +2,64 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { api, fmt, isServing, type Job, type Project } from "../api";
-import { useOverview, useProjectId } from "../hooks";
+import { api, fmt, isServing, type Job, type Project, type Stage, STAGES } from "../api";
+import { ADVANCED_PAGE, stageDone, stageSkipped } from "../components/StageStepper";
+import { useOverview, useProjectId, useStudio } from "../hooks";
+import { STAGE_LABEL } from "./studio/bits";
 import { Badge, Button, Card, cx, Field, LinkButton, StatusBadge, TextArea } from "../ui";
 
 export default function OverviewPage() {
   const projectId = useProjectId();
   const { data } = useOverview(projectId);
+  const { data: snap } = useStudio(projectId);
   const jobs = useQuery({
     queryKey: ["jobs", projectId],
     queryFn: () => api.get<Job[]>(`/api/jobs?project_id=${projectId}&limit=12`),
   });
-  if (!data) return null;
+  if (!data || !snap) return null;
   const { project, counts, checkpoints } = data;
 
-  const steps = [
-    { label: "Choose and download a base model", done: data.base_model_downloaded, to: "model", detail: project.base_model },
-    { label: "Get training data", done: counts.dataset_versions > 0, to: "data", detail: `${counts.datasets} datasets · ${counts.dataset_versions} prepared` },
-    { label: "Fine-tune (SFT)", done: checkpoints.some((c) => c.kind === "sft"), to: "train", detail: `${checkpoints.filter((c) => c.kind === "sft").length} runs` },
-    { label: "Compare answers and give feedback", done: counts.feedback >= 8, to: "feedback", detail: `${counts.feedback} judgements · ${counts.pairs_ready} pairs ready` },
-    { label: "Preference-tune (DPO) on your feedback", done: checkpoints.some((c) => c.kind === "dpo"), to: "train", detail: `${checkpoints.filter((c) => c.kind === "dpo").length} rounds` },
-    { label: "Export the model", done: false, to: "export", detail: "fused, quantized, with a model card" },
-  ];
-  const next = steps.find((s) => !s.done);
+  // The Studio's stages, in its order, with its definition of done.
+  const done = stageDone(snap);
+  const sft = checkpoints.filter((c) => c.kind === "sft").length;
+  const dpo = checkpoints.filter((c) => c.kind === "dpo").length;
+  const best = snap.evals.length ? Math.max(...snap.evals.map((e) => e.mean)) : null;
+  const tests = project.test_questions ?? [];
+  const DETAIL: Record<Stage, string> = {
+    goal: tests.length ? `${tests.length} test cases · system prompt ${project.system_prompt ? "set" : "not set"}` : "goal, system prompt and test set",
+    data: `${counts.datasets} datasets · ${counts.dataset_versions} prepared`,
+    model: project.base_model || "not chosen yet",
+    train: `${sft} SFT run${sft === 1 ? "" : "s"}`,
+    evaluate: best != null ? `${snap.evals.length} evaluations · best ${best.toFixed(1)} / 10` : `${counts.feedback} judgements`,
+    refine: stageSkipped("refine", done, snap) ? "skipped (optional)" : `${dpo} DPO rounds · ${counts.pairs_ready} pairs ready (30+ to be worth it)`,
+    export: snap.exports.length ? `${snap.exports.length} export${snap.exports.length === 1 ? "" : "s"}` : "fused, quantized, with a model card",
+  };
+  const next = STAGES.find((st) => !done[st] && !stageSkipped(st, done, snap));
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">{project.name}</h1>
-          <p className="mt-1 max-w-2xl text-[13px] text-muted">{project.goal}</p>
+          <h1 className="text-xl font-semibold tracking-tight">Goal and pipeline</h1>
+          <p className="mt-1 max-w-2xl text-[13px] text-muted">
+            The same stages as the Studio, with the same ticks. Each opens its expert screen.
+          </p>
         </div>
-        {next && (
-          <LinkButton to={`/p/${projectId}/${next.to}`} variant="primary">Next: {next.label.split(" (")[0].toLowerCase()} →</LinkButton>
+        {next === "goal" ? (
+          // The Tuner settles the goal and test set, so the way forward from here is the Studio.
+          <LinkButton to={`/p/${projectId}`} variant="primary" className="shrink-0 whitespace-nowrap">
+            Continue in the Studio →
+          </LinkButton>
+        ) : next ? (
+          <LinkButton to={`/p/${projectId}/${ADVANCED_PAGE[next]}`} variant="primary" className="shrink-0 whitespace-nowrap">
+            Next: {STAGE_LABEL[next].toLowerCase()} →
+          </LinkButton>
+        ) : (
+          snap.exports.length > 0 && (
+            <LinkButton to={`/p/${projectId}/try`} variant="good" className="shrink-0 whitespace-nowrap">
+              ▶ Try your model
+            </LinkButton>
+          )
         )}
       </div>
 
@@ -56,24 +81,29 @@ export default function OverviewPage() {
       <div className="grid gap-5 md:grid-cols-5">
         <Card title="Pipeline" className="md:col-span-3" pad={false}>
           <ol className="divide-y divide-line">
-            {steps.map((s, i) => (
-              <li key={i}>
-                <Link to={`/p/${projectId}/${s.to}`} className="flex items-center gap-3 px-4 py-3 hover:bg-panel-2">
-                  <span
-                    className={cx(
-                      "grid size-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold",
-                      s.done ? "bg-good-soft text-good" : s === next ? "bg-accent text-white" : "bg-panel-2 text-faint",
-                    )}
-                  >
-                    {s.done ? "✓" : i + 1}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[13px]">{s.label}</span>
-                    {s.detail && <span className="block truncate text-xs text-faint">{s.detail}</span>}
-                  </span>
-                </Link>
-              </li>
-            ))}
+            {STAGES.map((st, i) => {
+              const skipped = stageSkipped(st, done, snap);
+              return (
+                <li key={st}>
+                  <Link to={`/p/${projectId}/${ADVANCED_PAGE[st]}`} className="flex items-center gap-3 px-4 py-3 hover:bg-panel-2">
+                    <span
+                      className={cx(
+                        "grid size-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold",
+                        done[st] ? "bg-good text-white" : st === next ? "bg-accent text-white" : "bg-panel-2 text-faint",
+                      )}
+                    >
+                      {done[st] ? "✓" : skipped ? "–" : i + 1}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className={cx("block text-[13px]", done[st] && "text-good")}>{STAGE_LABEL[st]}</span>
+                      <span className="block truncate text-xs text-faint">{DETAIL[st]}</span>
+                    </span>
+                    {done[st] && <Badge tone="good">done</Badge>}
+                    {st === next && <Badge tone="accent">next</Badge>}
+                  </Link>
+                </li>
+              );
+            })}
           </ol>
         </Card>
 
