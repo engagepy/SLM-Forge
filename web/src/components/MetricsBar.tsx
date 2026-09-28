@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { api, fmt, type Snapshot, type SystemStatus } from "../api";
 import { useSystem } from "../hooks";
 import { ADVANCED_PAGE } from "./StageStepper";
-import { Badge, cx, Popover } from "../ui";
+import { Badge, CodeBlock, cx, Popover } from "../ui";
 import UsageMeter from "./UsageMeter";
 
 const size = fmt.size;
@@ -100,9 +100,9 @@ export default function MetricsBar({ snapshot, view }: { snapshot?: Snapshot; vi
       )}
       {sys?.disk && <DiskMeter disk={sys.disk} />}
       <UsageMeter />
-      {sys && !sys.agents.tuner.ready && <Badge tone="warn">Tuner needs {sys.agents.tuner.key_env} in .env</Badge>}
-      {sys && sys.agents.tuner.ready && !sys.agents.key_configured && (
-        <Badge tone="warn">set {sys.agents.key_env} in .env</Badge>
+      {sys && !sys.agents.tuner.ready && <KeyHint keyName={sys.agents.tuner.key_env} file={sys.agents.env_file} label="Tuner needs" />}
+      {sys && sys.agents.tuner.ready && !sys.agents.key_configured && sys.agents.key_env && (
+        <KeyHint keyName={sys.agents.key_env} file={sys.agents.env_file} label="set" />
       )}
       </div>
       <div className="flex min-h-8 shrink-0 items-center gap-2.5">
@@ -159,5 +159,30 @@ function ViewSwitch({ s, view }: { s: Snapshot; view: View }) {
         </span>
       )}
     </nav>
+  );
+}
+
+/** A missing key: the badge opens the exact file to put it in (a bare ".env" left installed users
+ * guessing which one) and a command that adds it. */
+function KeyHint({ keyName, file, label }: { keyName: string; file: string; label: string }) {
+  const [open, setOpen] = useState(false);
+  const cmd = `echo '${keyName}=...' >> "${file}"`;
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} title={`Put ${keyName} in ${file}`}>
+        <Badge tone="warn">
+          {label} {keyName} · where?
+        </Badge>
+      </button>
+      <Popover open={open} onClose={() => setOpen(false)} align="left">
+        <div className="w-[26rem] space-y-2 whitespace-normal text-[12px] leading-relaxed text-muted">
+          <p className="font-semibold text-fg">Add {keyName} to this file</p>
+          <CodeBlock text={file} />
+          <p>Create it if it doesn't exist, with one line per key, then restart SLM Forge. Or run:</p>
+          <CodeBlock text={cmd} />
+          <p className="text-faint">A .env in the folder you start the app from also works. Keys exported in your shell win.</p>
+        </div>
+      </Popover>
+    </div>
   );
 }

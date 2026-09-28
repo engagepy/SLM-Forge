@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from slm.config import get_settings
+from slm.config import env_file, get_settings, key_help
 
 
 @dataclass
@@ -181,7 +181,7 @@ class OpenAIProvider:
 
         settings = get_settings()
         if not settings.openai_api_key:
-            raise ProviderError("No OpenAI API key. Set OPENAI_API_KEY in .env.")
+            raise ProviderError(f"No OpenAI API key. {key_help('OPENAI_API_KEY')}.")
         self.model = model or settings.openai_model
         self.client = OpenAI(api_key=settings.openai_api_key)
         agents.set_default_openai_key(settings.openai_api_key, use_for_tracing=settings.openai_tracing)
@@ -192,7 +192,7 @@ class OpenAIProvider:
         import openai
 
         if isinstance(e, openai.AuthenticationError):
-            return ProviderError("OpenAI authentication failed. Check OPENAI_API_KEY in .env.")
+            return ProviderError(f"OpenAI authentication failed. Check OPENAI_API_KEY in {env_file()}.")
         if isinstance(e, openai.RateLimitError):
             return ProviderError("OpenAI rate limit or quota exceeded; try again shortly or check billing.")
         if isinstance(e, openai.APIConnectionError):
