@@ -2,9 +2,18 @@
 
 import argparse
 import json
+import platform
+import sys
+
+PLATFORM_HELP = (
+    "SLM Forge needs an Apple Silicon Mac (M1 or later): it trains and runs models with Apple's MLX, "
+    "which uses the Mac's GPU."
+)
 
 
 def main() -> None:
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        sys.exit(PLATFORM_HELP)
     parser = argparse.ArgumentParser(prog="slm", description="SLM Forge: build small language models on Apple Silicon")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -28,12 +37,12 @@ def main() -> None:
 
         s = get_settings()
         host, port = args.host or s.host, args.port or s.port
-        from slm.api.app import web_built
+        from slm.api.app import web_build_hint, web_built
+        from slm.config import get_settings as _s
 
-        print(
-            f"SLM Forge on http://{host}:{port}"
-            + ("" if web_built() else "  (API only; run `npm run dev` in web/ for the UI)")
-        )
+        print(f"SLM Forge on http://{host}:{port}  (workspace: {_s().workspace})")
+        if not web_built():
+            print(f"API only: {web_build_hint()}")
         uvicorn.run("slm.api.app:app", host=host, port=port, reload=args.reload, log_level="info")
 
     elif args.cmd == "hardware":

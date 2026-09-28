@@ -9,6 +9,8 @@ declare const process: { env: Record<string, string | undefined> };
 // SLM_API points the proxy elsewhere, e.g. a test server.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // The build ships inside the Python package, so `pip install slm-forge` serves the UI.
+  build: { outDir: "../src/slm/web_dist", emptyOutDir: true },
   server: {
     port: 5173,
     proxy: { "/api": { target: process.env.SLM_API ?? "http://127.0.0.1:8000", changeOrigin: true } },

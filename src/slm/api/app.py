@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from slm import __version__
 from slm.agents import actions  # noqa: F401  (registers agent job handlers)
 from slm.api import routes_agents, routes_feedback, routes_projects, routes_studio, routes_system
-from slm.config import PROJECT_ROOT
+from slm.config import PROJECT_ROOT, SOURCE_CHECKOUT
 from slm.db import engine
 from slm.events import shutting_down
 from slm.inference.engine import engine as infer
@@ -19,7 +19,10 @@ from slm.train import jobs  # noqa: F401  (registers training job handlers)
 from slm.train.worker import worker
 from slm.tuner.session import on_job_finished, tuner
 
-WEB_DIST = PROJECT_ROOT / "web" / "dist"
+# The built UI ships inside the package (`npm run build` writes it there), so an installed wheel
+# serves it; an older build in web/dist still works in a checkout.
+PACKAGED_UI = Path(__file__).resolve().parents[1] / "web_dist"
+WEB_DIST = next((d for d in (PACKAGED_UI, PROJECT_ROOT / "web" / "dist") if (d / "index.html").exists()), PACKAGED_UI)
 
 
 @asynccontextmanager
@@ -71,3 +74,9 @@ app = create_app()
 
 def web_built() -> bool:
     return Path(WEB_DIST / "index.html").exists()
+
+
+def web_build_hint() -> str:
+    if SOURCE_CHECKOUT:
+        return "the web UI isn't built: run `npm --prefix web ci && npm --prefix web run build`"
+    return "this install has no web UI; reinstall from PyPI (`pipx install --force slm-forge`)"

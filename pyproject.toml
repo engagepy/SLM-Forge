@@ -1,8 +1,24 @@
 [project]
-name = "slm-intro"
+name = "slm-forge"
 version = "0.1.0"
-description = "Local platform for fine-tuning small language models on Apple Silicon with MLX"
+description = "Build your own small language model on a Mac by talking to an agent: data, MLX fine-tuning, evaluation and export"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Zorawar Purohit", email = "42845567+engagepy@users.noreply.github.com" }]
 requires-python = ">=3.13"
+keywords = ["llm", "small-language-model", "fine-tuning", "lora", "mlx", "apple-silicon", "agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: GPU",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "anthropic>=1.8.0",
     "datasets>=5.0.1",
@@ -28,8 +44,14 @@ dev = [
     "ruff>=0.16.8",
 ]
 
+[project.urls]
+Homepage = "https://github.com/engagepy/SLM-Forge"
+Issues = "https://github.com/engagepy/SLM-Forge/issues"
+Changelog = "https://github.com/engagepy/SLM-Forge/blob/main/CHANGELOG.md"
+
 [project.scripts]
 slm = "slm.cli:main"
+slm-forge = "slm.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]

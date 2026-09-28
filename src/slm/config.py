@@ -7,12 +7,27 @@ from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# Run from a clone (src/slm inside a checkout), the app keeps its workspace and .env in the repo, as
+# it always has. Installed from PyPI, PROJECT_ROOT is somewhere inside Python's site-packages, so
+# the app keeps them in the user's Application Support folder instead.
+SOURCE_CHECKOUT = (PROJECT_ROOT / "pyproject.toml").is_file() and (PROJECT_ROOT / "src" / "slm").is_dir()
+APP_HOME = PROJECT_ROOT if SOURCE_CHECKOUT else Path.home() / "Library" / "Application Support" / "SLM Forge"
+
+
+def env_files() -> tuple[Path, ...]:
+    """Where .env is read from, lowest priority first: the app home, then the current directory.
+    SLM_DOTENV names one file instead (tests point it at nothing)."""
+    import os
+
+    if override := os.environ.get("SLM_DOTENV"):
+        return (Path(override),)
+    return tuple(dict.fromkeys([APP_HOME / ".env", Path.cwd() / ".env"]))
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", env_prefix="SLM_", extra="ignore")
+    model_config = SettingsConfigDict(env_file=env_files(), env_prefix="SLM_", extra="ignore")
 
-    workspace: Path = PROJECT_ROOT / "workspace"
+    workspace: Path = APP_HOME / "workspace"
 
     # Agent LLM provider. OpenAI is the default; Claude and a local Ollama model also work.
     agent_provider: Literal["openai", "claude", "ollama"] = "openai"
@@ -69,14 +84,14 @@ class Settings(BaseSettings):
 
 
 def _dotenv_value(name: str) -> str | None:
-    import os
-
-    env_file = Path(os.environ.get("SLM_DOTENV") or PROJECT_ROOT / ".env")  # tests point it at nothing
-    if not env_file.exists():
-        return None
-    for line in env_file.read_text().splitlines():
-        if line.strip().startswith(f"{name}="):
-            return line.split("=", 1)[1].strip().strip('"').strip("'") or None
+    """An unprefixed key (OPENAI_API_KEY…) from the highest-priority .env that sets it."""
+    for env_file in reversed(env_files()):
+        if not env_file.exists():
+            continue
+        for line in env_file.read_text().splitlines():
+            if line.strip().startswith(f"{name}="):
+                if value := line.split("=", 1)[1].strip().strip('"').strip("'"):
+                    return value
     return None
 
 
