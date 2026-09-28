@@ -252,5 +252,3 @@ the model catalog and the data specialists. Still ahead:
 - a machine-wide GPU lock across server processes, and a memory estimator recalibrated for 3B+;
 - curricula, ORPO/GRPO, GGUF/Ollama export, a device compatibility matrix, packaging for other
   users.
-
-`simpletokeniser.py` is an unrelated learning exercise (a toy word tokenizer).
