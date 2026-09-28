@@ -54,3 +54,22 @@ def test_the_packaged_ui_is_served_before_a_dev_build():
     assert app.PACKAGED_UI.name == "web_dist" and app.PACKAGED_UI.parent.name == "slm"
     if (app.PACKAGED_UI / "index.html").exists():
         assert app.WEB_DIST == app.PACKAGED_UI
+
+
+def test_an_hf_token_in_env_reaches_hugging_face(tmp_path, monkeypatch):
+    # Keys live in one place: HF_TOKEN in .env is what huggingface_hub uses, unless the shell set one.
+    from huggingface_hub import get_token
+
+    (tmp_path / ".env").write_text("HF_TOKEN=hf_from_env_file\n")
+    monkeypatch.setattr(config, "env_files", lambda: (tmp_path / ".env",))
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    config.get_settings.cache_clear()
+    try:
+        config.get_settings()
+        assert get_token() == "hf_from_env_file"
+        monkeypatch.setenv("HF_TOKEN", "hf_from_shell")
+        config.get_settings.cache_clear()
+        config.get_settings()
+        assert get_token() == "hf_from_shell"
+    finally:
+        config.get_settings.cache_clear()

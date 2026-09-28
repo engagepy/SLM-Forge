@@ -68,7 +68,7 @@ Python 3.13, and an [OpenAI API key](https://platform.openai.com/api-keys) for t
 
 ```bash
 uv tool install slm-forge                 # or: pipx install slm-forge
-echo "OPENAI_API_KEY=sk-..." > .env       # in the folder you start it from
+echo "OPENAI_API_KEY=sk-..." > .env       # in the folder you start it from; add HF_TOKEN=hf_... to publish
 slm serve                                 # → http://127.0.0.1:8000
 ```
 
@@ -284,7 +284,7 @@ Every export in the Studio has two more buttons:
   Without it you get Q8_0.
 - **Upload to Hugging Face** publishes the export (the MLX model, the GGUF files, the model card and
   the base model's licence files) to a repository under your account, **public** unless you choose
-  private. It uses your own `hf auth login` (a token that can write). The form shows the base
+  private. It uses your Hugging Face login: `HF_TOKEN` in `.env` (a token that can write) or `uv run hf auth login`. The form shows the base
   model's licence first; Llama models are only published with Meta's licence file, and nothing that
   names a folder on your Mac is uploaded. Afterwards: `ollama run hf.co/<you>/<model>:Q4_K_M`.
 
@@ -299,7 +299,7 @@ Training and inference run on your Mac. Three things leave it:
   put data you may not share with OpenAI through it, such as health records or other personal
   data. Agent traces go to your OpenAI dashboard only if you set `SLM_OPENAI_TRACING=true`.
 - **Hugging Face:** model and dataset downloads and dataset searches, and the models you choose to
-  publish. It uses your own `hf auth login`; SLM Forge never stores the token.
+  publish. It uses `HF_TOKEN` from `.env` or your `hf auth login`; SLM Forge never stores it elsewhere.
 - **GitHub and PyPI**, once, when the first GGUF export downloads llama.cpp's converter.
 - **Anthropic or Ollama**, only if you choose them as `SLM_AGENT_PROVIDER`.
 

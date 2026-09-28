@@ -9,7 +9,7 @@ os.environ["SLM_WORKSPACE"] = tempfile.mkdtemp(prefix="slm-test-")
 os.environ["HF_HOME"] = tempfile.mkdtemp(prefix="slm-test-hf-")
 os.environ["SLM_DOTENV"] = "/nonexistent/.env"
 os.environ["HF_HUB_OFFLINE"] = "1"  # no test may reach the Hub; code that tries must cope
-for _key in ("OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_PROJECT_ID", "ANTHROPIC_API_KEY"):
+for _key in ("OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENAI_PROJECT_ID", "ANTHROPIC_API_KEY", "HF_TOKEN"):
     os.environ.pop(_key, None)
 
 from sqlalchemy.pool import StaticPool  # noqa: E402

@@ -8,7 +8,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from slm.agents.base import set_proposal_status
-from slm.config import get_settings
+from slm.config import HF_LOGIN_HELP, get_settings
 from slm.data import pipeline, scout_tools
 from slm.data.clean import CleaningRules
 from slm.db import (
@@ -640,10 +640,7 @@ def _hub_error(e: Exception, repo_id: str) -> Exception:
 
     status = getattr(getattr(e, "response", None), "status_code", None)
     if isinstance(e, HfHubHTTPError) and status in (401, 403):
-        return RuntimeError(
-            "Hugging Face refused the upload: log in with a token that can write (`hf auth login`), "
-            f"and check you may create {repo_id}."
-        )
+        return RuntimeError(f"Hugging Face refused the upload: {HF_LOGIN_HELP}, and check you may create {repo_id}.")
     if isinstance(e, HfHubHTTPError) and status == 409:
         return RuntimeError(f"{repo_id} is taken: choose another name.")
     return e
@@ -667,7 +664,7 @@ def hf_upload_job(ctx: JobContext) -> None:
             raise RuntimeError(
                 "Llama models must be published with Meta's licence file, and it couldn't be downloaded: accept "
                 f"the licence at https://huggingface.co/{base.get('upstream') or 'meta-llama'} while logged in "
-                "(`hf auth login`), then upload again."
+                f"({HF_LOGIN_HELP}), then upload again."
             )
     _scrub_local_paths(dest, repo_id)
     with Session(engine()) as s:

@@ -96,8 +96,9 @@ export function ExportActions({ s, e }: { s: Snapshot; e: ExportInfo }) {
             <Spinner />
           ) : !acct.logged_in || !acct.can_write ? (
             <p className="text-[12px] text-warn">
-              {acct.logged_in ? "Your Hugging Face token is read-only." : "Not logged in to Hugging Face."} Run{" "}
-              <code>hf auth login</code> in a terminal with a token that can write, then try again.
+              {acct.logged_in ? "Your Hugging Face token is read-only." : "Not logged in to Hugging Face."} Add{" "}
+              <code>HF_TOKEN=hf_…</code> (a token that can write, from huggingface.co/settings/tokens) to <code>.env</code> and
+              restart SLM Forge, or run <code>uv run hf auth login</code>.
             </p>
           ) : (
             <>

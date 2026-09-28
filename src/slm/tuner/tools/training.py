@@ -2,6 +2,7 @@
 
 from sqlmodel import Session, select
 
+from slm.config import HF_LOGIN_HELP
 from slm.db import (
     Checkpoint,
     DatasetVersion,
@@ -272,9 +273,7 @@ def upload_to_huggingface(
     _, result = _export_for(pid, export_job_id)
     acct = hub.account(refresh=True)
     if not acct["can_write"]:
-        raise ValueError(
-            "Hugging Face isn't set up for publishing: ask the user to run `hf auth login` with a write token"
-        )
+        raise ValueError(f"Hugging Face isn't set up for publishing. Tell the user to {HF_LOGIN_HELP}")
     folder = Path(result["path"])
     meta = json.loads((folder / "slm_forge.json").read_text()) if (folder / "slm_forge.json").exists() else {}
     lic = meta.get("base_license") or {}

@@ -38,19 +38,53 @@ the right. **Home** (`/`) is the central place: running sessions, a new-model fo
 profile. A sessions sidebar appears on both. The older manual screens are under **Advanced**
 (`/p/:id/overview`, `/model`, `/data`, `/train`, …).
 
+## Set up on a new Mac
+
+Everything that works on the maintainer's Mac works on any Apple Silicon Mac from a fresh clone.
+Nothing in the code or config is tied to one machine: paths come from the checkout, keys from
+`.env`, the Hugging Face login from the machine, and hardware limits are detected at runtime.
+
+1. **Tools:** [uv](https://docs.astral.sh/uv/) and Node 20+. uv installs Python 3.13 itself
+   (`.python-version`).
+2. **Clone and build:**
+   ```bash
+   git clone https://github.com/engagepy/SLM-Forge.git && cd SLM-Forge
+   uv sync && npm --prefix web ci && npm --prefix web run build
+   cp .env.example .env
+   ```
+3. **Keys, all in `.env`:**
+
+   | Key | Needed for | Without it |
+   |---|---|---|
+   | `OPENAI_API_KEY` | the Tuner, its specialists, the AI judge | The header says so, and the Tuner answers with "No OpenAI API key". |
+   | `HF_TOKEN` (a token that can write) | gated models (Llama, Gemma), publishing to Hugging Face | Public models and datasets still work. Alternative: `uv run hf auth login`. |
+   | `SLM_OPENAI_MODEL` | an account without `gpt-6-luna` | The Tuner's calls fail with a model error. |
+   | `OPENAI_ADMIN_KEY` | the spend meter (organisation-wide key: use a dedicated one) | The meter reads "spend not set up". |
+
+4. **Optional tools:** `brew install llama.cpp` gives `llama-quantize` for Q4_K_M GGUF files
+   (Q8_0 works without it). The GGUF converter installs itself into `workspace/tools/` on first
+   use (~300 MB).
+5. **Check it:** `uv run pytest -q` (no keys or network needed), then `uv run slm serve` and open
+   http://127.0.0.1:8000. `uv run python scripts/smoke.py` trains a tiny model on the GPU end to
+   end (~5 minutes, downloads ~0.3 GB).
+
+Your data stays in `./workspace` of your clone (gitignored). An installed copy (`uv tool install
+slm-forge`) uses `~/Library/Application Support/SLM Forge/` instead.
+
 ## Commands
 
 ```bash
 uv sync                                    # Python deps (never create a venv/interpreter by hand)
-uv run pytest -q                           # ~200 tests, no GPU/network, ~10 s. Must pass.
+uv run pytest -q                           # ~210 tests, no GPU/network/keys, ~10 s. Must pass.
 uv run ruff check src tests && uv run ruff format src tests
-(cd web && npm install && npm run build)   # tsc -b + vite build. Must be clean.
-uv run slm serve                           # http://127.0.0.1:8000 (serves src/slm/web_dist)
+npm --prefix web ci && npm --prefix web run build   # tsc -b + vite build into src/slm/web_dist. Must be clean.
+uv run slm serve                           # http://127.0.0.1:8000
 uv run slm hardware | uv run slm models qwen
-uv run python scripts/smoke.py             # real end-to-end run on the GPU (~4 min)
+uv run python scripts/smoke.py             # real end-to-end run on the GPU (~5 min)
+uv run hf auth whoami                      # which Hugging Face account this Mac uses
 ```
 
-- **Python:** 3.13 from the user's pyenv, managed by uv. Don't pin an in-project interpreter.
+- **Python:** 3.13, managed by uv. Don't pin an in-project interpreter.
 - **UI development:** run `uv run slm serve` and `npm run dev` in `web/` (Vite proxies `/api` to
   `$SLM_API` or `:8000`).
 - If a shell has `VIRTUAL_ENV` set from elsewhere, `unset VIRTUAL_ENV` before `uv run`.
@@ -59,9 +93,11 @@ uv run python scripts/smoke.py             # real end-to-end run on the GPU (~4 
 
 1. **Never commit** `.env` (it holds `OPENAI_API_KEY`), `workspace/`, `node_modules/`, `src/slm/web_dist/`, `web/dist/`
    or `*.tsbuildinfo`. All of them are gitignored.
-2. **Commit or push only when the user asks.** End commit messages with the repo's co-author line.
+2. **`main` is protected: changes go through a pull request** from a branch, and CI (ruff,
+   pytest, web build on macOS arm64) must pass. Sign off commits (`git commit -s`, see
+   CONTRIBUTING.md). An agent commits or pushes only when the person it works for asks.
 3. **Never touch the user's own work** in `workspace/`. That means their training runs, jobs,
-   projects and DB. For experiments, use a scratch workspace:
+   projects and DB. Don't start, stop or restart a server someone else is running. For experiments, use a scratch workspace:
    `SLM_WORKSPACE=<scratch dir> SLM_PORT=8123 uv run slm serve`, on a copy of `slm.db` if you
    need real data.
 4. **Never train while the user's run is going.** Only one GPU job fits in 16 GB, and separate
@@ -70,12 +106,16 @@ uv run python scripts/smoke.py             # real end-to-end run on the GPU (~4 
 5. **Verify edits.** Re-read what you changed, run the tests, build the web app, and report failures
    honestly.
 6. When you fix a bug, add a regression test (see the "Regression:" comments in `tests/`).
+7. **Tests never touch the network, keys or your Hugging Face cache.** `conftest.py` blanks the
+   keys, points `.env` and `HF_HOME` at nothing and sets `HF_HUB_OFFLINE=1`. Stub anything that
+   would call out (see `FakeTrainer`, `FakeHub`, `FakeProvider`).
 
 ## Layout
 
 ```
 src/slm/
-  config.py        Settings (env prefix SLM_); reads OPENAI_/ANTHROPIC_API_KEY from env or .env
+  config.py        Settings (env prefix SLM_); keys from env or .env (OPENAI_*, ANTHROPIC_API_KEY, HF_TOKEN);
+                   SOURCE_CHECKOUT / APP_HOME decide where workspace and .env live; HF_LOGIN_HELP
   db.py            SQLModel tables + _add_missing_columns (additive migration; create_all never ALTERs);
                    query helpers: count, ready/awaiting_review (example filters), studio_state
   events.py        in-process pub/sub → SSE (topics: job:{id}, jobs, project:{id}, tuner:{pid}); canvas_changed
@@ -93,18 +133,21 @@ src/slm/
                    project (detected via the admin key list; OPENAI_PROJECT_ID overrides), 10-minute
                    cache, never raises; GET /api/usage
   feedback.py      record_feedback → preference pairs + SFT examples (used by API and AI judge)
-  models/          hub.py (search, fit verdict), manage.py (download local-first, HF cache scan),
-                   catalog.py (curated families built as small models; find_base_models lists them first)
+  models/          hub.py (search, fit verdict, account(): HF login + write access), manage.py (download
+                   local-first, HF cache scan, access_error), catalog.py (curated families, LICENCES,
+                   UPSTREAM originals, licence_for)
   data/            scout_tools (HF search/preview/import), format (column mapping), clean,
                    length (fit_to_length: drop/split long examples), split, pipeline (prepare → version)
   train/           config (TrainConfig, presets, memory_estimate, YAML), runner (subprocess + log
-                   regexes), worker (3 lanes), jobs (download/import/prepare/sft/dpo/export), diagnose
+                   regexes), worker (3 lanes), jobs (download/import/prepare/sft/dpo/export/gguf/
+                   hf_upload), diagnose
   inference/       engine.py (single resident model on one dedicated thread); /generate targets
                    current | base | checkpoint:<id> | export:<job id>
-  export/          fuse.py (fuse, quantize, model card, bake_system_prompt into the chat template)
+  export/          fuse.py (fuse, quantize, dequantize, model card, licence files, bake_system_prompt),
+                   gguf.py (llama.cpp converter toolchain pinned at LLAMA_CPP_TAG, llama-quantize)
   agents/          provider abstraction (OpenAI | Claude | Ollama) + legacy proposal agents
                    (scout, prep, observer, synth) used by the Advanced screens
-  tuner/           agent.py (INSTRUCTIONS, build_agent), tools/ (31 @tool functions: status, models,
+  tuner/           agent.py (INSTRUCTIONS, build_agent), tools/ (33 @tool functions: status, models,
                    data, training, generate, scoring, evaluation, person; _core has the helpers),
                    runs.py (submit_job/wait_job, shared with confirm),
                    specialists.py (DataScout, DataPrep: SDK agents-as-tools with structured outputs,
@@ -114,13 +157,16 @@ src/slm/
   api/             app.py (lifespan starts worker), routes_* (projects, studio, feedback, agents, system)
 web/src/
   App.tsx          routes; / and /p/:id wrapped in SessionsSidebar; /p/:id/* = AdvancedLayout
-  pages/studio/    the Studio: index (page), Chat, ConfirmCard, Canvas, stages, Evaluate, Console, bits
-                   (shared bits); pages/TryModel.tsx (chat
-                   with an export); pages/Home.tsx; other pages = Advanced
+  pages/studio/    the Studio: index (page), Chat, ConfirmCard, Canvas, stages, ExportActions (GGUF,
+                   Hugging Face), Evaluate, Console, bits; pages/TryModel.tsx (chat with an export);
+                   pages/Home.tsx; other pages = Advanced
   components/      SessionsSidebar, ProfilePanel, Markdown (safe renderer), Charts, JobLog, …
   hooks.ts, ui.tsx, api.ts
-tests/             one file per area; conftest gives a temp workspace
+tests/             one file per area; conftest gives a temp workspace; fixtures/templates (real chat
+                   templates, see its README); test_jobs (handlers with FakeTrainer / FakeHub)
 scripts/smoke.py   end-to-end GPU smoke test
+.github/           CI (ci.yml), release on a v* tag (release.yml), issue/PR templates, Dependabot
+docs/brag/         the promo video shown in the README
 ```
 
 ## Core design (don't regress these)
@@ -278,7 +324,8 @@ scripts/smoke.py   end-to-end GPU smoke test
 
 ## Lessons from real runs (keep these true in code and in the Tuner's instructions)
 
-Every rule here cost a failed round on this Mac (Apple M1 Pro, 16 GB) in September 2026.
+Every rule here cost a failed round on the maintainer's Mac (Apple M1 Pro, 16 GB) in September
+2026. The sizes and timings are from that machine; the rules hold on any Mac.
 1. **Evaluation must be a number that can tell runs apart.** Five to eight judge-scored questions
    put the Physics tutor at 6.2 vs 7.3 with a noise band as wide as the gap. Deterministic tasks get
    30–60 cases with expected outputs and exact-match scoring (`evaluate_model`); open-ended tasks
@@ -357,9 +404,17 @@ uv run --isolated --no-project --with playwright python script.py   # launch(cha
   `workspace/slm.db`.
 - **Adding a job kind:**
   1. Add it in `train/jobs.py`.
-  2. Put it in the right lane in `worker.py`.
-  3. Add a label in `sessions.JOB_LABEL`.
-  4. Set `notify` if the Tuner should react when it finishes.
+  2. Put it in the right lane in `worker.py` (`GPU_KINDS`, `AGENT_KINDS`, else io).
+  3. Add a label in `sessions.JOB_LABEL` and in the frontend's `JOB_KIND` (`web/src/api.ts`).
+  4. Set `notify` if the Tuner should react when it finishes (`tuner/runs.NOTIFY_KINDS`).
+  5. If the Tuner can start it, add a card kind to `confirm.KINDS`, and to `REOPENS_ROUND` only
+     if it starts a new round of work on the model.
+- **Adding a key or setting:** a field in `config.Settings` (env prefix `SLM_`), a commented line
+  in `.env.example`, and a row in "Set up on a new Mac" above. Keys go in `.env`, never in code.
+- **Releasing:** bump `version` in `pyproject.toml` and `src/slm/__init__.py`, move the
+  CHANGELOG's Unreleased section under the new version, merge, then push a `v<version>` tag
+  (`v<version>-rc1` publishes to TestPyPI first). `.github/workflows/release.yml` tests, builds
+  the UI into the wheel, publishes with PyPI Trusted Publishing and creates the GitHub Release.
 - **Known follow-ups:**
   - a machine-wide GPU lock across server processes;
   - recalibrating the memory estimator for 3B and larger models;

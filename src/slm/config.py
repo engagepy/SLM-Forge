@@ -14,6 +14,10 @@ SOURCE_CHECKOUT = (PROJECT_ROOT / "pyproject.toml").is_file() and (PROJECT_ROOT 
 APP_HOME = PROJECT_ROOT if SOURCE_CHECKOUT else Path.home() / "Library" / "Application Support" / "SLM Forge"
 
 
+# How to give SLM Forge a Hugging Face login, in every message that needs one.
+HF_LOGIN_HELP = "put HF_TOKEN=hf_... in .env (a token that can write), or run `uv run hf auth login`"
+
+
 def env_files() -> tuple[Path, ...]:
     """Where .env is read from, lowest priority first: the app home, then the current directory.
     SLM_DOTENV names one file instead (tests point it at nothing)."""
@@ -109,6 +113,9 @@ def get_settings() -> Settings:
     ):
         if getattr(s, field) is None:
             setattr(s, field, os.environ.get(name) or _dotenv_value(name))
+    # Hugging Face reads HF_TOKEN from the environment; let it live in .env with the other keys.
+    if not os.environ.get("HF_TOKEN") and (token := _dotenv_value("HF_TOKEN")):
+        os.environ["HF_TOKEN"] = token
     return s
 
 

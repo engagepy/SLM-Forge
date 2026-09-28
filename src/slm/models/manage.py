@@ -7,6 +7,7 @@ from huggingface_hub import scan_cache_dir, snapshot_download
 from sqlmodel import Session, select
 
 from slm import hardware
+from slm.config import HF_LOGIN_HELP
 from slm.db import ModelRecord, engine
 from slm.models.hub import fit_verdict, rough_training_gb
 
@@ -29,7 +30,7 @@ ALLOW_PATTERNS = [
 
 GATED_HELP = (
     "{repo} needs you to accept its terms on Hugging Face before it can be downloaded: open "
-    "https://huggingface.co/{path}{repo}, accept the licence, then run `hf auth login` in a terminal."
+    "https://huggingface.co/{path}{repo}, accept the licence, then log in: " + HF_LOGIN_HELP + "."
 )
 
 
@@ -43,7 +44,7 @@ def access_error(repo_id: str, e: Exception, repo_type: str = "model") -> Except
     if isinstance(e, RepositoryNotFoundError):
         return RuntimeError(
             f"{repo_id} was not found on Hugging Face, or it is private or gated and you are not logged in "
-            "(`hf auth login`)."
+            f"({HF_LOGIN_HELP})."
         )
     return e
 

@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 from slm import hardware, storage
 from slm.agents.base import set_proposal_status
 from slm.api.common import SessionDep, get_or_404, project_or_404
-from slm.config import get_settings
+from slm.config import HF_LOGIN_HELP, get_settings
 from slm.data import format as fmt
 from slm.data import pipeline, scout_tools
 from slm.db import (
@@ -395,9 +395,9 @@ def publish_export(project_id: int, job_id: int, body: PublishIn, s: Session = S
         raise HTTPException(422, "Repo names use letters, digits, '-', '_' and '.', up to 96 characters")
     acct = hub.account(refresh=True)
     if not acct["logged_in"]:
-        raise HTTPException(409, "Log in to Hugging Face first: run `hf auth login` with a write token")
+        raise HTTPException(409, f"Log in to Hugging Face first: {HF_LOGIN_HELP}")
     if not acct["can_write"]:
-        raise HTTPException(409, "Your Hugging Face token is read-only: run `hf auth login` with a write token")
+        raise HTTPException(409, f"Your Hugging Face token is read-only: {HF_LOGIN_HELP}")
     repo_id = f"{acct['user']}/{name}"
     config = {"export_job_id": job_id, "repo_id": repo_id, "private": body.private}
     return {"job_id": worker.submit("hf_upload", config, project_id).id, "repo_id": repo_id}
