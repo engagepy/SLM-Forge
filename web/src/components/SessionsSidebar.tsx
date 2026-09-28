@@ -215,12 +215,12 @@ function SessionRow({ s, active, to }: { s: SessionItem; active: boolean; to: st
           {s.autopilot && !s.completed ? (
             <MenuItem onClick={() => act.mutate("pause")} label="Pause autopilot" hint="a running job finishes" />
           ) : (
-            <MenuItem onClick={() => act.mutate("resume")} label="Resume" hint="the Tuner carries on" />
+            <MenuItem onClick={() => act.mutate("resume")} label="Resume autopilot" hint="the Tuner carries on" />
           )}
           {s.job && <MenuItem onClick={() => act.mutate("stop")} label="Stop now" hint="cancels the running job" danger />}
           <Link to={`/p/${s.project_id}/overview`} className="block px-3 py-2 text-xs hover:bg-panel-2">
-            Advanced controls
-            <span className="block text-[11px] text-faint">the full manual screens</span>
+            Advanced
+            <span className="block text-[11px] text-faint">every setting and number</span>
           </Link>
         </div>
       )}

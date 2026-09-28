@@ -3,8 +3,8 @@ import { Fragment } from "react";
 import { fmt, isActive, JOB_KIND, runCommand, runLabel, type Snapshot } from "../../api";
 import { MetricChart } from "../../components/Charts";
 import { runProgress, useLiveJob } from "../../hooks";
-import { Badge, CodeBlock, cx, LinkButton, MemoryBar, ProgressBar, SectionLabel, StatusBadge } from "../../ui";
-import { Empty, Fact, Progress, BeforeResetBadge } from "./bits";
+import { Badge, CodeBlock, LinkButton, MemoryBar, ProgressBar, SectionLabel, StatusBadge } from "../../ui";
+import { BeforeResetBadge, Empty, Fact, Progress, TestSetList, testSetSummary } from "./bits";
 import { ExportActions } from "./ExportActions";
 
 export function GoalView({ s }: { s: Snapshot }) {
@@ -38,19 +38,10 @@ export function GoalView({ s }: { s: Snapshot }) {
       {s.project.test_questions?.length > 0 && (
         <div>
           <dt>
-            <SectionLabel>
-              Test set · {s.project.test_questions.length} cases, {s.project.test_questions.filter((q) => q.expected).length} with an expected output
-            </SectionLabel>
+            <SectionLabel>Test set · {testSetSummary(s.project.test_questions)}</SectionLabel>
           </dt>
-          <dd>
-            <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-xs text-muted">
-              {s.project.test_questions.map((q) => (
-                <li key={q.input} className={cx(q.kind === "should-not" && "italic")} title={q.expected ? `Expected: ${q.expected}` : undefined}>
-                  {q.input}
-                  {q.kind === "should-not" && <span className="ml-1 text-faint">(should return nothing)</span>}
-                </li>
-              ))}
-            </ol>
+          <dd className="mt-1">
+            <TestSetList tests={s.project.test_questions} />
           </dd>
         </div>
       )}

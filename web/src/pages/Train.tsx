@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { api, DPO_MIN_PAIRS, fmt, isActive, runLabel, type DatasetVersion, type Job, type MemoryEstimate, type Preset, type TrainConfig } from "../api";
 import { MetricChart } from "../components/Charts";
 import JobLog from "../components/JobLog";
+import { NextStage, PageHeader } from "../components/Page";
 import TrainControls from "../components/TrainControls";
 import { runProgress, useLiveJob, useOverview, useProjectId } from "../hooks";
 import { Badge, Button, Card, cx, Empty, ErrorNote, Field, LinkButton, MemoryBar, ProgressBar, Select, Stat, StatusBadge } from "../ui";
@@ -109,8 +110,10 @@ function Launcher({ projectId }: { projectId: number }) {
 
   if (ov && !ov.base_model_downloaded) {
     return (
-      <div className="mx-auto max-w-4xl space-y-5">
-        <h1 className="text-xl font-semibold tracking-tight">Train</h1>
+      <div className="mx-auto w-full max-w-6xl space-y-5">
+        <PageHeader title="Train" actions={<NextStage stage="train" />}>
+          Fine-tune the base model on your data (SFT), or on your preferences (DPO).
+        </PageHeader>
         <Empty title="Choose a base model first" action={<LinkButton to={`/p/${projectId}/model`} variant="primary">Pick a model →</LinkButton>}>
           Training needs a downloaded base model.
         </Empty>
@@ -122,27 +125,31 @@ function Launcher({ projectId }: { projectId: number }) {
   const canLaunch = cfg && (mode === "sft" ? !!effectiveVersion : !!effectiveVersion || pairsReady >= 3);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold tracking-tight">Train</h1>
-        <div className="flex rounded-lg border border-line p-0.5">
-          {(["sft", "dpo"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => (setMode(m), setVersionId(""))}
-              className={cx("rounded-md px-3 py-1 text-[13px]", mode === m ? "bg-accent text-white" : "text-muted hover:text-fg")}
-            >
-              {m === "sft" ? "Fine-tune (SFT)" : "Preference (DPO)"}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="-mt-2 text-[13px] text-muted">
+    <div className="mx-auto w-full max-w-6xl space-y-5">
+      <PageHeader
+        title="Train"
+        actions={
+          <>
+            <div className="flex rounded-lg border border-line p-0.5">
+              {(["sft", "dpo"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => (setMode(m), setVersionId(""))}
+                  className={cx("rounded-md px-3 py-1 text-[13px]", mode === m ? "bg-accent text-white" : "text-muted hover:text-fg")}
+                >
+                  {m === "sft" ? "Fine-tune (SFT)" : "Preference (DPO)"}
+                </button>
+              ))}
+            </div>
+            <NextStage stage="train" />
+          </>
+        }
+      >
         {mode === "sft"
           ? "Supervised fine-tuning teaches the model to produce the answers in your dataset."
           : "DPO nudges the model toward answers people preferred and away from the ones they rejected. It uses your feedback, so run it after a few rounds of comparisons."}{" "}
         By default training continues from whatever the project is serving now.
-      </p>
+      </PageHeader>
 
       <Card title="Data">
         <Field label={mode === "sft" ? "Dataset version" : "Preference data"}>
@@ -280,7 +287,10 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
           </Button>
         )}
         {job.status === "succeeded" && (
-          <LinkButton to={`/p/${projectId}/playground`} size="sm" variant="primary" className="ml-auto">Open the Playground →</LinkButton>
+          <span className="ml-auto flex gap-2">
+            <LinkButton to={`/p/${projectId}/playground`}>Open the Playground →</LinkButton>
+            <NextStage stage="train" />
+          </span>
         )}
       </div>
 

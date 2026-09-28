@@ -4,12 +4,12 @@ import { Link, useParams, useSearchParams } from "react-router";
 
 import { api, DEFAULT_SAMPLING, type ExportRow, fmt, runCommand } from "../api";
 import ChatComposer from "../components/ChatComposer";
+import ChatMessage from "../components/ChatMessage";
 import MetricsBar from "../components/MetricsBar";
 import ProjectHeader from "../components/ProjectHeader";
-import Markdown from "../components/Markdown";
 import { useChatStream, useStudio } from "../hooks";
 import { BeforeResetBadge } from "./studio/bits";
-import { Badge, Bubble, CodeBlock, cx, ErrorNote, SectionLabel, Select, Spinner } from "../ui";
+import { Badge, CodeBlock, cx, ErrorNote, SectionLabel, Select, Spinner } from "../ui";
 
 /** Things to try: on-goal inputs and one the model should answer with its empty or negative
  * result. Used ones stay, ticked, until all four are used and four fresh ones replace them. */
@@ -196,14 +196,7 @@ export default function TryModel() {
                 </div>
               )}
               {messages.map((m, i) => (
-                <Bubble key={i} role={m.role}>
-                  {m.role === "user" ? m.content : m.content ? <Markdown text={m.content} /> : busy && i === messages.length - 1 ? <Spinner className="size-3" /> : null}
-                  {m.stats && (
-                    <div className="num mt-1.5 text-[11px] text-faint">
-                      {m.stats.tokens_per_sec} tokens/s{m.stats.finish_reason === "length" && " · stopped at the length limit"}
-                    </div>
-                  )}
-                </Bubble>
+                <ChatMessage key={i} m={m} pending={busy && i === messages.length - 1} />
               ))}
               <ErrorNote error={chat.error} />
               <div ref={chat.bottom} />

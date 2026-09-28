@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { api, DEFAULT_SAMPLING, DPO_MIN_PAIRS, postStream, type PreferencePair, type SamplingParams, type SftExample } from "../api";
+import { NextStage, PAGE, PageHeader } from "../components/Page";
 import SamplingControls from "../components/SamplingControls";
 import { useOverview, useProjectId, useStudio, followJob } from "../hooks";
 import { RefineView } from "./studio/stages";
@@ -20,14 +21,11 @@ export default function FeedbackPage() {
   const { data: ov } = useOverview(projectId);
   const { data: snap } = useStudio(projectId);
   return (
-    <div className="mx-auto max-w-6xl space-y-5 p-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Refine</h1>
-        <p className="mt-1 max-w-3xl text-[13px] text-muted">
-          Human feedback and preference tuning (DPO). Ask something, compare two answers and pick the better one. Each pick becomes a preference pair for DPO. Rewriting an
-          answer also creates a supervised example. The Observer reads your critiques and decides what to generate next.
-        </p>
-      </div>
+    <div className={PAGE}>
+      <PageHeader title="Refine" actions={<NextStage stage="refine" />}>
+        Human feedback and preference tuning (DPO). Ask something, compare two answers and pick the better one. Each pick becomes a preference pair for DPO. Rewriting an
+        answer also creates a supervised example. The Observer reads your critiques and decides what to generate next.
+      </PageHeader>
       {/* The Studio's Refine card, when it adds something the counts below don't: AI reviews, DPO rounds. */}
       {snap && (snap.comparisons.some((c) => c.judge === "ai") || snap.checkpoints.some((c) => c.kind === "dpo")) && (
         <Card title="Refine" subtitle="What the Studio shows for this stage: AI reviews, your judgements, preference pairs and DPO rounds">

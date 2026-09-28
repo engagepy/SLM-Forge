@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
 import { api, fmt, type Dataset, type DatasetVersion, type Mapping, type Proposal } from "../api";
+import { NextStage, PAGE, PageHeader } from "../components/Page";
 import ProposalCard from "../components/ProposalCard";
 import { useProjectId, followJob } from "../hooks";
 import { Badge, Button, Card, Collapsible, cx, Empty, ErrorNote, Field, Input, LinkButton, NumberField, Select, Spinner, Toggle, useSpotlight } from "../ui";
@@ -28,14 +29,11 @@ export default function DataPage() {
   const latest = versions.find((v) => v.kind === "sft");
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5 p-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Data</h1>
-        <p className="mt-1 text-[13px] text-muted">
-          Training data: let the scout find public datasets, browse the Hub yourself, or upload your own. Then map columns to training records,
-          clean them and split them.
-        </p>
-      </div>
+    <div className={PAGE}>
+      <PageHeader title="Data" actions={<NextStage stage="data" />}>
+        Training data: let the scout find public datasets, browse the Hub yourself, or upload your own. Then map columns to training records,
+        clean them and split them.
+      </PageHeader>
 
       {latest && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-good/40 bg-good-soft px-4 py-3">
@@ -50,7 +48,6 @@ export default function DataPage() {
           <Button size="sm" variant="ghost" onClick={() => spotlight(`version-${latest.id}`)}>
             View
           </Button>
-          <LinkButton to={`/p/${projectId}/train?version=${latest.id}`} size="sm" variant="primary">Next: train on it →</LinkButton>
         </div>
       )}
 

@@ -3,10 +3,11 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { api, DEFAULT_SAMPLING, type ExportRow, fmt, isServing, runCommand } from "../api";
+import { NextStage, PAGE, PageHeader } from "../components/Page";
 import { useOverview, useProjectId, useStudio, followJob } from "../hooks";
 import { BeforeResetBadge } from "./studio/bits";
 import { ExportActions } from "./studio/ExportActions";
-import { Badge, Button, Card, CodeBlock, Empty, ErrorNote, Field, Input, LinkButton, Mono, Select } from "../ui";
+import { Badge, Button, Card, CodeBlock, Empty, EmptyNote, ErrorNote, Field, Input, LinkButton, Mono, Select } from "../ui";
 
 export default function ExportPage() {
   const projectId = useProjectId();
@@ -43,14 +44,11 @@ export default function ExportPage() {
   const baseQuantized = /(\d)bit/i.test(project.base_model ?? "");
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 p-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Export</h1>
-        <p className="mt-1 text-[13px] text-muted">
-          Fuse the adapters into one standalone MLX model with a model card and a minimum-RAM rating. It runs with{" "}
-          <Mono>mlx_lm.generate</Mono> on this Mac and any Apple Silicon Mac with at least as much memory.
-        </p>
-      </div>
+    <div className={PAGE}>
+      <PageHeader title="Export" actions={<NextStage stage="export" />}>
+        Fuse the adapters into one standalone MLX model with a model card and a minimum-RAM rating. It runs with{" "}
+        <Mono>mlx_lm.generate</Mono> on this Mac and any Apple Silicon Mac with at least as much memory.
+      </PageHeader>
 
       <Card title="Checkpoints" subtitle="Roll back by serving an earlier checkpoint; exports use whatever is being served" pad={false}>
         {checkpoints.length ? (
@@ -138,7 +136,7 @@ export default function ExportPage() {
             ))}
           </ul>
         ) : (
-          <p className="p-4 text-xs text-muted">No exports yet.</p>
+          <EmptyNote className="p-4">No exports yet.</EmptyNote>
         )}
       </Card>
     </div>

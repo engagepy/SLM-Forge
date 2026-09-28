@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import MetricsBar from "../components/MetricsBar";
+import { PAGE, PageHeader } from "../components/Page";
 import { api, fmt } from "../api";
 import { Badge, Button, cx, ErrorNote, useToast } from "../ui";
 
@@ -73,12 +74,11 @@ export default function StoragePage() {
     <div className="flex h-full flex-col">
       <MetricsBar />
       <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-3xl space-y-8 px-6 py-10">
+      <div className={PAGE}>
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Storage</h1>
-          <p className="mt-2 text-[14px] leading-relaxed text-muted">
+          <PageHeader title="Storage">
             What SLM Forge keeps on this Mac, and how to give the space back. Deleting is immediate and can't be undone.
-          </p>
+          </PageHeader>
           {d && (
             <p className="mt-2 text-[13px] text-muted">
               <span className="num font-medium text-fg">{size(d.footprint.total_gb)}</span> used by the app ·{" "}

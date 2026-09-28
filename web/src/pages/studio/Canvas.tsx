@@ -2,7 +2,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { api, isActive, type Snapshot, type Stage, STAGES, type TunerMessage } from "../../api";
-import { StageStepper, stageDone, stageSkipped } from "../../components/StageStepper";
+import { stageDone, stageSkipped } from "../../components/StageStepper";
 import { Badge, Button, cx, LinkButton } from "../../ui";
 import { Console } from "./Console";
 import { EvaluateView } from "./Evaluate";
@@ -37,14 +37,7 @@ export function Canvas({ snapshot: s, messages }: { snapshot: Snapshot; messages
   }, [s.stage, activeJob?.id]);
   return (
     <section className="flex min-h-0 min-w-0 flex-col bg-bg">
-      <div className="border-b border-line px-5 py-3">
-        <StageStepper
-          s={s}
-          current={s.stage}
-          onPick={(st) => document.getElementById(`stage-${st}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-        />
-        {s.note && <p className="mt-2 text-xs text-muted">{s.note}</p>}
-      </div>
+      {s.note && <p className="border-b border-line px-5 py-2 text-xs text-muted">{s.note}</p>}
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
         {visible.map((st) => {

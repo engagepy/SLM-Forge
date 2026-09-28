@@ -1,6 +1,6 @@
 // Small pieces the canvas cards share.
-import { type ExportInfo, type Stage } from "../../api";
-import { Badge, SectionLabel, Spinner } from "../../ui";
+import { type ExportInfo, type Stage, type TestCase } from "../../api";
+import { Badge, cx, SectionLabel, Spinner } from "../../ui";
 
 export const STAGE_LABEL: Record<Stage, string> = {
   goal: "Goal",
@@ -12,9 +12,8 @@ export const STAGE_LABEL: Record<Stage, string> = {
   export: "Export",
 };
 
-export function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="text-xs text-faint">{children}</p>;
-}
+/** The same one-line empty note as everywhere else. */
+export { EmptyNote as Empty } from "../../ui";
 
 export function Fact({ label, value }: { label: string; value: string }) {
   return (
@@ -49,3 +48,20 @@ export function BeforeResetBadge({ e }: { e: Pick<ExportInfo, "trained_before_re
     </span>
   );
 }
+
+/** The project's fixed test set, the same list in the Studio's Goal card and on Advanced · Evaluate. */
+export function TestSetList({ tests }: { tests: TestCase[] }) {
+  return (
+    <ol className="list-decimal space-y-1 pl-5 text-xs text-muted">
+      {tests.map((q) => (
+        <li key={q.input} className={cx(q.kind === "should-not" && "italic")}>
+          <span className="text-fg">{q.input}</span>
+          {q.kind === "should-not" && <span className="ml-1 text-faint">(should return nothing)</span>}
+          {q.expected && <span className="mt-0.5 block font-mono text-[11px] break-words text-faint">→ {q.expected}</span>}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export const testSetSummary = (tests: TestCase[]) => `${tests.length} cases · ${tests.filter((q) => q.expected).length} with an expected output`;

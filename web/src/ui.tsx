@@ -203,8 +203,9 @@ export function Badge({ tone = "neutral", children, className }: { tone?: Tone; 
   );
 }
 
+// The same tone for a state everywhere (the sidebar's session badges use these too).
 const statusTone: Record<string, Tone> = {
-  queued: "neutral",
+  queued: "warn",
   running: "info",
   succeeded: "good",
   executed: "good",
@@ -393,6 +394,12 @@ export function Stat({ label, value, sub, tone }: { label: string; value: ReactN
   );
 }
 
+/** An empty list or card, in one line: the style every "nothing here yet" inside a card uses. */
+export function EmptyNote({ children, className }: { children: ReactNode; className?: string }) {
+  return <p className={cx("text-xs text-faint", className)}>{children}</p>;
+}
+
+/** An empty page section, with a title and usually a way forward. */
 export function Empty({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-line px-6 py-10 text-center">

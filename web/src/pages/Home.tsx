@@ -69,8 +69,8 @@ export default function Home() {
         )}
 
         <section>
-          <h1 className="text-2xl font-semibold tracking-tight">What should your model do?</h1>
-          <p className="mt-2 text-[14px] leading-relaxed text-muted">
+          <h1 className="text-xl font-semibold tracking-tight">What should your model do?</h1>
+          <p className="mt-1 text-[13px] leading-relaxed text-muted">
             Describe it in a sentence. The Tuner, an AI guide, picks the smallest model that can do it, writes or finds a little
             data and trains it on this Mac{sys ? ` (${sys.hardware.chip}, ${sys.hardware.total_memory_gb.toFixed(0)} GB)` : ""},
             explaining every step. It asks before each run, and at the end you chat with your finished model. Your projects are
