@@ -82,7 +82,10 @@ export default function MetricsBar({ snapshot, view }: { snapshot?: Snapshot; vi
     onSuccess: () => qc.invalidateQueries({ queryKey: ["studio", snapshot!.project.id] }),
   });
   return (
-    <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-line bg-panel px-4 py-1 text-xs whitespace-nowrap text-muted">
+    // Two parts: machine facts on the left wrap onto a second line if they must; the project's
+    // controls on the right never wrap, so the view switch stays pinned to the top-right corner.
+    <div className="flex min-h-10 shrink-0 items-start gap-2.5 border-b border-line bg-panel px-4 py-1 text-xs whitespace-nowrap text-muted">
+      <div className="flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1">
       {sys && (
         <span className="hidden lg:inline">
           {sys.hardware.chip} · <span className="num">{sys.hardware.budget_gb.toFixed(1)} GB</span> for ML
@@ -101,7 +104,8 @@ export default function MetricsBar({ snapshot, view }: { snapshot?: Snapshot; vi
       {sys && sys.agents.tuner.ready && !sys.agents.key_configured && (
         <Badge tone="warn">set {sys.agents.key_env} in .env</Badge>
       )}
-      <span className="ml-auto" />
+      </div>
+      <div className="flex min-h-8 shrink-0 items-center gap-2.5">
       {snapshot && (
         <button
           onClick={() => toggle.mutate(!snapshot.autopilot)}
@@ -116,6 +120,7 @@ export default function MetricsBar({ snapshot, view }: { snapshot?: Snapshot; vi
         </button>
       )}
       {view && (snapshot ? <ViewSwitch s={snapshot} view={view} /> : <span className="h-7 w-52" aria-hidden />)}
+      </div>
     </div>
   );
 }
