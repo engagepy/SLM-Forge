@@ -67,10 +67,13 @@ Python 3.13, and an [OpenAI API key](https://platform.openai.com/api-keys) for t
 **Install from PyPI** (needs [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/)):
 
 ```bash
-uv tool install slm-forge                 # or: pipx install slm-forge
+uv tool install m37labs-slm-forge         # or: pipx install m37labs-slm-forge
 echo "OPENAI_API_KEY=sk-..." > .env       # in the folder you start it from; add HF_TOKEN=hf_... to publish
 slm serve                                 # → http://127.0.0.1:8000
 ```
+
+The package is `m37labs-slm-forge` on PyPI (plain `slm-forge` is too close to an existing project
+name). It installs the `slm` command; `uvx m37labs-slm-forge serve` runs it without installing.
 
 An installed copy keeps its projects, data and models in
 `~/Library/Application Support/SLM Forge/` (set `SLM_WORKSPACE` to move them) and reads `.env` from

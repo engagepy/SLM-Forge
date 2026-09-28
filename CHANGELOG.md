@@ -5,14 +5,6 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-- **Make GGUF:** convert an export to GGUF (Q4_K_M and Q8_0) for llama.cpp, Ollama and LM Studio,
-  with the built-in system prompt. Uses llama.cpp's converter, installed once into the workspace.
-- **Upload to Hugging Face:** publish an export (MLX model, GGUF files, model card, licence files)
-  to your account, public by default. Llama models require Meta's licence file; local paths are
-  never uploaded.
-- The Tuner can propose both as cards (`export_gguf`, `upload_to_huggingface`).
-
 ## [0.1.0] — first public release
 
 ### Added
@@ -28,6 +20,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
   model's licence files.
 - **Storage and spend:** a disk manager that shows and reclaims what the app uses, and an OpenAI
   spend meter.
+- **GGUF and Hugging Face:** convert an export to GGUF (Q4_K_M and Q8_0) for llama.cpp, Ollama and
+  LM Studio, with the built-in system prompt, using llama.cpp's converter, installed once into the
+  workspace. Publish an export (MLX model, GGUF files, model card, licence files) to your Hugging
+  Face account, public by default. Llama models require Meta's licence file, and local paths are
+  never uploaded. The Tuner can propose both as cards.
+- **Advanced:** every setting and number for ML experts, with the Studio's stages and green ticks.
+  A **Studio | Advanced | ▶ Try it** switch in the same place on every project screen, and an
+  Evaluate screen with each checkpoint's test-set score.
+- Day and dark mode; a "trained before a reset" badge on models kept through a project reset.
+- Keys in one place: `OPENAI_API_KEY` and `HF_TOKEN` both read from `.env`.
 - Apache-2.0 licence, contributing guide, security policy and CI on Apple Silicon.
 
 [Unreleased]: https://github.com/engagepy/SLM-Forge/compare/v0.1.0...HEAD

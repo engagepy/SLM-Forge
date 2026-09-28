@@ -1,5 +1,5 @@
 [project]
-name = "slm-forge"
+name = "m37labs-slm-forge"
 version = "0.1.0"
 description = "Build your own small language model on a Mac by talking to an agent: data, MLX fine-tuning, evaluation and export"
 readme = "README.md"
@@ -52,6 +52,7 @@ Changelog = "https://github.com/engagepy/SLM-Forge/blob/main/CHANGELOG.md"
 [project.scripts]
 slm = "slm.cli:main"
 slm-forge = "slm.cli:main"
+m37labs-slm-forge = "slm.cli:main"  # so `uvx m37labs-slm-forge serve` works
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]

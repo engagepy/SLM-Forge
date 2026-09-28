@@ -79,4 +79,4 @@ def web_built() -> bool:
 def web_build_hint() -> str:
     if SOURCE_CHECKOUT:
         return "the web UI isn't built: run `npm --prefix web ci && npm --prefix web run build`"
-    return "this install has no web UI; reinstall from PyPI (`pipx install --force slm-forge`)"
+    return "this install has no web UI; reinstall from PyPI (`pipx install --force m37labs-slm-forge`)"
