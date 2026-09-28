@@ -63,7 +63,7 @@ def test_a_gated_download_says_how_to_get_access(monkeypatch):
         raise GatedRepoError("403", response=httpx.Response(403, request=httpx.Request("GET", "https://hf.co")))
 
     monkeypatch.setattr(manage, "snapshot_download", gated)
-    with pytest.raises(RuntimeError, match="accept the licence, then run `hf auth login`"):
+    with pytest.raises(RuntimeError, match="accept the licence, then log in: put HF_TOKEN"):
         manage.download("meta-llama/Llama-3.2-1B-Instruct", log=lambda _: None)
 
 

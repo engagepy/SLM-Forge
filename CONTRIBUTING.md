@@ -13,13 +13,18 @@ You need an Apple Silicon Mac, [uv](https://docs.astral.sh/uv/) and Node 20+.
 git clone https://github.com/engagepy/SLM-Forge.git && cd SLM-Forge
 uv sync                                   # Python 3.13 and all dependencies
 npm --prefix web ci && npm --prefix web run build
-cp .env.example .env                      # add OPENAI_API_KEY to use the Tuner
+cp .env.example .env                      # add OPENAI_API_KEY (and HF_TOKEN to publish or use gated models)
 uv run slm serve                          # http://127.0.0.1:8000
 ```
+
+AGENTS.md's "Set up on a new Mac" lists every key and optional tool.
 
 For UI work, run `uv run slm serve` and `npm --prefix web run dev` side by side.
 
 ## Before you open a pull request
+
+`main` is protected: work on a branch and open a pull request. CI runs the checks below on an
+Apple Silicon runner.
 
 ```bash
 uv run ruff check src tests && uv run ruff format src tests
