@@ -1,6 +1,6 @@
 [project]
 name = "m37labs-slm-forge"
-version = "0.1.0"
+version = "0.1.1"
 description = "Build your own small language model on a Mac by talking to an agent: data, MLX fine-tuning, evaluation and export"
 readme = "README.md"
 license = "Apache-2.0"
