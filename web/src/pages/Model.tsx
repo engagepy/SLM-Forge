@@ -45,9 +45,9 @@ export default function ModelPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Base model</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Model</h1>
         <p className="mt-1 text-[13px] text-muted">
-          Models from <span className="font-mono">mlx-community</span> are already converted for Apple Silicon. Sizes are checked
+          The base model to fine-tune. Models from <span className="font-mono">mlx-community</span> are already converted for Apple Silicon. Sizes are checked
           against this Mac's memory. Smaller models train faster and are easier to run anywhere; start with 0.5–3B.
         </p>
       </div>

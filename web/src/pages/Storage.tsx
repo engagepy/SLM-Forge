@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
+import MetricsBar from "../components/MetricsBar";
 import { api, fmt } from "../api";
 import { Badge, Button, cx, ErrorNote, useToast } from "../ui";
 
@@ -69,7 +70,9 @@ export default function StoragePage() {
   const d = inv.data;
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="flex h-full flex-col">
+      <MetricsBar />
+      <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl space-y-8 px-6 py-10">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Storage</h1>
@@ -188,8 +191,8 @@ export default function StoragePage() {
                         <span className="text-faint">exported model</span>
                         <span className="min-w-0 flex-1 truncate font-mono">{e.name}</span>
                         <span className="num">{size(e.size_gb)}</span>
-                        <Link to={`/p/${p.id}/try?export=${e.job_id}`} className="text-accent hover:underline">
-                          try
+                        <Link to={`/p/${p.id}/try?export=${e.job_id}`} className="font-medium text-good hover:underline">
+                          ▶ Try it
                         </Link>
                         <button
                           className="text-bad hover:underline disabled:opacity-50"
@@ -207,6 +210,7 @@ export default function StoragePage() {
             {d && !d.projects.length && <li className="text-xs text-faint">No projects.</li>}
           </ul>
         </section>
+      </div>
       </div>
     </div>
   );

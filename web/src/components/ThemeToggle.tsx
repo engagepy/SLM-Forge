@@ -29,7 +29,7 @@ function useTheme(): [Theme, () => void] {
     return () => m.removeEventListener("change", on);
   }, []);
 
-  // Keep every mounted toggle (rail, sidebar, Advanced) and other tabs in step.
+  // Keep every mounted toggle (the rail and the sidebar) and other tabs in step.
   useEffect(() => {
     const on = () => setChoice(saved());
     window.addEventListener("slm-theme", on);

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { DEFAULT_SAMPLING, type SamplingParams } from "../api";
+import { DEFAULT_SAMPLING, runLabel, type SamplingParams } from "../api";
 import ChatComposer from "../components/ChatComposer";
 import SamplingControls from "../components/SamplingControls";
 import { useChatStream, useOverview, useProjectId } from "../hooks";
@@ -26,8 +26,8 @@ export default function Playground() {
 
   const targets = [
     { value: "current", label: ov?.project.current_adapter_path || ov?.checkpoints.length ? "Current (latest trained)" : "Current (base model)" },
-    { value: "base", label: "Base model (untrained)" },
-    ...(ov?.checkpoints ?? []).map((c) => ({ value: `checkpoint:${c.id}`, label: `${c.kind.toUpperCase()} · job ${c.job_id}` })),
+    { value: "base", label: "Before training (base model)" },
+    ...(ov?.checkpoints ?? []).map((c) => ({ value: `checkpoint:${c.id}`, label: runLabel(c.kind, c.job_id) })),
   ];
 
   return (

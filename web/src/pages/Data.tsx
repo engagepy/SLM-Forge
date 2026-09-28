@@ -30,9 +30,9 @@ export default function DataPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Training data</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Data</h1>
         <p className="mt-1 text-[13px] text-muted">
-          Let the scout find public datasets, browse the Hub yourself, or upload your own. Then map columns to training records,
+          Training data: let the scout find public datasets, browse the Hub yourself, or upload your own. Then map columns to training records,
           clean them and split them.
         </p>
       </div>

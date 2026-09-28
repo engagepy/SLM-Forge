@@ -1,6 +1,6 @@
 // The stage cards: goal, model, data, train, refine, export.
 import { Fragment } from "react";
-import { fmt, isActive, JOB_KIND, runCommand, type Snapshot } from "../../api";
+import { fmt, isActive, JOB_KIND, runCommand, runLabel, type Snapshot } from "../../api";
 import { MetricChart } from "../../components/Charts";
 import { runProgress, useLiveJob } from "../../hooks";
 import { Badge, CodeBlock, cx, LinkButton, MemoryBar, ProgressBar, SectionLabel, StatusBadge } from "../../ui";
@@ -171,7 +171,7 @@ function LiveRun({ jobId }: { jobId: number }) {
       <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
         <Fact label="Train loss" value={fmt.num(last?.loss)} />
         <Fact label="Val loss" value={fmt.num(lastVal?.loss)} />
-        {isDpo ? <Fact label="Prefers chosen" value={last?.accuracy != null ? `${Math.round(last.accuracy * 100)}%` : "–"} /> : <Fact label="Tokens/sec" value={last ? String(Math.round(last.tokens_per_sec)) : "–"} />}
+        {isDpo ? <Fact label="Prefers your picks" value={last?.accuracy != null ? `${Math.round(last.accuracy * 100)}%` : "–"} /> : <Fact label="Tokens/sec" value={last ? String(Math.round(last.tokens_per_sec)) : "–"} />}
         <Fact label="Peak memory" value={fmt.gb(last?.peak_mem_gb)} />
       </div>
       <MetricChart
@@ -234,7 +234,7 @@ export function RefineView({ s }: { s: Snapshot }) {
       </div>
       {dpo.map((c) => (
         <p key={c.id} className="text-xs text-muted">
-          Round {c.job_id}: prefers your picks {c.metrics.reward_accuracy != null ? `${Math.round(c.metrics.reward_accuracy * 100)}%` : "–"} of the time
+          {runLabel("dpo", c.job_id)}: prefers your picks {c.metrics.reward_accuracy != null ? `${Math.round(c.metrics.reward_accuracy * 100)}%` : "–"} of the time
         </p>
       ))}
     </div>
@@ -252,7 +252,7 @@ export function ExportView({ s }: { s: Snapshot }) {
             <Badge>{fmt.gb(e.size_gb)}</Badge>
             <Badge tone="good">runs on {e.min_ram_gb} GB+ Macs</Badge>
             <BeforeResetBadge e={e} />
-            <LinkButton to={`/p/${s.project.id}/try?export=${e.job_id}`} variant="primary" size="sm" className="ml-auto">
+            <LinkButton to={`/p/${s.project.id}/try?export=${e.job_id}`} variant="good" size="sm" className="ml-auto">
               ▶ Try it
             </LinkButton>
           </div>

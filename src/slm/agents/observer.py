@@ -14,7 +14,7 @@ from slm.agents.provider import get_provider
 from slm.db import Checkpoint, Feedback, Job, Metric, PreferencePair, SftExample, awaiting_review, count, engine, ready
 
 AGENT = "observer"
-DPO_MIN_PAIRS = 8
+DPO_MIN_PAIRS = 30  # AGENTS.md lesson 5: fewer pairs measure nothing; the UI uses the same number
 SFT_MIN_EXAMPLES = 10
 
 SYSTEM = """You are the Observer in a local fine-tuning loop for a small language model. Humans

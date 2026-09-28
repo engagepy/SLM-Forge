@@ -4,6 +4,7 @@ import { Link } from "react-router";
 
 import { api, fmt, type Snapshot, type SystemStatus } from "../api";
 import { useSystem } from "../hooks";
+import { ADVANCED_PAGE } from "./StageStepper";
 import { Badge, cx, Popover } from "../ui";
 import UsageMeter from "./UsageMeter";
 
@@ -68,9 +69,11 @@ function DiskMeter({ disk }: { disk: SystemStatus["disk"] }) {
   );
 }
 
-/** The strip of machine and account metrics above a project: the Mac, the GPU, disk, spend, and
- * the project's controls. Its own row, so the project's title never runs into it. */
-export default function MetricsBar({ snapshot, view = "studio" }: { snapshot?: Snapshot; view?: "studio" | "advanced" }) {
+export type View = "studio" | "advanced" | "try";
+
+/** Every screen's top strip. On a project it also carries the Autopilot pill and the view switch,
+ * always at the far right; on Home and Storage it shows the machine only. */
+export default function MetricsBar({ snapshot, view }: { snapshot?: Snapshot; view?: View }) {
   const { data: sys } = useSystem();
   const qc = useQueryClient();
   const gpu = sys?.worker.running.gpu;
@@ -112,32 +115,44 @@ export default function MetricsBar({ snapshot, view = "studio" }: { snapshot?: S
           Autopilot {snapshot.completed ? "done" : snapshot.autopilot ? "on" : "paused"}
         </button>
       )}
-      {!!snapshot?.exports.length && (
-        <Link to={`/p/${snapshot.project.id}/try`} className="rounded-md bg-good-soft px-2.5 py-1 font-medium text-good hover:brightness-110">
-          ▶ Try it
-        </Link>
-      )}
-      {snapshot && <ViewSwitch projectId={snapshot.project.id} view={view} />}
+      {view && (snapshot ? <ViewSwitch s={snapshot} view={view} /> : <span className="h-7 w-52" aria-hidden />)}
     </div>
   );
 }
 
-/** Studio or Advanced: two views of the same project, one switch, in the same place on both. */
-function ViewSwitch({ projectId, view }: { projectId: number; view: "studio" | "advanced" }) {
+/** Studio | Advanced | Try it: three views of one project, one control, in the same place on every
+ * project screen. Try it stays in place, greyed out, until there is a finished model. */
+function ViewSwitch({ s, view }: { s: Snapshot; view: View }) {
+  const id = s.project.id;
   const tab = (on: boolean) => cx("rounded px-2 py-0.5 font-medium transition", on ? "bg-panel-2 text-fg" : "text-faint hover:text-fg");
+  const here = (v: View) => (view === v ? "page" : undefined);
   return (
     <nav className="flex rounded-md border border-line p-0.5" aria-label="View">
-      <Link to={`/p/${projectId}`} className={tab(view === "studio")} aria-current={view === "studio" ? "page" : undefined}>
+      <Link to={`/p/${id}`} className={tab(view === "studio")} aria-current={here("studio")}>
         Studio
       </Link>
       <Link
-        to={`/p/${projectId}/overview`}
+        to={`/p/${id}/${ADVANCED_PAGE[s.stage] ?? "overview"}`}
         className={tab(view === "advanced")}
-        aria-current={view === "advanced" ? "page" : undefined}
+        aria-current={here("advanced")}
         title="Every setting and number, for ML experts"
       >
         Advanced
       </Link>
+      {s.exports.length ? (
+        <Link
+          to={`/p/${id}/try`}
+          className={cx("rounded px-2 py-0.5 font-medium transition", view === "try" ? "bg-good-soft text-good" : "text-good/80 hover:text-good")}
+          aria-current={here("try")}
+          title="Chat with your finished model"
+        >
+          ▶ Try it
+        </Link>
+      ) : (
+        <span className="cursor-not-allowed rounded px-2 py-0.5 font-medium text-faint/50" title="No finished model yet: the Tuner exports one at the end" aria-disabled="true">
+          ▶ Try it
+        </span>
+      )}
     </nav>
   );
 }

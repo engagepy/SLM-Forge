@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { api, fmt, isActive, type DatasetVersion, type Job, type MemoryEstimate, type Preset, type TrainConfig } from "../api";
+import { api, DPO_MIN_PAIRS, fmt, isActive, runLabel, type DatasetVersion, type Job, type MemoryEstimate, type Preset, type TrainConfig } from "../api";
 import { MetricChart } from "../components/Charts";
 import JobLog from "../components/JobLog";
 import TrainControls from "../components/TrainControls";
@@ -32,7 +32,7 @@ export default function TrainPage() {
               >
                 <Badge tone={j.kind === "dpo" ? "accent" : "info"}>{j.kind.toUpperCase()}</Badge>
                 <span className="flex-1 text-xs">
-                  job {j.id}
+                  run {j.id}
                   <span className="block text-[11px] text-faint">{fmt.ago(j.created_at)}</span>
                 </span>
                 <StatusBadge status={j.status} />
@@ -109,9 +109,12 @@ function Launcher({ projectId }: { projectId: number }) {
 
   if (ov && !ov.base_model_downloaded) {
     return (
-      <Empty title="Choose a base model first" action={<LinkButton to={`/p/${projectId}/model`} variant="primary">Pick a model →</LinkButton>}>
-        Training needs a downloaded base model.
-      </Empty>
+      <div className="mx-auto max-w-4xl space-y-5">
+        <h1 className="text-xl font-semibold tracking-tight">Train</h1>
+        <Empty title="Choose a base model first" action={<LinkButton to={`/p/${projectId}/model`} variant="primary">Pick a model →</LinkButton>}>
+          Training needs a downloaded base model.
+        </Empty>
+      </div>
     );
   }
 
@@ -121,7 +124,7 @@ function Launcher({ projectId }: { projectId: number }) {
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold tracking-tight">New training run</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Train</h1>
         <div className="flex rounded-lg border border-line p-0.5">
           {(["sft", "dpo"] as const).map((m) => (
             <button
@@ -174,6 +177,11 @@ function Launcher({ projectId }: { projectId: number }) {
         {mode === "dpo" && !effectiveVersion && pairsReady < 3 && (
           <p className="mt-2 text-xs text-warn">
             Need at least 3 preference pairs. <Link className="underline" to={`/p/${projectId}/feedback`}>Give feedback →</Link>
+          </p>
+        )}
+        {mode === "dpo" && !effectiveVersion && pairsReady >= 3 && pairsReady < DPO_MIN_PAIRS && (
+          <p className="mt-2 text-xs text-warn">
+            {pairsReady} pairs: under {DPO_MIN_PAIRS}, a DPO round rarely measures anything. You can still run it.
           </p>
         )}
       </Card>
@@ -262,7 +270,7 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold tracking-tight">
-          {isDpo ? "DPO" : "SFT"} run · job {job.id}
+          {runLabel(job.kind, job.id)}
         </h1>
         <StatusBadge status={job.status} />
         <span className="text-xs text-faint">{fmt.duration(job.started_at, job.finished_at)}</span>
@@ -272,7 +280,7 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
           </Button>
         )}
         {job.status === "succeeded" && (
-          <LinkButton to={`/p/${projectId}/playground`} size="sm" variant="primary" className="ml-auto">Try it in the playground →</LinkButton>
+          <LinkButton to={`/p/${projectId}/playground`} size="sm" variant="primary" className="ml-auto">Open the Playground →</LinkButton>
         )}
       </div>
 
@@ -298,9 +306,9 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
         <Stat label="Train loss" value={fmt.num(last?.loss)} />
         <Stat label="Val loss" value={fmt.num(lastVal?.loss)} sub={val.length > 1 ? `from ${fmt.num(val[0].values.loss)}` : undefined} />
         {isDpo ? (
-          <Stat label="Reward accuracy" value={last?.accuracy != null ? `${Math.round(last.accuracy * 100)}%` : "–"} sub={`margin ${fmt.num(last?.margin, 2)}`} />
+          <Stat label="Prefers your picks" value={last?.accuracy != null ? `${Math.round(last.accuracy * 100)}%` : "–"} sub={`margin ${fmt.num(last?.margin, 2)}`} />
         ) : (
-          <Stat label="Tokens / sec" value={last ? Math.round(last.tokens_per_sec) : "–"} />
+          <Stat label="Tokens/sec" value={last ? Math.round(last.tokens_per_sec) : "–"} />
         )}
         <Stat label="Peak memory" value={fmt.gb(last?.peak_mem_gb)} tone={last && last.peak_mem_gb > 10 ? "warn" : undefined} />
         <Stat label="Learning rate" value={last?.learning_rate != null ? last.learning_rate.toExponential(1) : "–"} />

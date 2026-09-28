@@ -29,7 +29,7 @@ export default function App() {
   return (
     <Suspense fallback={<Spinner className="m-6" />}>
       <Routes>
-        {/* Home and the Studio share the sessions sidebar, so running work is always visible. */}
+        {/* Every screen has the sessions sidebar and the top bar; project screens add the Studio | Advanced | Try it switch. */}
         <Route path="/" element={<WithSessions><Home /></WithSessions>} />
         <Route path="/p/:projectId" element={<WithSessions><Studio /></WithSessions>} />
         <Route path="/storage" element={<WithSessions><StoragePage /></WithSessions>} />

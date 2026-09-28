@@ -321,6 +321,14 @@ docs/brag/         the promo video shown in the README
   - With autopilot off, a finished job only leaves a quiet event in the transcript.
 
 ### API and frontend
+- **One frame, controls that never move (regression-checked with Playwright).** Every screen has the
+  sessions sidebar and `MetricsBar` on top; project screens (Studio, every Advanced page, Try it)
+  add `ProjectHeader` and the **Studio | Advanced | ▶ Try it** switch at the far right, Try it greyed
+  out until there is a model. Don't give a screen its own header or back link. Sidebar project links
+  (`sameViewPath`) and job toasts keep the view you're in. "Try it" always means the exported model
+  (green, "▶ Try it"); the Playground is for checkpoints. A run is named `runLabel` ("SFT run 54")
+  everywhere; Advanced page titles are the stepper's labels; `DPO_MIN_PAIRS` (30) is shared with
+  `agents/observer.py` (a test keeps them equal).
 - **The Studio and Advanced never disagree.** Both draw the stepper from `StageStepper` and
   compute ticks with `stageDone` (and `stageSkipped`: Refine on a finished project without DPO).
   Don't write another "is this step done" rule on a page; extend `stageDone`.

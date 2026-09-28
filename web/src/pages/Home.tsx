@@ -2,9 +2,10 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
+import MetricsBar from "../components/MetricsBar";
 import { api, type Project } from "../api";
 import ProfilePanel from "../components/ProfilePanel";
-import { sessionDetail, useSessions } from "../components/SessionsSidebar";
+import { sessionDetail, STATE, useSessions } from "../components/SessionsSidebar";
 import { useSystem } from "../hooks";
 import { Badge, Button, ErrorNote, LinkButton, TextArea } from "../ui";
 
@@ -35,7 +36,9 @@ export default function Home() {
   const finished = sessions?.sessions.filter((s) => s.models > 0) ?? [];
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="flex h-full flex-col">
+      <MetricsBar />
+      <div className="min-h-0 flex-1 overflow-y-auto">
       {/* Centred in the viewport while it fits; scrolls from the top once it doesn't. */}
       <div className="mx-auto flex min-h-full max-w-3xl flex-col justify-center gap-8 px-6 py-10">
         {active.length > 0 && (
@@ -47,10 +50,10 @@ export default function Home() {
                   <div className="flex items-center gap-2">
                     <span className="size-2 animate-pulse rounded-full bg-info" />
                     <span className="text-[13px] font-medium">{s.name}</span>
-                    <Badge tone={s.state === "queued" || s.state === "waiting" ? "warn" : "info"}>{s.state === "waiting" ? "needs you" : s.state}</Badge>
+                    <Badge tone={STATE[s.state].tone}>{STATE[s.state].label}</Badge>
                     <span className="ml-auto flex gap-2">
+                      <LinkButton to={`/p/${s.project_id}`} size="sm" variant="primary">Studio</LinkButton>
                       <LinkButton to={`/p/${s.project_id}/overview`} size="sm" variant="ghost">Advanced</LinkButton>
-                      <LinkButton to={`/p/${s.project_id}`} size="sm" variant="primary">Open →</LinkButton>
                     </span>
                   </div>
                   <p className="mt-1 text-xs text-muted">{sessionDetail(s)}</p>
@@ -125,7 +128,7 @@ export default function Home() {
                     <div className="truncate text-xs text-muted">{s.goal}</div>
                   </div>
                   <LinkButton to={`/p/${s.project_id}`} size="sm" variant="ghost">Studio</LinkButton>
-                  <LinkButton to={`/p/${s.project_id}/try`} size="sm" variant="primary">▶ Try it</LinkButton>
+                  <LinkButton to={`/p/${s.project_id}/try`} size="sm" variant="good">▶ Try it</LinkButton>
                 </li>
               ))}
             </ul>
@@ -133,6 +136,7 @@ export default function Home() {
         )}
 
         <ProfilePanel />
+      </div>
       </div>
     </div>
   );

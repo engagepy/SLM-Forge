@@ -3,14 +3,16 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { api, DEFAULT_SAMPLING, type ExportRow, fmt, isServing, runCommand } from "../api";
-import { useOverview, useProjectId, followJob } from "../hooks";
+import { useOverview, useProjectId, useStudio, followJob } from "../hooks";
 import { BeforeResetBadge } from "./studio/bits";
-import { Badge, Button, Card, CodeBlock, Empty, ErrorNote, Field, Input, Mono, Select } from "../ui";
+import { ExportActions } from "./studio/ExportActions";
+import { Badge, Button, Card, CodeBlock, Empty, ErrorNote, Field, Input, LinkButton, Mono, Select } from "../ui";
 
 export default function ExportPage() {
   const projectId = useProjectId();
   const qc = useQueryClient();
   const { data: ov } = useOverview(projectId);
+  const { data: snap } = useStudio(projectId);
   const exports = useQuery({ queryKey: ["exports", projectId], queryFn: () => api.get<ExportRow[]>(`/api/projects/${projectId}/exports`) });
   const [name, setName] = useState("");
   const [bits, setBits] = useState("none");
@@ -59,7 +61,7 @@ export default function ExportPage() {
                 <li key={c.id} className="flex items-center gap-3 px-4 py-2.5 text-[13px]">
                   <Badge tone={c.kind === "dpo" ? "accent" : "info"}>{c.kind.toUpperCase()}</Badge>
                   <Link to={`/p/${projectId}/train/${c.job_id}`} className="hover:text-accent">
-                    job {c.job_id}
+                    run {c.job_id}
                   </Link>
                   <span className="num flex-1 truncate text-xs text-muted">
                     {Object.entries(c.metrics)
@@ -122,9 +124,16 @@ export default function ExportPage() {
                   <Badge tone="good">runs on {e.min_ram_gb} GB+ Macs</Badge>
                   <BeforeResetBadge e={e} />
                   <span className="ml-auto text-[11px] text-faint">{fmt.ago(e.created_at)}</span>
+                  {e.on_disk && (
+                    <LinkButton to={`/p/${projectId}/try?export=${e.job_id}`} variant="good" size="sm">
+                      ▶ Try it
+                    </LinkButton>
+                  )}
                 </div>
                 <CodeBlock text={e.path} />
                 <CodeBlock text={runCommand(e, project.system_prompt)} />
+                {/* The same GGUF and Hugging Face actions as the Studio's export card. */}
+                {e.on_disk && snap && <ExportActions s={snap} e={e} />}
               </li>
             ))}
           </ul>

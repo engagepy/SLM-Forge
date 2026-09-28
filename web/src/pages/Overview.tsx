@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { api, fmt, isServing, type Job, type Project, type Stage, STAGES } from "../api";
+import { api, DPO_MIN_PAIRS, fmt, isServing, type Job, type Project, type Stage, STAGES } from "../api";
 import { ADVANCED_PAGE, stageDone, stageSkipped } from "../components/StageStepper";
 import { useOverview, useProjectId, useStudio } from "../hooks";
 import { STAGE_LABEL } from "./studio/bits";
@@ -31,18 +31,19 @@ export default function OverviewPage() {
     model: project.base_model || "not chosen yet",
     train: `${sft} SFT run${sft === 1 ? "" : "s"}`,
     evaluate: best != null ? `${snap.evals.length} evaluations · best ${best.toFixed(1)} / 10` : `${counts.feedback} judgements`,
-    refine: stageSkipped("refine", done, snap) ? "skipped (optional)" : `${dpo} DPO rounds · ${counts.pairs_ready} pairs ready (30+ to be worth it)`,
+    refine: stageSkipped("refine", done, snap) ? "skipped (optional)" : `${dpo} DPO rounds · ${counts.pairs_ready} pairs ready (${DPO_MIN_PAIRS}+ to be worth it)`,
     export: snap.exports.length ? `${snap.exports.length} export${snap.exports.length === 1 ? "" : "s"}` : "fused, quantized, with a model card",
   };
-  const next = STAGES.find((st) => !done[st] && !stageSkipped(st, done, snap));
+  // "Now" is where the Tuner is, as in the Studio; finished projects have nothing left.
+  const next = snap.completed ? undefined : snap.stage;
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Goal and pipeline</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Goal</h1>
           <p className="mt-1 max-w-2xl text-[13px] text-muted">
-            The same stages as the Studio, with the same ticks. Each opens its expert screen.
+            The goal, the system prompt and the pipeline: the same stages and ticks as the Studio, each opening its expert screen.
           </p>
         </div>
         {next === "goal" ? (
@@ -52,12 +53,12 @@ export default function OverviewPage() {
           </LinkButton>
         ) : next ? (
           <LinkButton to={`/p/${projectId}/${ADVANCED_PAGE[next]}`} variant="primary" className="shrink-0 whitespace-nowrap">
-            Next: {STAGE_LABEL[next].toLowerCase()} →
+            Open {STAGE_LABEL[next]} (now) →
           </LinkButton>
         ) : (
           snap.exports.length > 0 && (
             <LinkButton to={`/p/${projectId}/try`} variant="good" className="shrink-0 whitespace-nowrap">
-              ▶ Try your model
+              ▶ Try it
             </LinkButton>
           )
         )}
@@ -98,8 +99,8 @@ export default function OverviewPage() {
                       <span className={cx("block text-[13px]", done[st] && "text-good")}>{STAGE_LABEL[st]}</span>
                       <span className="block truncate text-xs text-faint">{DETAIL[st]}</span>
                     </span>
-                    {done[st] && <Badge tone="good">done</Badge>}
-                    {st === next && <Badge tone="accent">next</Badge>}
+                    {done[st] && <Badge tone="good">✓ done</Badge>}
+                    {st === next && !done[st] && <Badge tone="accent">now</Badge>}
                   </Link>
                 </li>
               );
@@ -125,7 +126,7 @@ export default function OverviewPage() {
                         <span className="flex items-center gap-1.5">
                           <Badge tone={c.kind === "dpo" ? "accent" : "info"}>{c.kind.toUpperCase()}</Badge>
                           <Link className="text-muted hover:text-fg" to={`/p/${projectId}/train/${c.job_id}`}>
-                            job {c.job_id}
+                            run {c.job_id}
                           </Link>
                           {fromBase && <Badge>from base</Badge>}
                           {serving && <Badge tone="good">serving</Badge>}

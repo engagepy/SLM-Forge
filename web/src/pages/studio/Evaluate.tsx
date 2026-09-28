@@ -1,7 +1,7 @@
 // The evaluate stage: scores per checkpoint and the user's own A/B judgements.
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, type Comparison, type Evaluation, type Sample, type Snapshot } from "../../api";
+import { api, type Checkpoint, type Comparison, type Evaluation, runLabel, type Sample, type Snapshot } from "../../api";
 import { Badge, Button, cx, TextArea } from "../../ui";
 import { Empty } from "./bits";
 
@@ -13,7 +13,7 @@ export function EvaluateView({ s }: { s: Snapshot }) {
   if (!groups.length && !s.comparisons.length && !s.evals.length) return <Empty>The Tuner will score the model on your test questions here.</Empty>;
   return (
     <div className="space-y-4">
-      {s.evals.length > 0 && <Scores evals={s.evals} />}
+      {s.evals.length > 0 && <Scores evals={s.evals} checkpoints={s.checkpoints} />}
       {pending.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
@@ -41,10 +41,14 @@ export function EvaluateView({ s }: { s: Snapshot }) {
 }
 
 /** Scores per checkpoint, latest first: the before/after as numbers. */
-function Scores({ evals }: { evals: Evaluation[] }) {
+function Scores({ evals, checkpoints }: { evals: Evaluation[]; checkpoints: Checkpoint[] }) {
   const [open, setOpen] = useState<string | null>(null);
   const best = Math.max(...evals.map((e) => e.mean));
-  const label = (e: Evaluation) => (e.checkpoint_id == null ? "before training" : `checkpoint ${e.checkpoint_id}`);
+  const label = (e: Evaluation) => {
+    if (e.checkpoint_id == null) return "before training";
+    const c = checkpoints.find((x) => x.id === e.checkpoint_id);
+    return c ? runLabel(c.kind, c.job_id) : `checkpoint ${e.checkpoint_id}`;
+  };
   return (
     <div className="space-y-1.5">
       {[...evals].reverse().map((e) => (

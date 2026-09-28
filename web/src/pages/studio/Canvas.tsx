@@ -79,7 +79,7 @@ function DoneBanner({ s }: { s: Snapshot }) {
       </Button>
       {!!s.exports.length && (
         <LinkButton to={`/p/${s.project.id}/try`} variant="good" size="sm" className="shrink-0">
-          Try your model →
+          ▶ Try it
         </LinkButton>
       )}
     </div>

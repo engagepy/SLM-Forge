@@ -20,7 +20,7 @@ export default function EvaluatePage() {
           </p>
         </div>
         <LinkButton to={`/p/${projectId}/playground`} size="sm" className="shrink-0 whitespace-nowrap">
-          Try checkpoints in the Playground →
+          Open the Playground →
         </LinkButton>
       </div>
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
