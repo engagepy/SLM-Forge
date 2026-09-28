@@ -2,7 +2,7 @@
 
 https://github.com/user-attachments/assets/e9d6d7d1-d623-4441-8c28-ec0e63f40e6e
 
-*20-second tour: type what the model should do, the Tuner does the groundwork and asks before each run, the score goes up, and you chat with the result.*
+*One-minute tour: describe the model in a sentence. The Tuner picks the smallest model that fits your Mac, finds public data first and asks before every run. It trains and scores the model, and there is an Advanced view with every setting. You export to GGUF or Hugging Face, then chat with the result.*
 
 Build your own small language model on a Mac, by talking to an agent.
 
