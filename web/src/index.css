@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-/* Design tokens. Dark is the default; light follows the OS unless overridden. */
+/* Design tokens. Dark is the default; light follows the OS until the user picks one with the
+   theme button, which sets <html data-theme="light|dark"> (ThemeToggle.tsx). */
 :root {
   --bg: #0e1013;
   --panel: #15181d;
@@ -53,6 +54,32 @@
     --chart-4: #8a5cd0;
     color-scheme: light;
   }
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --panel-2: #f1f3f6;
+  --border: #e1e4ea;
+  --border-strong: #cdd2da;
+  --text: #15181d;
+  --muted: #5d6572;
+  --faint: #8a919c;
+  --accent: #d2601f;
+  --accent-soft: rgb(210 96 31 / 0.1);
+  --good: #1f9a5f;
+  --good-soft: rgb(31 154 95 / 0.1);
+  --warn: #b27a0c;
+  --warn-soft: rgb(178 122 12 / 0.12);
+  --bad: #cf3b32;
+  --bad-soft: rgb(207 59 50 / 0.1);
+  --info: #2f74d0;
+  --info-soft: rgb(47 116 208 / 0.1);
+  --chart-1: #d2601f;
+  --chart-2: #2f74d0;
+  --chart-3: #1f9a5f;
+  --chart-4: #8a5cd0;
+  color-scheme: light;
 }
 
 @theme inline {

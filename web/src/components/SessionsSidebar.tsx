@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link, NavLink, useMatch } from "react-router";
 
 import { api } from "../api";
+import ThemeToggle from "./ThemeToggle";
 import UsageMeter from "./UsageMeter";
 import { IDLE_POLL_MS, invalidate } from "../hooks";
 import { Badge, cx, Spinner } from "../ui";
@@ -111,6 +112,7 @@ export default function SessionsSidebar() {
         <button onClick={toggle} className="text-faint hover:text-fg" title="Show projects">
           »
         </button>
+        <ThemeToggle />
         {data?.sessions.map((s) => (
           <NavLink
             key={s.project_id}
@@ -128,7 +130,8 @@ export default function SessionsSidebar() {
           <span className="grid size-7 place-items-center rounded-lg bg-accent text-sm font-bold text-white">▲</span>
           <span className="font-semibold tracking-tight">SLM Forge</span>
         </Link>
-        <button onClick={toggle} className="ml-auto text-faint hover:text-fg" title="Collapse">
+        <ThemeToggle className="ml-auto" />
+        <button onClick={toggle} className="text-faint hover:text-fg" title="Collapse">
           «
         </button>
       </div>

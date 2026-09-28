@@ -5,6 +5,7 @@ import { NavLink, Route, Routes, useMatch, useParams } from "react-router";
 import { api, type Project } from "./api";
 import { useJobsFeed, useOverview, useProjectFeed, useSystem } from "./hooks";
 import SessionsSidebar from "./components/SessionsSidebar";
+import ThemeToggle from "./components/ThemeToggle";
 import { Badge, cx, Spinner } from "./ui";
 
 // Route-level code splitting: charting code only loads with the training view.
@@ -103,10 +104,13 @@ function Sidebar() {
 
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-panel">
-      <NavLink to="/" className="flex items-center gap-2 px-4 py-4">
-        <span className="grid size-7 place-items-center rounded-lg bg-accent text-sm font-bold text-white">▲</span>
-        <span className="font-semibold tracking-tight">SLM Forge</span>
-      </NavLink>
+      <div className="flex items-center gap-2 px-4 py-4">
+        <NavLink to="/" className="flex items-center gap-2">
+          <span className="grid size-7 place-items-center rounded-lg bg-accent text-sm font-bold text-white">▲</span>
+          <span className="font-semibold tracking-tight">SLM Forge</span>
+        </NavLink>
+        <ThemeToggle className="ml-auto" />
+      </div>
 
       {Number.isFinite(projectId) && overview.data && (
         <nav className="px-2">
