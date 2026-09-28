@@ -397,6 +397,8 @@ export interface ExportInfo {
   base_license?: BaseLicence | null;
   gguf?: GgufFile[];
   huggingface?: { repo_id: string; url: string; private: boolean };
+  /** Kept through a project reset: the runs it was built from, as its folder records them. */
+  trained_before_reset?: { kind: string; job_id: number; metrics?: Record<string, number> }[] | null;
 }
 
 export interface ExportRow extends ExportInfo {

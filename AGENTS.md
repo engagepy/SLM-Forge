@@ -275,6 +275,9 @@ docs/brag/         the promo video shown in the README
 - "Has a model" means an export whose folder still exists (`sessions.export_jobs` / `on_disk`), not
   the `completed` flag. Home's "Your models" and Try it go by that.
 - Confirming a new run on a completed project reopens it (`confirm._execute`); plain chat doesn't.
+- **A model kept through a reset says so.** `sessions.trained_before_reset` compares the runs its
+  folder's `slm_forge.json` lists with the project's jobs; if they're gone, every export view shows
+  a "trained before a reset" badge. Nothing is stored for it, and stages stay unticked (true).
 - **Exports never overwrite:** `fuse.unique_dest` picks `name-2`, `name-3`… when a folder exists.
 
 **Start and stop (important; regression-tested)**
