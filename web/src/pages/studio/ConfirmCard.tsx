@@ -5,7 +5,7 @@ import { api, type PendingAction } from "../../api";
 import { invalidate } from "../../hooks";
 import { Badge, Button, ErrorNote, TextArea } from "../../ui";
 
-const ACTION_ICON: Record<PendingAction["kind"], string> = { model: "◆", sft: "▲", dpo: "▲", export: "⬇", synthesize: "✎", review: "⚖", import: "⇣", evaluate: "★", scout: "⌕", prep: "✂" };
+const ACTION_ICON: Record<PendingAction["kind"], string> = { model: "◆", sft: "▲", dpo: "▲", export: "⬇", synthesize: "✎", review: "⚖", import: "⇣", evaluate: "★", scout: "⌕", prep: "✂", gguf: "◇", publish: "↑" };
 
 /** The Tuner's proposed run. It only starts from here (or a plain "yes" in the chat). */
 export function ConfirmCard({ projectId, action }: { projectId: number; action: PendingAction }) {
@@ -87,6 +87,13 @@ function actionFacts(a: PendingAction): string[] {
     if (d.epochs) out.push(`${Number(d.epochs).toFixed(1)} epochs`);
     if (d.memory_gb) out.push(`${d.memory_gb} GB of ${d.budget_gb} GB`);
     if (d.would_queue_behind) out.push("will queue behind another run");
+  } else if (a.kind === "gguf") {
+    out.push(...((a.details.quants as string[] | undefined) ?? []), "for llama.cpp, Ollama, LM Studio");
+    if (!d.toolchain_ready) out.push("installs llama.cpp's converter once (~300 MB)");
+    if (!d.quantizer_available) out.push("Q4_K_M needs `brew install llama.cpp`");
+  } else if (a.kind === "publish") {
+    out.push(String(d.visibility), `licence: ${d.licence}`);
+    if (d.commercial_ok === false) out.push("non-commercial licence");
   } else if (a.kind === "export") {
     out.push(d.quantize_bits ? `${d.quantize_bits}-bit` : "no extra quantizing");
   } else if (a.kind === "synthesize") {

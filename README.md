@@ -150,7 +150,7 @@ taught it.
 
 ## How the Tuner works
 
-- **One agent, 31 tools** (`src/slm/tuner/tools/`) wrapping the tested platform code: `get_status`,
+- **One agent, 33 tools** (`src/slm/tuner/tools/`) wrapping the tested platform code: `get_status`,
   `find_base_models`, `choose_base_model`, `search_datasets`, `prepare_dataset`,
   `generate_synthetic_examples`, `start_training`, `try_model`, `ask_user_to_compare`,
   `export_model` and more. Quick jobs (imports, data prep, synthesis) are awaited inside the
@@ -273,6 +273,23 @@ the model catalog and the data specialists. Still ahead:
 - a machine-wide GPU lock across server processes, and a memory estimator recalibrated for 3B+;
 - curricula, ORPO/GRPO, GGUF/Ollama export, a device compatibility matrix.
 
+## Share it: GGUF and Hugging Face
+
+Every export in the Studio has two more buttons:
+
+- **Make GGUF** converts the model (exactly as exported, built-in system prompt included) into GGUF
+  files for llama.cpp, Ollama and LM Studio: **Q4_K_M** (small, the usual choice) and **Q8_0**
+  (near-lossless). The first time, SLM Forge downloads llama.cpp's converter and its dependencies
+  (about 300 MB, into the workspace). Q4_K_M needs llama.cpp's quantizer: `brew install llama.cpp`.
+  Without it you get Q8_0.
+- **Upload to Hugging Face** publishes the export (the MLX model, the GGUF files, the model card and
+  the base model's licence files) to a repository under your account, **public** unless you choose
+  private. It uses your own `hf auth login` (a token that can write). The form shows the base
+  model's licence first; Llama models are only published with Meta's licence file, and nothing that
+  names a folder on your Mac is uploaded. Afterwards: `ollama run hf.co/<you>/<model>:Q4_K_M`.
+
+The Tuner can do both too, as cards you confirm, when you ask it to share the model.
+
 ## Privacy & data
 
 Training and inference run on your Mac. Three things leave it:
@@ -281,8 +298,9 @@ Training and inference run on your Mac. Three things leave it:
   dataset rows, the test set, and the local model's answers when they are scored or reviewed. Don't
   put data you may not share with OpenAI through it, such as health records or other personal
   data. Agent traces go to your OpenAI dashboard only if you set `SLM_OPENAI_TRACING=true`.
-- **Hugging Face:** model and dataset downloads and dataset searches. Gated repositories use your
-  own `hf auth login`; SLM Forge never stores the token.
+- **Hugging Face:** model and dataset downloads and dataset searches, and the models you choose to
+  publish. It uses your own `hf auth login`; SLM Forge never stores the token.
+- **GitHub and PyPI**, once, when the first GGUF export downloads llama.cpp's converter.
 - **Anthropic or Ollama**, only if you choose them as `SLM_AGENT_PROVIDER`.
 
 API keys stay in `.env` or your environment and are never logged. The server listens on

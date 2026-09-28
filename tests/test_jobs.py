@@ -52,6 +52,7 @@ class FakeTrainer:
     def __init__(self) -> None:
         self.commands: list[list[str]] = []
         self.configs: list[dict] = []
+        self.gguf_inputs: list[list[str]] = []
 
     def __call__(self, cmd, *, log_path, on_line, should_cancel, cwd=None) -> int:
         self.commands.append(cmd)
@@ -59,12 +60,23 @@ class FakeTrainer:
             src, dest = cmd[cmd.index("--model") + 1], Path(cmd[cmd.index("--save-path") + 1])
             shutil.copytree(src, dest)
             return 0
+        if any(str(c).endswith("convert_hf_to_gguf.py") for c in cmd):  # llama.cpp's converter
+            self.gguf_inputs.append(sorted(p.name for p in Path(cmd[2]).iterdir()))
+            Path(cmd[cmd.index("--outfile") + 1]).write_bytes(b"GGUF" + cmd[cmd.index("--outtype") + 1].encode())
+            return 0
+        if str(cmd[0]).endswith("llama-quantize"):
+            Path(cmd[2]).write_bytes(b"GGUF" + cmd[3].encode())
+            return 0
         if "convert" in cmd:
             src, dest = cmd[cmd.index("--hf-path") + 1], Path(cmd[cmd.index("--mlx-path") + 1])
             shutil.copytree(src, dest)
-            cfg = json.loads((dest / "config.json").read_text()) | {
-                "quantization": {"bits": int(cmd[cmd.index("--q-bits") + 1])}
-            }
+            cfg = json.loads((dest / "config.json").read_text())
+            if "--dequantize" in cmd:
+                cfg.pop("quantization", None)
+                for f in ("chat_template.jinja",):  # mlx_lm writes the base template, not the baked one
+                    (dest / f).write_text("{{ base template }}")
+            else:
+                cfg["quantization"] = {"bits": int(cmd[cmd.index("--q-bits") + 1])}
             (dest / "config.json").write_text(json.dumps(cfg))
             return 0
         cfg = yaml.safe_load(Path(cmd[cmd.index("-c") + 1]).read_text())
@@ -276,3 +288,89 @@ def test_export_packages_the_served_model_bakes_the_prompt_and_never_overwrites(
     q2, ctx2 = run(session, "export", p.id, {"name": "q4-again", "quantize_bits": 4, "sampling": {}})
     assert sum(1 for c in trainer.commands if "convert" in c) == n_convert
     assert "already quantized" in ctx2.log_path.read_text()
+
+
+# ── after the export: GGUF and Hugging Face ─────────────────────────────────
+
+
+@pytest.fixture
+def exported(session, ready, trainer):
+    p, v = ready
+    run(session, "sft", p.id, {"train": TRAIN, "dataset_version_id": v.id})
+    job, _ = run(session, "export", p.id, {"name": "chef", "sampling": {}})
+    return p, job
+
+
+def test_gguf_converts_the_export_itself_with_its_built_in_prompt(session, exported, trainer, monkeypatch):
+    from slm.export import gguf
+
+    monkeypatch.setattr(gguf, "ensure_toolchain", lambda note=print, run=None: None)
+    monkeypatch.setattr(gguf, "quantizer", lambda: "/opt/homebrew/bin/llama-quantize")
+    p, export = exported
+    dest = Path(export.result["path"])
+    job, ctx = run(session, "gguf", p.id, {"export_job_id": export.id, "quants": ["Q4_K_M", "Q8_0"]})
+    names = {f["quant"]: f["name"] for f in job.result["files"]}
+    assert names == {"Q4_K_M": "chef-Q4_K_M.gguf", "Q8_0": "chef-Q8_0.gguf"}
+    assert (dest / "chef-Q4_K_M.gguf").read_bytes() == b"GGUFQ4_K_M" and (dest / "chef-Q8_0.gguf").exists()
+    # The converter saw the export's baked template, not the base one the dequantizer wrote.
+    assert "chat_template.jinja" in trainer.gguf_inputs[0]
+    assert not (ctx.run_dir / "hf-f16").exists() and not (ctx.run_dir / "model-F16.gguf").exists()
+    session.expire_all()
+    assert [f["name"] for f in session.get(Job, export.id).result["gguf"]] == ["chef-Q4_K_M.gguf", "chef-Q8_0.gguf"]
+    assert "## Run it anywhere (GGUF)" in (dest / "README.md").read_text()
+    # A second conversion replaces the card section instead of stacking another one.
+    run(session, "gguf", p.id, {"export_job_id": export.id, "quants": ["Q8_0"]})
+    assert (dest / "README.md").read_text().count("## Run it anywhere (GGUF)") == 1
+
+
+def test_gguf_without_llama_quantize_still_makes_q8_and_says_how_to_get_q4(session, exported, trainer, monkeypatch):
+    from slm.export import gguf
+
+    monkeypatch.setattr(gguf, "ensure_toolchain", lambda note=print, run=None: None)
+    monkeypatch.setattr(gguf, "quantizer", lambda: None)
+    p, export = exported
+    job, ctx = run(session, "gguf", p.id, {"export_job_id": export.id, "quants": ["Q4_K_M", "Q8_0"]})
+    assert [f["quant"] for f in job.result["files"]] == ["Q8_0"] and job.result["skipped"] == ["Q4_K_M"]
+    assert "brew install llama.cpp" in ctx.log_path.read_text()
+
+
+class FakeHub:
+    def __init__(self):
+        self.calls = []
+
+    def create_repo(self, repo_id, **kw):
+        self.calls.append(("create", repo_id, kw))
+
+    def upload_folder(self, folder_path, repo_id, **kw):
+        self.calls.append(("upload", repo_id, sorted(p.name for p in Path(folder_path).iterdir())))
+        self.card = (Path(folder_path) / "README.md").read_text()
+
+
+def test_upload_publishes_the_folder_without_leaking_local_paths(session, exported, monkeypatch):
+    import huggingface_hub
+
+    hub = FakeHub()
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda: hub)
+    p, export = exported
+    dest = Path(export.result["path"])
+    assert str(dest) in (dest / "README.md").read_text()  # the local run command, before upload
+    job, _ = run(session, "hf_upload", p.id, {"export_job_id": export.id, "repo_id": "someone/chef", "private": False})
+    assert hub.calls[0] == ("create", "someone/chef", {"private": False, "exist_ok": True, "repo_type": "model"})
+    assert "README.md" in hub.calls[1][2] and "slm_forge.json" in hub.calls[1][2]
+    assert str(dest) not in hub.card and 'mlx_lm.generate --model "someone/chef"' in hub.card
+    assert job.result["url"] == "https://huggingface.co/someone/chef"
+    session.expire_all()
+    assert session.get(Job, export.id).result["huggingface"]["private"] is False
+
+
+def test_upload_refuses_a_folder_that_still_names_the_home_directory(session, exported, monkeypatch):
+    import huggingface_hub
+
+    hub = FakeHub()
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda: hub)
+    p, export = exported
+    dest = Path(export.result["path"])
+    (dest / "notes.txt").write_text(f"trained in {Path.home()}/somewhere")
+    with pytest.raises(RuntimeError, match="contain a local path"):
+        run(session, "hf_upload", p.id, {"export_job_id": export.id, "repo_id": "someone/chef"})
+    assert hub.calls == []

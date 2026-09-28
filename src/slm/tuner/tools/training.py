@@ -216,3 +216,73 @@ def export_model(ctx: Ctx, name: str, quantize_bits: int | None = None, reason: 
     details = {"name": name, "quantize_bits": quantize_bits}
     return confirm.propose(ctx.context.project_id, "export", f"Export the model as “{name}”", reason, details,
                            {"config": config})  # fmt: skip
+
+
+def _export_for(pid: int, export_job_id: int) -> tuple[Job, dict]:
+    from slm.sessions import on_disk
+
+    with Session(engine()) as s:
+        job = s.get(Job, export_job_id)
+        if job is None or job.project_id != pid or job.kind != "export" or job.status != "succeeded":
+            raise ValueError("no such export in this project: get_status lists them")
+        if not on_disk(job):
+            raise ValueError(f"the exported model is no longer at {(job.result or {}).get('path')}")
+        return job, dict(job.result or {})
+
+
+@tool
+def export_gguf(ctx: Ctx, export_job_id: int, quants: list[str] | None = None, reason: str = "") -> dict:
+    """Propose converting a finished export to GGUF files, the format llama.cpp, Ollama and LM Studio
+    run. quants: Q4_K_M (small, the usual choice) and Q8_0 (near-lossless) by default. Runs only once
+    the user confirms the card; the first time it also installs llama.cpp's converter (~300 MB).
+    Only offer this when the user wants the model outside SLM Forge."""
+    from pathlib import Path
+
+    from slm.export import gguf
+
+    pid = ctx.context.project_id
+    quants = quants or ["Q4_K_M", "Q8_0"]
+    if bad := [q for q in quants if q not in gguf.QUANTS]:
+        raise ValueError(f"unknown quant {bad}; choose from {', '.join(gguf.QUANTS)}")
+    _, result = _export_for(pid, export_job_id)
+    details = {"export": Path(result["path"]).name, "quants": quants,
+               "quantizer_available": bool(gguf.quantizer()), "toolchain_ready": gguf.toolchain_ready()}  # fmt: skip
+    title = f"Make GGUF files ({', '.join(quants)}) of {details['export']}"
+    return confirm.propose(pid, "gguf", title, reason, details,
+                           {"config": {"export_job_id": export_job_id, "quants": quants}})  # fmt: skip
+
+
+@tool
+def upload_to_huggingface(
+    ctx: Ctx, export_job_id: int, repo_name: str, private: bool = False, reason: str = ""
+) -> dict:
+    """Propose publishing a finished export to the user's Hugging Face account: the MLX model, any
+    GGUF files, the model card and the licence files, in one model repo. Public unless
+    private=True. Only when the user asks to share or publish the model; the card shows the base
+    model's licence, which the upload carries."""
+    import json
+    import re
+    from pathlib import Path
+
+    from slm.models import hub
+
+    pid = ctx.context.project_id
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}", repo_name) or ".." in repo_name:
+        raise ValueError("repo_name: letters, digits, '-', '_' and '.', up to 96 characters")
+    _, result = _export_for(pid, export_job_id)
+    acct = hub.account(refresh=True)
+    if not acct["can_write"]:
+        raise ValueError(
+            "Hugging Face isn't set up for publishing: ask the user to run `hf auth login` with a write token"
+        )
+    folder = Path(result["path"])
+    meta = json.loads((folder / "slm_forge.json").read_text()) if (folder / "slm_forge.json").exists() else {}
+    lic = meta.get("base_license") or {}
+    repo_id = f"{acct['user']}/{repo_name}"
+    details = {"repo_id": repo_id, "visibility": "private" if private else "public",
+               "gguf_files": [f["name"] for f in result.get("gguf") or []],
+               "licence": lic.get("licence", "unknown"), "licence_conditions": lic.get("conditions", ""),
+               "commercial_ok": lic.get("commercial_ok")}  # fmt: skip
+    title = f"Publish {folder.name} to huggingface.co/{repo_id}" + (" (private)" if private else "")
+    config = {"export_job_id": export_job_id, "repo_id": repo_id, "private": private}
+    return confirm.propose(pid, "publish", title, reason, details, {"config": config})

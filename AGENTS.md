@@ -127,8 +127,8 @@ scripts/smoke.py   end-to-end GPU smoke test
 
 ### Jobs and the GPU
 - **Three single-slot lanes** in `train/worker.py`:
-  - `gpu`: sft, dpo, export (fusing happens inside sft, dpo and export)
-  - `io`: download, import, prepare
+  - `gpu`: sft, dpo, export, gguf (fusing happens inside sft, dpo and export)
+  - `io`: download, import, prepare, hf_upload
   - `agent`: agent_* and synthesize
 
   A GPU job evicts the inference model first.
@@ -183,6 +183,14 @@ scripts/smoke.py   end-to-end GPU smoke test
   licences, OpenAI-written examples) and an Intended use & limitations section. Regression-tested
   in `tests/test_compliance.py`.
 - **Tracing is opt-in** (`SLM_OPENAI_TRACING=true`). Nothing else phones home.
+- **GGUF and publishing** (`export/gguf.py`, jobs `gguf` and `hf_upload`): the GGUF is made from
+  the export itself (`mlx_lm convert --dequantize`, then the export's baked chat template copied in),
+  by llama.cpp's converter pinned at `LLAMA_CPP_TAG`, run in its own venv under
+  `<workspace>/tools/` (it needs torch and an older transformers). Q8_0 comes from the converter;
+  Q4_K_M needs `llama-quantize` (Homebrew). Publishing is a user click or a confirmed card
+  (`publish`), never automatic; it refuses a Llama export without Meta's licence file and scrubs
+  the local export path from every text file, refusing if another local path remains. `gguf` and
+  `publish` cards don't reopen a finished round (`confirm.REOPENS_ROUND`).
 - **Paths:** a source checkout keeps `./workspace` and `./.env` (`config.SOURCE_CHECKOUT`); an
   installed copy uses `~/Library/Application Support/SLM Forge`. `npm run build` writes the UI into
   `src/slm/web_dist`, which the wheel ships. A release is a `v*` tag (`.github/workflows/release.yml`);

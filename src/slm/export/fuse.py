@@ -28,6 +28,11 @@ def check_bits(bits: int | None) -> int | None:
     return bits
 
 
+def dequantize_command(src: Path, dest: Path) -> list[str]:
+    """Full-precision Hugging Face layout, the input llama.cpp's GGUF converter needs."""
+    return [sys.executable, "-m", "mlx_lm", "convert", "--hf-path", str(src), "--mlx-path", str(dest), "--dequantize"]
+
+
 def quantize_command(src: Path, dest: Path, bits: int, group_size: int = 64) -> list[str]:
     return [
         sys.executable, "-m", "mlx_lm", "convert",
@@ -327,6 +332,31 @@ def write_model_card(
             default=str,
         )
     )
+
+
+GGUF_START, GGUF_END = "<!-- slm-forge:gguf -->", "<!-- /slm-forge:gguf -->"
+
+
+def write_gguf_section(dest: Path, files: list[dict], repo_id: str | None = None) -> None:
+    """Add (or replace) the model card's "Run it anywhere" section for the GGUF files."""
+    card = dest / "README.md"
+    if not card.exists() or not files:
+        return
+    text = card.read_text()
+    if GGUF_START in text:
+        text = text[: text.index(GGUF_START)].rstrip() + "\n" + text[text.index(GGUF_END) + len(GGUF_END) :]
+    lines = [GGUF_START, "## Run it anywhere (GGUF)", "",
+             "GGUF builds of this model, for llama.cpp, Ollama and LM Studio:", ""]  # fmt: skip
+    lines += [f"- `{f['name']}` ({f['quant']}, {f['size_gb']:.2f} GB)" for f in files]
+    first = files[0]
+    lines += ["", "```bash", f'llama-cli -m {first["name"]} -p "Hello"   # llama.cpp']
+    if repo_id:
+        lines += [f"ollama run hf.co/{repo_id}:{first['quant']}   # Ollama"]
+    lines += ["```", "", "In LM Studio, search for the repository or load the .gguf file.", GGUF_END]
+    marker = "## Licence & attribution"
+    block = "\n".join(lines) + "\n\n"
+    text = text.replace(marker, block + marker, 1) if marker in text else text.rstrip() + "\n\n" + block
+    card.write_text(text)
 
 
 def unique_dest(folder: Path, name: str) -> Path:

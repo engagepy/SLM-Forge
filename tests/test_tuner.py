@@ -351,7 +351,7 @@ def test_every_defined_tool_is_registered():
     # Regression: two tools were once defined with @tool but never added to ALL_TOOLS, so the
     # agent silently couldn't use them.
     assert {t.name for t in tools.REGISTRY} == {t.name for t in ALL_TOOLS}
-    assert len(tools.REGISTRY) == len(ALL_TOOLS) == 31
+    assert len(tools.REGISTRY) == len(ALL_TOOLS) == 33
 
 
 def test_successful_export_completes_the_project(session, project, monkeypatch):
@@ -1080,3 +1080,42 @@ def test_the_teacher_model_writes_small_sets_only(session, project, submitted, m
     out = call(project.id, "generate_synthetic_examples", kind="sft", count=10, focus="more")
     assert "limit is 200" in str(out) and "scout_datasets" in str(out)
     assert len(submitted) == 1  # nothing else was written
+
+
+def test_gguf_and_publish_are_cards_that_leave_a_finished_project_finished(
+    session, project, submitted, monkeypatch, tmp_path
+):
+    from slm.db import Job
+    from slm.models import hub
+
+    monkeypatch.setattr(tuner, "send", lambda *a, **k: None)
+    monkeypatch.setattr(hub, "account", lambda refresh=False: {"logged_in": True, "user": "someone", "can_write": True})
+    folder = tmp_path / "chef"
+    folder.mkdir()
+    export = Job(project_id=project.id, kind="export", status="succeeded", result={"path": str(folder)})
+    session.add(export)
+    session.add(StudioState(project_id=project.id, completed=True, stage="export"))
+    session.commit()
+
+    out = call(project.id, "export_gguf", export_job_id=export.id, reason="For Ollama.")
+    assert out["status"] == "waiting for the user's confirmation" and submitted == []
+    from slm.tuner import confirm
+
+    confirm.confirm(project.id)
+    assert [j.kind for j in submitted] == ["gguf"] and submitted[0].config["quants"] == ["Q4_K_M", "Q8_0"]
+    session.expire_all()
+    assert session.get(StudioState, project.id).completed is True  # converting doesn't reopen the round
+
+    call(project.id, "upload_to_huggingface", export_job_id=export.id, repo_name="chef", reason="Share it.")
+    card = session.get(StudioState, project.id)
+    session.refresh(card)
+    assert (
+        card.pending_action["details"]["visibility"] == "public"
+        and card.pending_action["details"]["repo_id"] == "someone/chef"
+    )
+    confirm.confirm(project.id)
+    assert submitted[-1].kind == "hf_upload" and submitted[-1].config["repo_id"] == "someone/chef"
+    session.expire_all()
+    assert session.get(StudioState, project.id).completed is True
+    bad = call(project.id, "upload_to_huggingface", export_job_id=export.id, repo_name="bad name!")
+    assert "up to 96 characters" in str(bad)

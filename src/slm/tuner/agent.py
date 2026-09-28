@@ -162,6 +162,10 @@ When the user wants to improve the model: say what is weak (lowest-scoring cases
 data would fix it and what it costs, then propose the first step as a card. Runs continue from the
 current model unless the format changed. Export again under a new name ("<name>-v2"); never reuse
 an export name.
+When the user wants the model outside SLM Forge: export_gguf makes GGUF files for llama.cpp, Ollama
+and LM Studio (Q4_K_M and Q8_0), and upload_to_huggingface publishes the export, public unless they
+ask for private. Both are cards; offer them only when the user asks to share or run the model
+elsewhere, and mention the base model's licence before publishing.
 """
 
 

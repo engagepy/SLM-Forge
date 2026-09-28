@@ -183,3 +183,39 @@ def test_a_base_model_whose_files_are_gone_counts_as_not_downloaded(client, sess
     assert manage.local_path_for("org/gone") is None
     snap = client.get(f"/api/projects/{pid}/studio")
     assert snap.status_code == 200 and snap.json()["model"] == {"repo_id": "org/gone", "downloaded": False}
+
+
+def test_gguf_and_publish_routes_check_the_export_and_the_login(client, session, tmp_path, monkeypatch):
+    from slm.models import hub
+
+    pid, other = _project(client), _project(client)
+    folder = tmp_path / "chef"
+    folder.mkdir()
+    export = Job(project_id=pid, kind="export", status="succeeded", result={"path": str(folder)})
+    session.add(export)
+    session.commit()
+    assert client.post(f"/api/projects/{other}/exports/{export.id}/gguf", json={}).status_code == 404
+    assert client.post(f"/api/projects/{pid}/exports/{export.id}/gguf", json={"quants": ["Q3"]}).status_code == 422
+    r = client.post(f"/api/projects/{pid}/exports/{export.id}/gguf", json={})
+    assert r.status_code == 200 and session.get(Job, r.json()["job_id"]).config["quants"] == ["Q4_K_M", "Q8_0"]
+
+    monkeypatch.setattr(
+        hub, "account", lambda refresh=False: {"logged_in": True, "user": "someone", "can_write": False}
+    )
+    assert (
+        client.post(f"/api/projects/{pid}/exports/{export.id}/publish", json={"repo_name": "chef"}).status_code == 409
+    )
+    monkeypatch.setattr(hub, "account", lambda refresh=False: {"logged_in": True, "user": "someone", "can_write": True})
+    assert (
+        client.post(f"/api/projects/{pid}/exports/{export.id}/publish", json={"repo_name": "../x"}).status_code == 422
+    )
+    r = client.post(f"/api/projects/{pid}/exports/{export.id}/publish", json={"repo_name": "chef"})
+    assert r.status_code == 200 and r.json()["repo_id"] == "someone/chef"
+    assert session.get(Job, r.json()["job_id"]).config == {
+        "export_job_id": export.id,
+        "repo_id": "someone/chef",
+        "private": False,
+    }
+    folder.rmdir()
+    assert client.post(f"/api/projects/{pid}/exports/{export.id}/gguf", json={}).status_code == 409
+    assert client.get("/api/huggingface").json()["user"] == "someone"

@@ -122,3 +122,30 @@ def fetch_config(repo_id: str) -> dict:
     path = hf_hub_download(repo_id, "config.json")
     with open(path) as f:
         return json.load(f)
+
+
+_account: dict = {}
+
+
+def account(refresh: bool = False) -> dict:
+    """Who is logged in to Hugging Face on this Mac, and whether the token can write (publish).
+    Cached for ten minutes; never raises."""
+    import time
+
+    from slm.export import gguf
+
+    if not refresh and _account and time.time() - _account["at"] < 600:
+        return _account["value"]
+    value = {"logged_in": False, "user": None, "can_write": False}
+    try:
+        from huggingface_hub import get_token, whoami
+
+        if get_token():
+            info = whoami()
+            role = ((info.get("auth") or {}).get("accessToken") or {}).get("role")
+            value = {"logged_in": True, "user": info.get("name"), "can_write": role in ("write", "fineGrained")}
+    except Exception:
+        pass
+    value |= {"quantizer_available": bool(gguf.quantizer()), "gguf_toolchain_ready": gguf.toolchain_ready()}
+    _account.update(at=time.time(), value=value)
+    return value

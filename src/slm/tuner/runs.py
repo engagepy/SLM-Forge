@@ -10,7 +10,7 @@ from slm.train.worker import worker
 from slm.tuner import confirm
 
 # Jobs the Tuner starts and does not wait for: it gets woken when they finish.
-NOTIFY_KINDS = {"download", "sft", "dpo", "export"}
+NOTIFY_KINDS = {"download", "sft", "dpo", "export", "gguf", "hf_upload"}
 
 
 def submit_job(kind: str, config: dict, project_id: int) -> Job:

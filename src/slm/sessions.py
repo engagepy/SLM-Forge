@@ -17,6 +17,8 @@ JOB_LABEL = {
     "sft": "training",
     "dpo": "preference training",
     "export": "exporting",
+    "gguf": "converting to GGUF",
+    "hf_upload": "uploading to Hugging Face",
     "download": "downloading a model",
     "import_dataset": "importing data",
     "prepare_dataset": "preparing data",

@@ -147,6 +147,12 @@ export default function TryModel() {
         <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-xs">
           {chosen && <Badge>{fmt.gb(chosen.size_gb)}</Badge>}
           {chosen && <Badge tone="good">runs on {chosen.min_ram_gb} GB+ Macs</Badge>}
+          {!!chosen?.gguf?.length && <Badge tone="info">GGUF {chosen.gguf.map((f) => f.quant).join(" · ")}</Badge>}
+          {chosen?.huggingface && (
+            <a href={chosen.huggingface.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+              {chosen.huggingface.repo_id} ↗
+            </a>
+          )}
           {exports.data && exports.data.length > 1 && (
             <Select
               className="w-auto py-1 text-xs"

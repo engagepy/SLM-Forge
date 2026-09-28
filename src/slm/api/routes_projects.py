@@ -18,6 +18,7 @@ from slm.db import (
     Dataset,
     DatasetVersion,
     Feedback,
+    Job,
     PreferencePair,
     Project,
     Proposal,
@@ -347,6 +348,59 @@ def delete_export(project_id: int, job_id: int, s: Session = SessionDep) -> dict
         return storage.delete_export(project_id, job_id)
     except LookupError as e:
         raise HTTPException(404, str(e)) from e
+
+
+class GgufIn(BaseModel):
+    quants: list[str] = ["Q4_K_M", "Q8_0"]
+
+
+def _own_export(s: Session, project_id: int, job_id: int) -> Job:
+    job = s.get(Job, job_id)
+    if job is None or job.project_id != project_id or job.kind != "export" or job.status != "succeeded":
+        raise HTTPException(404, "No such export in this project")
+    if not on_disk(job):
+        raise HTTPException(409, f"The exported model is no longer at {(job.result or {}).get('path')}")
+    return job
+
+
+@router.post("/{project_id}/exports/{job_id}/gguf")
+def export_gguf(project_id: int, job_id: int, body: GgufIn, s: Session = SessionDep) -> dict:
+    """Convert an export to GGUF files (llama.cpp, Ollama, LM Studio). The user's click is the go-ahead."""
+    from slm.export import gguf
+
+    project_or_404(s, project_id)
+    _own_export(s, project_id, job_id)
+    bad = [q for q in body.quants if q not in gguf.QUANTS]
+    if bad or not body.quants:
+        raise HTTPException(422, f"quants must be among {', '.join(gguf.QUANTS)}")
+    return {"job_id": worker.submit("gguf", {"export_job_id": job_id, "quants": body.quants}, project_id).id}
+
+
+class PublishIn(BaseModel):
+    repo_name: str
+    private: bool = False
+
+
+@router.post("/{project_id}/exports/{job_id}/publish")
+def publish_export(project_id: int, job_id: int, body: PublishIn, s: Session = SessionDep) -> dict:
+    """Upload an export (MLX model, GGUF files, model card, licence files) to the user's Hugging Face."""
+    import re
+
+    from slm.models import hub
+
+    project_or_404(s, project_id)
+    _own_export(s, project_id, job_id)
+    name = body.repo_name.strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}", name) or ".." in name or name.endswith((".git", ".")):
+        raise HTTPException(422, "Repo names use letters, digits, '-', '_' and '.', up to 96 characters")
+    acct = hub.account(refresh=True)
+    if not acct["logged_in"]:
+        raise HTTPException(409, "Log in to Hugging Face first: run `hf auth login` with a write token")
+    if not acct["can_write"]:
+        raise HTTPException(409, "Your Hugging Face token is read-only: run `hf auth login` with a write token")
+    repo_id = f"{acct['user']}/{name}"
+    config = {"export_job_id": job_id, "repo_id": repo_id, "private": body.private}
+    return {"job_id": worker.submit("hf_upload", config, project_id).id, "repo_id": repo_id}
 
 
 @router.get("/{project_id}/exports")

@@ -319,7 +319,7 @@ export interface Sample {
 /** A run the Tuner proposed; nothing starts until the user confirms it. */
 export interface PendingAction {
   id: string;
-  kind: "model" | "sft" | "dpo" | "export" | "synthesize" | "review" | "import" | "evaluate" | "scout" | "prep";
+  kind: "model" | "sft" | "dpo" | "export" | "synthesize" | "review" | "import" | "evaluate" | "scout" | "prep" | "gguf" | "publish";
   title: string;
   reason: string;
   details: Record<string, unknown>;
@@ -354,7 +354,7 @@ export interface Snapshot {
   evals: Evaluation[];
   comparisons: Comparison[];
   feedback: { judgements: number; pairs_ready: number };
-  exports: { job_id: number; path: string; size_gb: number; min_ram_gb: number; system_prompt_built_in?: boolean }[];
+  exports: ExportInfo[];
 }
 
 export const STAGES = ["goal", "data", "model", "train", "evaluate", "refine", "export"] as const;
@@ -374,15 +374,43 @@ export const isServing = (p: Project, c: Checkpoint) =>
   p.current_adapter_path === c.adapter_path || (!!c.fused_path && p.current_model_path === c.fused_path);
 
 /** A finished model, from GET /projects/{id}/exports. */
-export interface ExportRow {
-  job_id: number;
+export interface GgufFile {
   name: string;
+  quant: string;
+  size_gb: number;
+}
+
+export interface BaseLicence {
+  licence: string;
+  url: string;
+  conditions: string;
+  commercial_ok: boolean | null;
+}
+
+/** What the Studio knows about one export: the folder, and what has been made or published from it. */
+export interface ExportInfo {
+  job_id: number;
   path: string;
   size_gb: number;
   min_ram_gb: number;
-  on_disk: boolean;
   system_prompt_built_in?: boolean;
+  base_license?: BaseLicence | null;
+  gguf?: GgufFile[];
+  huggingface?: { repo_id: string; url: string; private: boolean };
+}
+
+export interface ExportRow extends ExportInfo {
+  name: string;
+  on_disk: boolean;
   created_at: string | null;
+}
+
+export interface HuggingFaceAccount {
+  logged_in: boolean;
+  user: string | null;
+  can_write: boolean;
+  quantizer_available: boolean;
+  gguf_toolchain_ready: boolean;
 }
 
 class ApiError extends Error {
@@ -482,6 +510,8 @@ export const JOB_KIND: Record<string, { name: string; done: string; doing: strin
   dpo: { name: "Preference round", done: "Preference round finished", doing: "Refining", page: "train" },
   fuse: { name: "Fuse", done: "Adapters fused", doing: "Fusing" },
   export: { name: "Export", done: "Model exported", doing: "Exporting", page: "export" },
+  gguf: { name: "GGUF conversion", done: "GGUF files ready", doing: "Converting to GGUF" },
+  hf_upload: { name: "Hugging Face upload", done: "Published on Hugging Face", doing: "Uploading to Hugging Face" },
   agent_scout: { name: "DataScout", done: "DataScout finished", doing: "Scouting", page: "data" },
   agent_prep: { name: "DataPrep", done: "DataPrep suggested a mapping", doing: "Planning", page: "data" },
   agent_observer: { name: "Observer", done: "Observer finished", doing: "Observing", page: "agents" },

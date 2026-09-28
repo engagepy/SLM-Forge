@@ -19,7 +19,7 @@ from slm.events import bus
 from slm.inference.engine import engine as inference_engine
 from slm.train.runner import Cancelled, ParsedMetric, tail
 
-GPU_KINDS = {"sft", "dpo", "export"}
+GPU_KINDS = {"sft", "dpo", "export", "gguf"}
 AGENT_KINDS = {"agent_scout", "agent_prep", "agent_observer", "synthesize"}
 
 

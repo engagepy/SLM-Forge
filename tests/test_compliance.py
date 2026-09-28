@@ -131,3 +131,34 @@ def test_an_export_carries_licence_datasets_attribution_and_limitations(session,
     assert meta["datasets"] == [{"name": "org/recipes", "source": "hf", "license": "cc-by-4.0"}]
     assert meta["synthetic_examples_used"] == 1
     assert session.exec(select(Dataset)).one().license == "cc-by-4.0"
+
+
+def test_a_llama_model_is_not_published_without_metas_licence_file(session, tmp_path, monkeypatch):
+    # Meta's licence must travel with every copy: no LICENSE file (and none fetchable) means no upload.
+    import huggingface_hub
+    from test_jobs import FakeHub
+
+    from slm.db import Job, Project
+    from slm.export import fuse as fusing
+
+    hub = FakeHub()
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda: hub)
+    monkeypatch.setattr(fusing, "fetch_upstream_licence_files", lambda upstream, dest: [])
+    dest = tmp_path / "exports" / "llama-chef"
+    dest.mkdir(parents=True)
+    (dest / "README.md").write_text("# card\n")
+    lic = catalog.licence_for("mlx-community/Llama-3.2-1B-Instruct-4bit")
+    (dest / "slm_forge.json").write_text(json.dumps({"base_license": lic}))
+    p = Project(name="x", goal="y")
+    session.add(p)
+    session.commit()
+    export = Job(project_id=p.id, kind="export", status="succeeded", result={"path": str(dest)})
+    session.add(export)
+    session.commit()
+    from test_jobs import run
+
+    with pytest.raises(
+        RuntimeError, match="accept the licence at https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct"
+    ):
+        run(session, "hf_upload", p.id, {"export_job_id": export.id, "repo_id": "someone/llama-chef"})
+    assert hub.calls == []

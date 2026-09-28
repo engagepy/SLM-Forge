@@ -31,8 +31,14 @@ KINDS = {
     "evaluate": ("evaluate_model", "evaluate"),
     "scout": ("scout_datasets", "data"),
     "prep": ("plan_preparation", "data"),
+    "gguf": (None, "export"),
+    "publish": (None, "export"),
 }
 ACTION_KINDS = tuple(KINDS)
+# Runs that start a new round of work on the model. Converting or publishing a finished model does
+# not: the project stays finished.
+REOPENS_ROUND = {"model", "sft", "dpo", "export"}
+JOB_KIND = {"publish": "hf_upload"}  # card kind -> job kind, where they differ
 SPEND_TOOL = {kind: tool for kind, (tool, _) in KINDS.items() if tool}
 STAGE = {kind: stage for kind, (_, stage) in KINDS.items() if stage}
 STOPPED = "The user stopped this project. Don't start new work unless they ask you to."
@@ -201,7 +207,7 @@ def _execute(pid: int, action: dict) -> dict:
             # One call, with exactly these arguments. Approving a spend does not reopen a round:
             # the next spend needs its own card.
             st.granted = [*st.granted, {"tool": SPEND_TOOL[kind], "args": payload.get("args", {})}]
-        else:
+        elif kind in REOPENS_ROUND:
             # A finished project isn't closed: a confirmed run reopens it (autopilot carries the round
             # through to its next proposal), and the next export completes it again.
             st.completed, st.autopilot, st.stalled_nudges = False, True, 0
@@ -212,7 +218,7 @@ def _execute(pid: int, action: dict) -> dict:
         return {"text": f"Call {SPEND_TOOL[kind]} now, with these arguments: {json.dumps(payload.get('args', {}))}."}
     if kind == "model":
         return apply_base_model(pid, payload["repo_id"])
-    job = _submit(kind, payload["config"], pid)
+    job = _submit(JOB_KIND.get(kind, kind), payload["config"], pid)
     out = {"job_id": job.id, "text": f"{kind} job {job.id} started; you'll get a job update when it finishes."}
     ahead = overview()["capacity"]["gpu_running"] if kind in ("sft", "dpo") else None
     if ahead and ahead["job_id"] != job.id:

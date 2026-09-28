@@ -24,6 +24,7 @@ from slm.db import (
     engine,
 )
 from slm.export import fuse as fusing
+from slm.export import gguf
 from slm.models import manage
 from slm.train import runner
 from slm.train.config import TrainConfig
@@ -529,4 +530,161 @@ def export_job(ctx: JobContext) -> None:
         "size_gb": round(size, 3),
         "min_ram_gb": fusing.min_mac_memory_gb(dest),
         "system_prompt_built_in": built_in,
+        "base_license": provenance.get("base_license"),
     }
+
+
+# ── after the export: GGUF and Hugging Face ─────────────────────────────────
+
+
+def _export_folder(project_id: int | None, export_job_id: int) -> Path:
+    with Session(engine()) as s:
+        job = s.get(Job, export_job_id)
+        if job is None or job.project_id != project_id or job.kind != "export" or job.status != "succeeded":
+            raise ValueError(f"No finished export {export_job_id} in this project")
+        path = Path((job.result or {}).get("path", ""))
+    if not path.is_dir():
+        raise ValueError(f"The exported model is no longer at {path}")
+    return path
+
+
+def _update_export(export_job_id: int, **fields) -> None:
+    """Record something about an export (its GGUF files, where it was published) on the export job."""
+    import copy
+
+    from sqlalchemy.orm.attributes import flag_modified
+
+    with Session(engine()) as s:
+        job = s.get(Job, export_job_id)
+        result = copy.deepcopy(job.result or {}) | fields
+        job.result = result
+        flag_modified(job, "result")
+        s.add(job)
+        s.commit()
+
+
+@worker.register("gguf")
+def gguf_job(ctx: JobContext) -> None:
+    """Convert a finished export to GGUF files inside its folder. The export itself is dequantized
+    and converted, so the GGUF is the model the user tried, built-in system prompt included."""
+    c = ctx.config
+    export_id = int(c["export_job_id"])
+    dest = _export_folder(ctx.project_id, export_id)
+    quants = [q for q in c.get("quants") or ["Q4_K_M", "Q8_0"] if q in gguf.QUANTS]
+    if not quants:
+        raise ValueError(f"quants must be among {', '.join(gguf.QUANTS)}")
+
+    hf = ctx.run_dir / "hf-f16"
+    ctx.note(f"Dequantizing {dest.name} for the converter ...")
+    _run(ctx, fusing.dequantize_command(dest, hf))
+    # The converter embeds the chat template: use the export's, which carries the system prompt.
+    for f in dest.glob("*"):
+        if f.name == "chat_template.jinja" or f.name.startswith("tokenizer") or f.name == "special_tokens_map.json":
+            shutil.copyfile(f, hf / f.name)
+    gguf.ensure_toolchain(ctx.note)
+
+    files, skipped = [], []
+    needs_f16 = any(q in gguf.QUANTIZER for q in quants)
+    f16 = ctx.run_dir / "model-F16.gguf"
+    if needs_f16 and not gguf.quantizer():
+        skipped = [q for q in quants if q in gguf.QUANTIZER]
+        ctx.note(gguf.BREW_HINT)
+        needs_f16 = False
+    if needs_f16:
+        ctx.note("Converting to GGUF (F16) ...")
+        _run(ctx, gguf.convert_command(hf, f16, "f16"))
+    for quant in quants:
+        if quant in skipped:
+            continue
+        out = dest / gguf.gguf_name(dest.name, quant)
+        ctx.note(f"Writing {out.name} ...")
+        if quant in gguf.DIRECT:
+            _run(ctx, gguf.convert_command(hf, out, gguf.DIRECT[quant]))
+        else:
+            _run(ctx, gguf.quantize_command(f16, out, quant))
+        files.append({"name": out.name, "quant": quant, "size_gb": round(manage.dir_size_gb(out), 3)})
+    shutil.rmtree(hf, ignore_errors=True)
+    f16.unlink(missing_ok=True)
+    if not files:
+        raise RuntimeError(gguf.BREW_HINT)
+
+    with Session(engine()) as s:
+        export = s.get(Job, export_id).result or {}
+    fusing.write_gguf_section(dest, files, (export.get("huggingface") or {}).get("repo_id"))
+    _update_export(export_id, gguf=files)
+    ctx.note("GGUF ready: " + ", ".join(f"{f['name']} ({f['size_gb']:.2f} GB)" for f in files))
+    ctx.result = {"export_job_id": export_id, "files": files, "skipped": skipped}
+
+
+TEXT_SUFFIXES = {".md", ".json", ".jinja", ".txt", ".yaml", ".yml"}
+
+
+def _scrub_local_paths(dest: Path, repo_id: str) -> None:
+    """Nothing uploaded may reveal the user's disk: the model card's run command names the export's
+    local folder, so it becomes the repo id; any other local path left in a text file stops the upload."""
+    for f in dest.iterdir():
+        if f.is_file() and f.suffix in TEXT_SUFFIXES:
+            text = f.read_text(errors="replace")
+            if str(dest) in text:
+                f.write_text(text.replace(str(dest), repo_id))
+    home = str(Path.home())
+    leaks = [f.name for f in dest.iterdir()
+             if f.is_file() and f.suffix in TEXT_SUFFIXES and home in f.read_text(errors="replace")]  # fmt: skip
+    if leaks:
+        raise RuntimeError(f"Not uploading: {', '.join(leaks)} contain a local path ({home}). Remove it and retry.")
+
+
+def _hub_error(e: Exception, repo_id: str) -> Exception:
+    from huggingface_hub.errors import HfHubHTTPError
+
+    status = getattr(getattr(e, "response", None), "status_code", None)
+    if isinstance(e, HfHubHTTPError) and status in (401, 403):
+        return RuntimeError(
+            "Hugging Face refused the upload: log in with a token that can write (`hf auth login`), "
+            f"and check you may create {repo_id}."
+        )
+    if isinstance(e, HfHubHTTPError) and status == 409:
+        return RuntimeError(f"{repo_id} is taken: choose another name.")
+    return e
+
+
+@worker.register("hf_upload")
+def hf_upload_job(ctx: JobContext) -> None:
+    """Publish an export folder (MLX model, GGUF files, model card, licence files) to a model repo."""
+    from huggingface_hub import HfApi
+
+    c = ctx.config
+    export_id, repo_id, private = int(c["export_job_id"]), c["repo_id"], bool(c.get("private", False))
+    dest = _export_folder(ctx.project_id, export_id)
+    meta = json.loads((dest / "slm_forge.json").read_text()) if (dest / "slm_forge.json").exists() else {}
+    base = meta.get("base_license") or {}
+    has_licence_file = any(f.name.upper().startswith(("LICENSE", "LICENCE")) for f in dest.iterdir())
+    if "Llama" in (base.get("licence") or "") and not has_licence_file:
+        # Meta's licence must travel with every copy: fetch it now if the user has since accepted it.
+        fusing.fetch_upstream_licence_files(base.get("upstream"), dest)
+        if not any(f.name.upper().startswith("LICENSE") for f in dest.iterdir()):
+            raise RuntimeError(
+                "Llama models must be published with Meta's licence file, and it couldn't be downloaded: accept "
+                f"the licence at https://huggingface.co/{base.get('upstream') or 'meta-llama'} while logged in "
+                "(`hf auth login`), then upload again."
+            )
+    _scrub_local_paths(dest, repo_id)
+    with Session(engine()) as s:
+        export = s.get(Job, export_id).result or {}
+    fusing.write_gguf_section(dest, export.get("gguf") or [], repo_id)
+
+    api = HfApi()
+    ctx.note(f"Creating {'private' if private else 'public'} repo {repo_id} ...")
+    try:
+        api.create_repo(repo_id, private=private, exist_ok=True, repo_type="model")
+        size = manage.dir_size_gb(dest)
+        ctx.note(f"Uploading {dest.name} ({size:.2f} GB) ...")
+        api.upload_folder(folder_path=str(dest), repo_id=repo_id, repo_type="model",
+                          commit_message="Upload from SLM Forge")  # fmt: skip
+    except Exception as e:
+        raise _hub_error(e, repo_id) from e
+    url = f"https://huggingface.co/{repo_id}"
+    published = {"repo_id": repo_id, "url": url, "private": private}
+    _update_export(export_id, huggingface=published)
+    ctx.note(f"Published: {url}")
+    ctx.result = {"export_job_id": export_id, **published}

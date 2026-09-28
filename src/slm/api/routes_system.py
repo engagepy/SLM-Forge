@@ -42,6 +42,14 @@ def system_status() -> dict:
     }
 
 
+@router.get("/huggingface")
+def huggingface_account(refresh: bool = False) -> dict:
+    """The Hugging Face login this Mac uses (for publishing), and what the GGUF export can make."""
+    from slm.models import hub
+
+    return hub.account(refresh)
+
+
 @router.get("/storage")
 def storage_inventory() -> dict:
     """What the app keeps on this Mac, item by item, with sizes."""

@@ -5,6 +5,7 @@ import { MetricChart } from "../../components/Charts";
 import { runProgress, useLiveJob } from "../../hooks";
 import { Badge, CodeBlock, cx, LinkButton, MemoryBar, ProgressBar, SectionLabel, StatusBadge } from "../../ui";
 import { Empty, Fact, Progress } from "./bits";
+import { ExportActions } from "./ExportActions";
 
 export function GoalView({ s }: { s: Snapshot }) {
   return (
@@ -258,6 +259,7 @@ export function ExportView({ s }: { s: Snapshot }) {
           {!e.system_prompt_built_in && s.project.system_prompt && (
             <p className="text-[11px] text-faint">This export needs the system prompt passed in; newer exports build it in.</p>
           )}
+          <ExportActions s={s} e={e} />
         </div>
       ))}
     </div>

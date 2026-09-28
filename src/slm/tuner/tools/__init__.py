@@ -43,11 +43,13 @@ from slm.tuner.tools.person import remember_about_user, set_user_level
 from slm.tuner.tools.status import get_status, machine_overview, manage_project, set_stage, update_project
 from slm.tuner.tools.training import (
     cancel_job,
+    export_gguf,
     export_model,
     plan_training,
     serve_checkpoint,
     start_training,
     training_progress,
+    upload_to_huggingface,
 )
 
 # In the order the agent sees them. Every @tool (REGISTRY) must be here: a test guards it.
@@ -77,6 +79,8 @@ ALL_TOOLS = [
     review_synthetic_examples,
     build_dataset_from_examples,
     export_model,
+    export_gguf,
+    upload_to_huggingface,
     ai_review_answers,
     finish_project,
     machine_overview,
