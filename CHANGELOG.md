@@ -5,6 +5,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1]
+
+### Changed
+- **A missing key names its file.** The top bar's "Tuner needs OPENAI_API_KEY · where?" badge
+  opens the exact file to put it in, with a command to copy. For an install from PyPI that's
+  `~/Library/Application Support/SLM Forge/.env`. The Tuner's key errors name the same file.
+- The README says where an installed copy reads its keys: the app's home folder, the folder you
+  start it from, or your shell.
+
 ## [0.1.0] — first public release
 
 ### Added
@@ -32,5 +41,6 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Keys in one place: `OPENAI_API_KEY` and `HF_TOKEN` both read from `.env`.
 - Apache-2.0 licence, contributing guide, security policy and CI on Apple Silicon.
 
-[Unreleased]: https://github.com/engagepy/SLM-Forge/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/engagepy/SLM-Forge/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/engagepy/SLM-Forge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/engagepy/SLM-Forge/releases/tag/v0.1.0
