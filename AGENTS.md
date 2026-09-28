@@ -42,10 +42,10 @@ profile. A sessions sidebar appears on both. The older manual screens are under 
 
 ```bash
 uv sync                                    # Python deps (never create a venv/interpreter by hand)
-uv run pytest -q                           # ~175 tests, no GPU/network, ~10 s. Must pass.
+uv run pytest -q                           # ~200 tests, no GPU/network, ~10 s. Must pass.
 uv run ruff check src tests && uv run ruff format src tests
 (cd web && npm install && npm run build)   # tsc -b + vite build. Must be clean.
-uv run slm serve                           # http://127.0.0.1:8000 (serves web/dist)
+uv run slm serve                           # http://127.0.0.1:8000 (serves src/slm/web_dist)
 uv run slm hardware | uv run slm models qwen
 uv run python scripts/smoke.py             # real end-to-end run on the GPU (~4 min)
 ```
@@ -57,7 +57,7 @@ uv run python scripts/smoke.py             # real end-to-end run on the GPU (~4 
 
 ## Rules
 
-1. **Never commit** `.env` (it holds `OPENAI_API_KEY`), `workspace/`, `node_modules/`, `web/dist/`
+1. **Never commit** `.env` (it holds `OPENAI_API_KEY`), `workspace/`, `node_modules/`, `src/slm/web_dist/`, `web/dist/`
    or `*.tsbuildinfo`. All of them are gitignored.
 2. **Commit or push only when the user asks.** End commit messages with the repo's co-author line.
 3. **Never touch the user's own work** in `workspace/`. That means their training runs, jobs,
@@ -171,6 +171,20 @@ scripts/smoke.py   end-to-end GPU smoke test
   truncation, the run gets a `truncated` warning (`runner.truncation_count`), so it can't go unnoticed.
 - **Mapping must never produce empty records silently.** `_resolve` enforces required fields and
   errors on missing columns.
+
+### Licences, privacy and packaging
+- **Licences travel with the model.** `catalog.licence_for` is the one source of a base model's
+  licence and conditions; the base-model card shows it. Imported datasets keep their licence
+  (`scout_tools.dataset_license`). Every export copies the base model's `LICENSE*`/`NOTICE*`/
+  `USE_POLICY*` (`fuse.copy_licence_files`) and writes a model card with Hugging Face front matter,
+  a Licence & attribution section (Built with Llama, the Meta and Gemma notices, datasets and their
+  licences, OpenAI-written examples) and an Intended use & limitations section. Regression-tested
+  in `tests/test_compliance.py`.
+- **Tracing is opt-in** (`SLM_OPENAI_TRACING=true`). Nothing else phones home.
+- **Paths:** a source checkout keeps `./workspace` and `./.env` (`config.SOURCE_CHECKOUT`); an
+  installed copy uses `~/Library/Application Support/SLM Forge`. `npm run build` writes the UI into
+  `src/slm/web_dist`, which the wheel ships. A release is a `v*` tag (`.github/workflows/release.yml`);
+  bump `version` in `pyproject.toml` and `slm/__init__.py` and add a CHANGELOG section first.
 
 ### The Tuner (`src/slm/tuner/`)
 **Turns and tools**

@@ -61,14 +61,33 @@ The previous hands-on screens are still there under **Advanced** in the Studio's
 
 ## Quick start
 
-Requirements: an Apple Silicon Mac, [uv](https://docs.astral.sh/uv/) and Node 20+.
+**Requirements:** an Apple Silicon Mac (M1 or later; 16 GB of memory or more recommended),
+Python 3.13, and an [OpenAI API key](https://platform.openai.com/api-keys) for the Tuner.
+
+**Install from PyPI** (needs [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/)):
 
 ```bash
+uv tool install slm-forge                 # or: pipx install slm-forge
+echo "OPENAI_API_KEY=sk-..." > .env       # in the folder you start it from
+slm serve                                 # → http://127.0.0.1:8000
+```
+
+An installed copy keeps its projects, data and models in
+`~/Library/Application Support/SLM Forge/` (set `SLM_WORKSPACE` to move them) and reads `.env` from
+the current folder, then from that one.
+
+**Or run from source** (also needs Node 20+):
+
+```bash
+git clone https://github.com/engagepy/SLM-Forge.git && cd SLM-Forge
 uv sync                                   # Python deps (MLX, mlx-lm, mlx-lm-lora, FastAPI…)
-cp .env.example .env                      # then add OPENAI_API_KEY (the Tuner uses gpt-6-luna)
-(cd web && npm install && npm run build)  # web UI
+cp .env.example .env                      # then add OPENAI_API_KEY
+npm --prefix web ci && npm --prefix web run build   # the web UI
 uv run slm serve                          # → http://127.0.0.1:8000
 ```
+
+A clone keeps its data in `./workspace`. The Tuner uses the model named in `SLM_OPENAI_MODEL`
+(default `gpt-6-luna`); set it in `.env` if your OpenAI account uses a different model.
 
 Useful commands:
 
@@ -105,8 +124,8 @@ same human preference pairs with just the policy and a frozen reference.
 
 The Tuner and its specialists (DataScout, DataPrep) run on the
 [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) with streaming and persistent
-session memory, on `gpt-6-luna` (`SLM_OPENAI_MODEL` overrides). They always need `OPENAI_API_KEY`;
-traces appear in the OpenAI dashboard unless `SLM_OPENAI_TRACING=false`.
+session memory, on `gpt-6-luna` (`SLM_OPENAI_MODEL` overrides). They always need `OPENAI_API_KEY`.
+Agent traces are sent to the OpenAI dashboard only if you opt in with `SLM_OPENAI_TRACING=true`.
 
 `SLM_AGENT_PROVIDER` chooses the LLM behind the AI judge (evaluation, answer review) and the
 Advanced screens' agents (Observer, Synth):
@@ -175,7 +194,8 @@ taught it.
   counting). It needs an organisation admin key in `.env` (`OPENAI_ADMIN_KEY`; the project key
   can't read costs). It finds the OpenAI project your key belongs to by itself (`OPENAI_PROJECT_ID`
   overrides). OpenAI updates the figure with a lag of a few hours; the meter refreshes every ten
-  minutes. OpenAI only, for now.
+  minutes. OpenAI only, for now. An admin key can read and manage your whole organisation, so it
+  is optional: create a dedicated one, or leave it unset and the meter reads "spend not set up".
 - **AI feedback instead of human clicks:** `ai_review_answers` has the local model answer each
   prompt twice, and GPT-6 picks the better answer, writes the ideal one and critiques the flaws.
   Each verdict becomes a DPO preference pair and, where the model was wrong, a corrected SFT
@@ -251,5 +271,44 @@ the model catalog and the data specialists. Still ahead:
 - near-duplicate detection (MinHash), language ID and PII scrubbing in cleaning;
 - web search for off-Hub data;
 - a machine-wide GPU lock across server processes, and a memory estimator recalibrated for 3B+;
-- curricula, ORPO/GRPO, GGUF/Ollama export, a device compatibility matrix, packaging for other
-  users.
+- curricula, ORPO/GRPO, GGUF/Ollama export, a device compatibility matrix.
+
+## Privacy & data
+
+Training and inference run on your Mac. Three things leave it:
+
+- **OpenAI** (the Tuner, its specialists and the AI judge): your goal and chat, samples of your
+  dataset rows, the test set, and the local model's answers when they are scored or reviewed. Don't
+  put data you may not share with OpenAI through it, such as health records or other personal
+  data. Agent traces go to your OpenAI dashboard only if you set `SLM_OPENAI_TRACING=true`.
+- **Hugging Face:** model and dataset downloads and dataset searches. Gated repositories use your
+  own `hf auth login`; SLM Forge never stores the token.
+- **Anthropic or Ollama**, only if you choose them as `SLM_AGENT_PROVIDER`.
+
+API keys stay in `.env` or your environment and are never logged. The server listens on
+`127.0.0.1` only and has no login: don't expose it to a network. There is no telemetry.
+
+## Licences
+
+SLM Forge is released under the [Apache License 2.0](LICENSE); third-party material in this
+repository is listed in [NOTICE](NOTICE).
+
+The models you build are yours to use, within the terms of what they are made from:
+
+- **The base model's licence.** Each candidate shows its licence and conditions before you
+  confirm it. Qwen2.5-3B is research-only; Llama 3.2 needs "Built with Llama" and follows Meta's
+  acceptable use policy; Gemma passes its use restrictions on. Every export copies the base model's
+  licence files and writes the licence, its conditions and the required notices into its model
+  card.
+- **The training data's licences.** Imported datasets keep their licence, and the model card lists
+  each one. Check that a dataset's licence allows your use before you train on it.
+- **OpenAI's terms**, for examples the teacher model wrote or corrected. The model card says when
+  any were used.
+
+This is a summary to help you check, not legal advice.
+
+## Contributing
+
+Contributions are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md) (setup, checks, and the
+invariants in [AGENTS.md](AGENTS.md)) and the [Code of Conduct](CODE_OF_CONDUCT.md). Report
+security problems privately, as described in [SECURITY.md](SECURITY.md).
