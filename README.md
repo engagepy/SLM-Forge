@@ -76,8 +76,11 @@ The package is `m37labs-slm-forge` on PyPI (plain `slm-forge` is too close to an
 name). It installs the `slm` command; `uvx m37labs-slm-forge serve` runs it without installing.
 
 An installed copy keeps its projects, data and models in
-`~/Library/Application Support/SLM Forge/` (set `SLM_WORKSPACE` to move them) and reads `.env` from
-the current folder, then from that one.
+`~/Library/Application Support/SLM Forge/` (set `SLM_WORKSPACE` to move them).
+
+**Where your keys go:** put them in `~/Library/Application Support/SLM Forge/.env` to use them
+wherever you start the app. A `.env` in the folder you run `slm serve` from also works, and wins
+if a key is set in both. Keys exported in your shell override both files.
 
 **Or run from source** (also needs Node 20+):
 
