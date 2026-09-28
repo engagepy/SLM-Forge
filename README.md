@@ -1,8 +1,8 @@
 # SLM Forge
 
-[![SLM Forge in 20 seconds: a sentence goes in, a model comes out](docs/brag/brag.jpg)](docs/brag/brag.mp4)
+![SLM Forge in 20 seconds: a sentence goes in, a model comes out](docs/brag/brag.gif)
 
-*▶ 20-second tour: type what the model should do, the Tuner does the groundwork and asks before each run, the score goes up, and you chat with the result. [Watch it](docs/brag/brag.mp4).*
+*20-second tour: type what the model should do, the Tuner does the groundwork and asks before each run, the score goes up, and you chat with the result. [Watch with sound (MP4)](docs/brag/brag.mp4).*
 
 Build your own small language model on a Mac, by talking to an agent.
 
