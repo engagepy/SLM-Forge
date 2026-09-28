@@ -1,6 +1,6 @@
 # SLM Forge
 
-https://github.com/user-attachments/assets/c8da6840-0540-457b-82c3-006df82cad4f
+https://github.com/user-attachments/assets/e9d6d7d1-d623-4441-8c28-ec0e63f40e6e
 
 *20-second tour: type what the model should do, the Tuner does the groundwork and asks before each run, the score goes up, and you chat with the result.*
 
