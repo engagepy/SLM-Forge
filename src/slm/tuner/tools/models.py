@@ -7,7 +7,7 @@ from slm.db import (
     Project,
     engine,
 )
-from slm.models import hub, manage
+from slm.models import catalog, hub, manage
 from slm.tuner import confirm
 from slm.tuner.tools._core import Ctx, tool
 
@@ -19,8 +19,6 @@ def find_base_models(ctx: Ctx, query: str = "", max_params_billion: float = 3.0,
     ordered by suitability to task_type (persona | qa | extraction | classification | other) then
     size; every entry exists as an MLX 4-bit build. "more_from_hub": a Hub search for `query`, for
     when the user names a model. Shortlist 2–3 from recommended, then choose_base_model."""
-    from slm.models import catalog
-
     local = {m["repo_id"]: m for m in manage.local_models()}
     budget = hardware.detect().budget_gb
     recommended = []
@@ -79,5 +77,9 @@ def choose_base_model(ctx: Ctx, repo_id: str, reason: str) -> dict:
     details = {"repo_id": repo_id, "on_this_mac": on_mac}
     if info:
         details |= {"params_b": info["params_b"], "bits": info["bits"]}
+    # What the user may do with a model built on this base: on the card, before they say go.
+    lic = catalog.licence_for(repo_id, manage.local_path_for(repo_id))
+    details |= {"licence": lic["licence"], "licence_url": lic["url"], "licence_conditions": lic["conditions"],
+                "commercial_ok": lic["commercial_ok"]}  # fmt: skip
     title = f"Use {repo_id.split('/')[-1]}" + ("" if on_mac else " (download it)")
     return confirm.propose(pid, "model", title, reason, details, {"repo_id": repo_id})

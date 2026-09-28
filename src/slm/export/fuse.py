@@ -2,6 +2,7 @@
 
 import json
 import re
+import shutil
 import sys
 from datetime import date
 from pathlib import Path
@@ -121,12 +122,95 @@ def min_mac_memory_gb(model_dir: Path, context_tokens: int = 4096) -> int:
     return 256
 
 
+LICENCE_FILES = ("LICENSE*", "LICENCE*", "NOTICE*", "USE_POLICY*")
+
+
+def copy_licence_files(base_dir: str | None, dest: Path) -> list[str]:
+    """Carry the base model's licence, notice and use policy into the export: most licences require
+    them to travel with any copy or derivative. Returns the file names copied."""
+    if not base_dir or not Path(base_dir).is_dir():
+        return []
+    copied = []
+    for pattern in LICENCE_FILES:
+        for f in sorted(Path(base_dir).glob(pattern)):
+            if f.is_file() and not (dest / f.name).exists():
+                shutil.copyfile(f, dest / f.name)
+                copied.append(f.name)
+    return copied
+
+
+def _front_matter(provenance: dict) -> list[str]:
+    """Hugging Face model-card metadata, so a Hub upload shows the licence and lineage."""
+    lic = (provenance.get("base_license") or {}).get("licence", "unknown")
+    hub_id = {"Apache-2.0": "apache-2.0", "MIT": "mit", "Llama 3.2 Community licence": "llama3.2",
+              "Gemma Terms of Use": "gemma"}.get(lic, "other")  # fmt: skip
+    lines = ["---", f"license: {hub_id}"]
+    if hub_id == "other":
+        lines.append(f"license_name: {json.dumps(lic)}")
+    if base := provenance.get("base_model"):
+        lines += ["base_model:", f"  - {base}"]
+    hub_datasets = [d["name"] for d in provenance.get("datasets", []) if d.get("source") == "hf"]
+    if hub_datasets:
+        lines += ["datasets:", *[f"  - {d}" for d in hub_datasets]]
+    lines += ["tags:", "  - mlx", "  - slm-forge", "  - lora", "---", ""]
+    return lines
+
+
+def _licence_section(provenance: dict) -> list[str]:
+    base = provenance.get("base_license") or {}
+    lic = base.get("licence", "unknown")
+    lines = ["## Licence & attribution", ""]
+    if "Llama" in lic:
+        lines += ["**Built with Llama.**", ""]
+    lines += [
+        f"This model is a fine-tune of `{provenance.get('base_model')}` and is subject to its licence: "
+        f"**{lic}**" + (f" ({base['url']})" if base.get("url") else "") + ".",
+    ]
+    if base.get("conditions"):
+        lines += ["", f"What it asks of you: {base['conditions']}"]
+    if "Llama" in lic:
+        lines += ["", "Llama 3.2 is licensed under the Llama 3.2 Community License, Copyright © Meta Platforms, "
+                  "Inc. All Rights Reserved."]  # fmt: skip
+    if "Gemma" in lic:
+        lines += ["", "This is a modified version of Gemma, provided under and subject to the Gemma Terms of Use "
+                  "(https://ai.google.dev/gemma/terms)."]  # fmt: skip
+    datasets = provenance.get("datasets") or []
+    if datasets:
+        lines += ["", "Training data:", ""]
+        lines += [f"- `{d['name']}` ({d['source']}): licence {d['license']}" for d in datasets]
+    if provenance.get("synthetic_examples_used"):
+        lines += ["", f"{provenance['synthetic_examples_used']} training examples were written or reviewed by an "
+                  "OpenAI model. OpenAI's terms apply to how those outputs may be used."]  # fmt: skip
+    lines += ["", "Licence files from the base model, where it published them, are included in this folder.", ""]
+    return lines
+
+
+LIMITATIONS = [
+    "## Intended use & limitations",
+    "",
+    "A small model fine-tuned for one narrow task on a few thousand examples. It makes mistakes, including "
+    "confident ones. Check its outputs, and do not use it on its own for medical, legal, financial or "
+    "safety-critical decisions.",
+    "",
+]
+
+
 def write_model_card(
-    dest: Path, *, name: str, project: dict, lineage: list[dict], sampling: dict, built_in: bool = False
+    dest: Path,
+    *,
+    name: str,
+    project: dict,
+    lineage: list[dict],
+    sampling: dict,
+    built_in: bool = False,
+    provenance: dict | None = None,
 ) -> None:
     ram = min_mac_memory_gb(dest)
     system_prompt = project.get("system_prompt") or ""
+    provenance = provenance or {"base_model": project.get("base_model"), "base_license": None, "datasets": [],
+                                "synthetic_examples_used": 0}  # fmt: skip
     lines = [
+        *_front_matter(provenance),
         f"# {name}",
         "",
         f"Fine-tuned locally with SLM Forge on {date.today().isoformat()}.",
@@ -168,6 +252,7 @@ def write_model_card(
     ]
     if project.get("system_prompt"):
         lines += ["", "## System prompt", "", "```", project["system_prompt"], "```"]
+    lines += ["", *_licence_section(provenance), *LIMITATIONS]
     (dest / "README.md").write_text("\n".join(lines) + "\n")
     (dest / "slm_forge.json").write_text(
         json.dumps(
@@ -177,6 +262,9 @@ def write_model_card(
                 "sampling": sampling,
                 "min_ram_gb": ram,
                 "system_prompt_built_in": built_in,
+                "base_license": provenance.get("base_license"),
+                "datasets": provenance.get("datasets", []),
+                "synthetic_examples_used": provenance.get("synthetic_examples_used", 0),
             },
             indent=2,
             default=str,

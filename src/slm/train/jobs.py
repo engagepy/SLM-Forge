@@ -442,6 +442,39 @@ def model_in_use(s: Session, project_id: int) -> int | None:
     ).first()
 
 
+def _provenance(s: Session, project: Project, ancestry: list[Checkpoint]) -> dict:
+    """What an export owes its sources: the base model's licence and conditions, every public dataset
+    the served model was trained on (with its licence), and whether OpenAI-written examples were used.
+    Only the served model's own lineage counts, not abandoned runs."""
+    from slm.models import catalog
+
+    job_ids = [ck.job_id for ck in ancestry if ck.job_id]
+    version_ids = set()
+    for job in s.exec(select(Job).where(Job.id.in_(job_ids))).all() if job_ids else []:
+        vid = (job.config or {}).get("dataset_version_id") or (job.result or {}).get("dataset_version_id")
+        if vid:
+            version_ids.add(vid)
+    datasets, seen = [], set()
+    for v in s.exec(select(DatasetVersion).where(DatasetVersion.id.in_(version_ids))).all() if version_ids else []:
+        ds = s.get(Dataset, v.dataset_id) if v.dataset_id else None
+        if ds and ds.id not in seen and ds.source in ("hf", "upload"):
+            seen.add(ds.id)
+            datasets.append({"name": ds.source_ref or ds.name, "source": ds.source, "license": ds.license or "unknown"})
+    synthetic = 0
+    if job_ids:
+        for model in (SftExample, PreferencePair):
+            synthetic += len(
+                s.exec(select(model.id).where(model.used_in_job_id.in_(job_ids), model.source == "synthetic")).all()
+            )
+    base = project.base_model or ""
+    return {
+        "base_model": base,
+        "base_license": catalog.licence_for(base, manage.local_path_for(base)) if base else None,
+        "datasets": datasets,
+        "synthetic_examples_used": synthetic,
+    }
+
+
 @worker.register("export")
 def export_job(ctx: JobContext) -> None:
     c = ctx.config
@@ -450,7 +483,9 @@ def export_job(ctx: JobContext) -> None:
         model_path = _serving_model(project)
         adapter = project.current_adapter_path
         project_info = project.model_dump(include={"name", "goal", "base_model", "system_prompt"})
-        lineage = [{"kind": ck.kind, "job_id": ck.job_id, "metrics": ck.metrics} for ck in served_ancestry(s, project)]
+        ancestry = served_ancestry(s, project)
+        lineage = [{"kind": ck.kind, "job_id": ck.job_id, "metrics": ck.metrics} for ck in ancestry]
+        provenance = _provenance(s, project, ancestry)
 
     # A new folder every time: re-exporting under a used name must never replace an earlier model.
     dest = fusing.unique_dest(
@@ -477,9 +512,13 @@ def export_job(ctx: JobContext) -> None:
         ctx.note("Built the system prompt into the chat template: the export answers like the app with no flags.")
     elif project_info.get("system_prompt"):
         ctx.note("Could not build the system prompt into this chat template: pass --system-prompt when running it.")
+    copied = fusing.copy_licence_files(manage.local_path_for(project_info.get("base_model") or ""), dest)
+    if copied:
+        ctx.note(f"Copied the base model's {', '.join(copied)} into the export.")
     fusing.write_model_card(
-        dest, name=name, project=project_info, lineage=lineage, sampling=c.get("sampling", {}), built_in=built_in
-    )
+        dest, name=name, project=project_info, lineage=lineage, sampling=c.get("sampling", {}), built_in=built_in,
+        provenance=provenance,
+    )  # fmt: skip
     size = manage.dir_size_gb(dest)
     ctx.note(f"Exported to {dest} ({size:.2f} GB)")
     ctx.result = {

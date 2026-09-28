@@ -100,6 +100,28 @@ def dataset_card(repo_id: str, max_chars: int = 6000) -> str:
     return text[:max_chars] + ("\n…(truncated)" if len(text) > max_chars else "")
 
 
+def dataset_license(repo_id: str) -> str:
+    """The licence a dataset declares (card front matter, else a `license:` tag), or "unknown".
+    Never raises: an import must not fail because the licence lookup did."""
+    try:
+        d = HfApi().dataset_info(repo_id)
+    except Exception:
+        return "unknown"
+    return _license_from(d.tags, d.card_data.to_dict() if d.card_data else None)
+
+
+def _ok(r: httpx.Response, repo_id: str) -> None:
+    """datasets-server answers 401/403 for gated or private datasets and 404 for missing ones."""
+    if r.status_code in (401, 403, 404):
+        from slm.models.manage import GATED_HELP
+
+        raise RuntimeError(
+            GATED_HELP.format(repo=repo_id, path="datasets/")
+            + " (If it isn't gated, it may be private, missing, or not previewable.)"
+        )
+    r.raise_for_status()
+
+
 def _headers() -> dict:
     token = get_token()
     return {"Authorization": f"Bearer {token}"} if token else {}
@@ -107,7 +129,7 @@ def _headers() -> dict:
 
 def dataset_splits(repo_id: str) -> list[dict]:
     r = httpx.get(f"{DATASETS_SERVER}/splits", params={"dataset": repo_id}, headers=_headers(), timeout=30)
-    r.raise_for_status()
+    _ok(r, repo_id)
     return r.json().get("splits", [])
 
 
@@ -126,7 +148,7 @@ def preview_rows(repo_id: str, config: str | None = None, split: str | None = No
         headers=_headers(),
         timeout=60,
     )
-    r.raise_for_status()
+    _ok(r, repo_id)
     data = r.json()
     rows = [row["row"] for row in data.get("rows", [])[:n]]
     columns = [f["name"] for f in data.get("features", [])]
@@ -149,7 +171,12 @@ def import_hf_dataset(
     if _load is None:
         from datasets import load_dataset as _load
 
-    ds = _load(repo_id, config, split=split, streaming=True)
+    try:
+        ds = _load(repo_id, config, split=split, streaming=True)
+    except Exception as e:
+        from slm.models.manage import access_error
+
+        raise access_error(repo_id, e, repo_type="dataset") from e
     dest.mkdir(parents=True, exist_ok=True)
     n, columns = 0, []
     with open(dest / "raw.jsonl", "w") as f:

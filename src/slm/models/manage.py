@@ -19,7 +19,33 @@ ALLOW_PATTERNS = [
     "*.tiktoken",
     "*.txt",
     "*.jinja",
+    # The licence travels with the weights: an export must be able to pass it on.
+    "LICENSE*",
+    "LICENCE*",
+    "NOTICE*",
+    "USE_POLICY*",
+    "*.md",
 ]
+
+GATED_HELP = (
+    "{repo} needs you to accept its terms on Hugging Face before it can be downloaded: open "
+    "https://huggingface.co/{path}{repo}, accept the licence, then run `hf auth login` in a terminal."
+)
+
+
+def access_error(repo_id: str, e: Exception, repo_type: str = "model") -> Exception:
+    """A gated, private or missing repo turned into advice the user can act on; anything else as is."""
+    from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+
+    path = "datasets/" if repo_type == "dataset" else ""
+    if isinstance(e, GatedRepoError):
+        return RuntimeError(GATED_HELP.format(repo=repo_id, path=path))
+    if isinstance(e, RepositoryNotFoundError):
+        return RuntimeError(
+            f"{repo_id} was not found on Hugging Face, or it is private or gated and you are not logged in "
+            "(`hf auth login`)."
+        )
+    return e
 
 
 def read_shape(model_path: str | Path) -> hardware.ModelShape:
@@ -41,7 +67,10 @@ def download(repo_id: str, log=print, local_only: bool = False) -> ModelRecord:
         if local_only:
             raise
         log(f"Downloading {repo_id} ...")
-        local = Path(snapshot_download(repo_id, allow_patterns=ALLOW_PATTERNS))
+        try:
+            local = Path(snapshot_download(repo_id, allow_patterns=ALLOW_PATTERNS))
+        except Exception as e:
+            raise access_error(repo_id, e) from e
         origin = "downloaded"
     with open(local / "config.json") as f:
         config = json.load(f)

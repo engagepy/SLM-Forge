@@ -9,6 +9,39 @@ stated. Task types match the Tuner's plan: persona | qa | extraction | classific
 
 from dataclasses import asdict, dataclass
 
+# What each licence asks of someone who ships a model fine-tuned from it. Shown on the base-model
+# card and written into every export's model card. A summary for orientation, not legal advice:
+# the url is the text that binds.
+LICENCES: dict[str, dict] = {
+    "Apache-2.0": {
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "conditions": "Keep the licence and any NOTICE file with the model, and say you changed it.",
+    },
+    "MIT": {
+        "url": "https://opensource.org/license/mit",
+        "conditions": "Keep the copyright and licence notice with the model.",
+    },
+    "Qwen Research licence": {
+        "url": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/blob/main/LICENSE",
+        "conditions": "Research and non-commercial use only; a commercial use needs a licence from Alibaba Cloud.",
+    },
+    "Llama 3.2 Community licence": {
+        "url": "https://www.llama.com/llama3_2/license/",
+        "conditions": (
+            'Show "Built with Llama" where you ship it, include the Llama 3.2 licence and its notice, '
+            "follow Meta's Acceptable Use Policy, and start the model's name with \"Llama\". Products with "
+            "over 700 million monthly users need a separate licence from Meta."
+        ),
+    },
+    "Gemma Terms of Use": {
+        "url": "https://ai.google.dev/gemma/terms",
+        "conditions": (
+            "Pass the Gemma Terms of Use and its Prohibited Use Policy on to anyone you give the model to, "
+            "keep the notice that it is a modified Gemma model, and don't use it for prohibited purposes."
+        ),
+    },
+}
+
 
 @dataclass(frozen=True)
 class Candidate:
@@ -22,7 +55,8 @@ class Candidate:
     notes: str = ""
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        terms = LICENCES.get(self.licence, {})
+        return asdict(self) | {"licence_url": terms.get("url", ""), "licence_conditions": terms.get("conditions", "")}
 
 
 CATALOG: tuple[Candidate, ...] = (
@@ -108,17 +142,17 @@ CATALOG: tuple[Candidate, ...] = (
         "Llama 3.2",
         1.24,
         "Llama 3.2 Community licence",
-        True,
+        None,
         ("qa", "persona"),
         "A well-known general assistant at 1B; good conversational tone.",
-        "Community licence: fine for most use, read it for very large products.",
+        "Community licence with conditions: attribution, naming and an acceptable use policy.",
     ),  # fmt: skip
     Candidate(
         "mlx-community/Llama-3.2-3B-Instruct-4bit",
         "Llama 3.2",
         3.21,
         "Llama 3.2 Community licence",
-        True,
+        None,
         ("qa", "extraction"),
         "General knowledge and explanation at 3B.",
     ),  # fmt: skip
@@ -127,7 +161,7 @@ CATALOG: tuple[Candidate, ...] = (
         "Gemma 3",
         1.30,
         "Gemma Terms of Use",
-        True,
+        None,
         ("qa", "persona"),
         "Multilingual, careful tone; a good tutor voice at 1B.",
     ),  # fmt: skip
@@ -170,3 +204,52 @@ def recommend(task_type: str | None = None, max_params_b: float | None = None, s
 
 def lookup(repo_id: str) -> dict | None:
     return next((c.to_dict() for c in CATALOG if c.repo_id == repo_id), None)
+
+
+def licence_for(repo_id: str, local_path: str | None = None) -> dict:
+    """{licence, url, conditions, commercial_ok} for any base model: the catalog's entry, else the
+    `license:` in the downloaded model card's front matter, else the Hub's metadata, else "unknown"
+    with a pointer to the model page. Never raises: a missing licence is shown, not an error."""
+    if c := lookup(repo_id):
+        return {
+            "licence": c["licence"],
+            "url": c["licence_url"],
+            "conditions": c["licence_conditions"],
+            "commercial_ok": c["commercial_ok"],
+        }
+    lic = _card_licence(local_path) if local_path else ""
+    if not lic:
+        try:
+            from huggingface_hub import model_info
+
+            data = model_info(repo_id).card_data
+            lic = str((data.to_dict() if data else {}).get("license") or "")
+        except Exception:
+            lic = ""
+    known = next((k for k in LICENCES if k.lower() == lic.lower()), None)
+    if known:
+        return {"licence": known, "url": LICENCES[known]["url"], "conditions": LICENCES[known]["conditions"],
+                "commercial_ok": None}  # fmt: skip
+    return {
+        "licence": lic or "unknown",
+        "url": f"https://huggingface.co/{repo_id}",
+        "conditions": (
+            "Not in SLM Forge's catalog: read the licence on the model page before you ship a model built on it."
+        ),
+        "commercial_ok": None,
+    }
+
+
+def _card_licence(local_path: str) -> str:
+    from pathlib import Path
+
+    card = Path(local_path) / "README.md"
+    if not card.exists():
+        return ""
+    text = card.read_text(errors="replace")
+    if not text.startswith("---"):
+        return ""
+    for line in text.split("---", 2)[1].splitlines():
+        if line.strip().lower().startswith("license:"):
+            return line.split(":", 1)[1].strip().strip("'\"")
+    return ""

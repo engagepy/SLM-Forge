@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     # Agent LLM provider. OpenAI is the default; Claude and a local Ollama model also work.
     agent_provider: Literal["openai", "claude", "ollama"] = "openai"
     openai_model: str = "gpt-6-luna"  # all agentic work: the Tuner and the helper agents
-    openai_tracing: bool = True  # send agent traces to the OpenAI dashboard
+    # Agent traces (full prompts, tool calls and outputs) go to the OpenAI dashboard only if you opt in.
+    openai_tracing: bool = False
     # The spend meter reads OpenAI's Costs API, which needs an organisation admin key; the project
     # id narrows it to the project the API key belongs to. Both also accepted unprefixed in .env.
     openai_admin_key: str | None = None

@@ -107,11 +107,13 @@ def import_dataset(
         {"repo_id": repo_id, "max_rows": max_rows}, args,
     ):  # fmt: skip
         return proposal
+    # The licence travels with the data into the export's model card, so record it at import.
     job = _submit(
         "import_dataset",
-        {"repo_id": repo_id, "max_rows": max_rows, "config": config, "split": split},
+        {"repo_id": repo_id, "max_rows": max_rows, "config": config, "split": split,
+         "license": scout_tools.dataset_license(repo_id)},
         ctx.context.project_id,
-    )
+    )  # fmt: skip
     job = _wait(job.id, 3600)
     if job.status != "succeeded":
         return {"status": job.status, "error": job.error or "still running", "job_id": job.id}
