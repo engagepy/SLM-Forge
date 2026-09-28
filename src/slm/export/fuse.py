@@ -139,6 +139,65 @@ def copy_licence_files(base_dir: str | None, dest: Path) -> list[str]:
     return copied
 
 
+def fetch_upstream_licence_files(upstream: str | None, dest: Path) -> list[str]:
+    """The licence files of the original model a conversion was made from, downloaded into the
+    export. Best effort: a gated original (Llama, until you accept Meta's terms) or no network leaves
+    the export with LICENSE-BASE-MODEL.md alone, which always states the licence and its notices."""
+    if not upstream:
+        return []
+    try:
+        from huggingface_hub import hf_hub_download, list_repo_files
+
+        wanted = [f for f in list_repo_files(upstream) if f.upper().startswith(("LICEN", "NOTICE", "USE_POLICY"))]
+        fetched = []
+        for name in wanted:
+            if not (dest / name).exists():
+                shutil.copyfile(hf_hub_download(upstream, name), dest / name)
+                fetched.append(name)
+        return fetched
+    except Exception:
+        return []
+
+
+def write_licence_notice(dest: Path, provenance: dict) -> None:
+    """LICENSE-BASE-MODEL.md: which licence governs this model, where its full text is, what it asks,
+    and the notices it requires. Written for every export, whether or not the licence file itself
+    could be copied."""
+    base = provenance.get("base_license") or {}
+    lines = [
+        "# Base model licence",
+        "",
+        f"This model was fine-tuned from `{provenance.get('base_model')}`"
+        + (f" (converted from `{base['upstream']}`)" if base.get("upstream") else "")
+        + " and is distributed under that model's licence, not SLM Forge's.",
+        "",
+        f"- **Licence:** {base.get('licence', 'unknown')}",
+        f"- **Full text:** {base.get('url') or 'see the base model page on huggingface.co'}",
+    ]
+    if base.get("conditions"):
+        lines.append(f"- **What it asks of you:** {base['conditions']}")
+    notices = _required_notices(base.get("licence", ""))
+    if notices:
+        lines += ["", "## Required notices", "", *notices]
+    (dest / "LICENSE-BASE-MODEL.md").write_text("\n".join(lines) + "\n")
+
+
+def _required_notices(licence: str) -> list[str]:
+    if "Llama" in licence:
+        return [
+            "Built with Llama.",
+            "",
+            "Llama 3.2 is licensed under the Llama 3.2 Community License, Copyright © Meta Platforms, Inc. "
+            "All Rights Reserved.",
+        ]
+    if "Gemma" in licence:
+        return [
+            "This is a modified version of Gemma, provided under and subject to the Gemma Terms of Use "
+            "(https://ai.google.dev/gemma/terms).",
+        ]
+    return []
+
+
 def _front_matter(provenance: dict) -> list[str]:
     """Hugging Face model-card metadata, so a Hub upload shows the licence and lineage."""
     lic = (provenance.get("base_license") or {}).get("licence", "unknown")
@@ -168,12 +227,9 @@ def _licence_section(provenance: dict) -> list[str]:
     ]
     if base.get("conditions"):
         lines += ["", f"What it asks of you: {base['conditions']}"]
-    if "Llama" in lic:
-        lines += ["", "Llama 3.2 is licensed under the Llama 3.2 Community License, Copyright © Meta Platforms, "
-                  "Inc. All Rights Reserved."]  # fmt: skip
-    if "Gemma" in lic:
-        lines += ["", "This is a modified version of Gemma, provided under and subject to the Gemma Terms of Use "
-                  "(https://ai.google.dev/gemma/terms)."]  # fmt: skip
+    notices = [n for n in _required_notices(lic) if n and n != "Built with Llama."]
+    if notices:
+        lines += ["", *notices]
     datasets = provenance.get("datasets") or []
     if datasets:
         lines += ["", "Training data:", ""]
@@ -181,7 +237,8 @@ def _licence_section(provenance: dict) -> list[str]:
     if provenance.get("synthetic_examples_used"):
         lines += ["", f"{provenance['synthetic_examples_used']} training examples were written or reviewed by an "
                   "OpenAI model. OpenAI's terms apply to how those outputs may be used."]  # fmt: skip
-    lines += ["", "Licence files from the base model, where it published them, are included in this folder.", ""]
+    lines += ["", "See LICENSE-BASE-MODEL.md, and the base model's own licence files where they could be "
+              "included, in this folder.", ""]  # fmt: skip
     return lines
 
 

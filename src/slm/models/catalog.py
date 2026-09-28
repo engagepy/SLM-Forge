@@ -43,6 +43,26 @@ LICENCES: dict[str, dict] = {
 }
 
 
+# The original model each mlx-community conversion was made from. Conversions publish only a
+# README; the licence files (LICENSE, USE_POLICY, NOTICE) live in these repos, so an export
+# fetches them from here.
+UPSTREAM: dict[str, str] = {
+    "mlx-community/Qwen2.5-0.5B-Instruct-4bit": "Qwen/Qwen2.5-0.5B-Instruct",
+    "mlx-community/Qwen2.5-1.5B-Instruct-4bit": "Qwen/Qwen2.5-1.5B-Instruct",
+    "mlx-community/Qwen2.5-3B-Instruct-4bit": "Qwen/Qwen2.5-3B-Instruct",
+    "mlx-community/Qwen3-0.6B-4bit": "Qwen/Qwen3-0.6B",
+    "mlx-community/Qwen3-1.7B-4bit": "Qwen/Qwen3-1.7B",
+    "mlx-community/Qwen3-4B-Instruct-2507-4bit": "Qwen/Qwen3-4B-Instruct-2507",
+    "mlx-community/SmolLM2-360M-Instruct": "HuggingFaceTB/SmolLM2-360M-Instruct",
+    "mlx-community/SmolLM3-3B-4bit": "HuggingFaceTB/SmolLM3-3B",
+    "mlx-community/Llama-3.2-1B-Instruct-4bit": "meta-llama/Llama-3.2-1B-Instruct",
+    "mlx-community/Llama-3.2-3B-Instruct-4bit": "meta-llama/Llama-3.2-3B-Instruct",
+    "mlx-community/gemma-3-1b-it-4bit": "google/gemma-3-1b-it",
+    "mlx-community/granite-3.3-2b-instruct-4bit": "ibm-granite/granite-3.3-2b-instruct",
+    "mlx-community/Phi-4-mini-instruct-4bit": "microsoft/Phi-4-mini-instruct",
+}
+
+
 @dataclass(frozen=True)
 class Candidate:
     repo_id: str
@@ -56,7 +76,11 @@ class Candidate:
 
     def to_dict(self) -> dict:
         terms = LICENCES.get(self.licence, {})
-        return asdict(self) | {"licence_url": terms.get("url", ""), "licence_conditions": terms.get("conditions", "")}
+        return asdict(self) | {
+            "licence_url": terms.get("url", ""),
+            "licence_conditions": terms.get("conditions", ""),
+            "upstream": UPSTREAM.get(self.repo_id),
+        }
 
 
 CATALOG: tuple[Candidate, ...] = (
@@ -216,6 +240,7 @@ def licence_for(repo_id: str, local_path: str | None = None) -> dict:
             "url": c["licence_url"],
             "conditions": c["licence_conditions"],
             "commercial_ok": c["commercial_ok"],
+            "upstream": c["upstream"],
         }
     lic = _card_licence(local_path) if local_path else ""
     if not lic:
@@ -229,7 +254,7 @@ def licence_for(repo_id: str, local_path: str | None = None) -> dict:
     known = next((k for k in LICENCES if k.lower() == lic.lower()), None)
     if known:
         return {"licence": known, "url": LICENCES[known]["url"], "conditions": LICENCES[known]["conditions"],
-                "commercial_ok": None}  # fmt: skip
+                "commercial_ok": None, "upstream": None}  # fmt: skip
     return {
         "licence": lic or "unknown",
         "url": f"https://huggingface.co/{repo_id}",
@@ -237,6 +262,7 @@ def licence_for(repo_id: str, local_path: str | None = None) -> dict:
             "Not in SLM Forge's catalog: read the licence on the model page before you ship a model built on it."
         ),
         "commercial_ok": None,
+        "upstream": None,
     }
 
 

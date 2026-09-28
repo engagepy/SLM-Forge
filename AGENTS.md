@@ -175,8 +175,10 @@ scripts/smoke.py   end-to-end GPU smoke test
 ### Licences, privacy and packaging
 - **Licences travel with the model.** `catalog.licence_for` is the one source of a base model's
   licence and conditions; the base-model card shows it. Imported datasets keep their licence
-  (`scout_tools.dataset_license`). Every export copies the base model's `LICENSE*`/`NOTICE*`/
-  `USE_POLICY*` (`fuse.copy_licence_files`) and writes a model card with Hugging Face front matter,
+  (`scout_tools.dataset_license`). mlx-community conversions publish no licence file, so every
+  export fetches the original model's `LICENSE*`/`NOTICE*`/`USE_POLICY*` (`catalog.UPSTREAM`,
+  `fuse.fetch_upstream_licence_files`; best effort, since Llama's are gated), always writes
+  `LICENSE-BASE-MODEL.md` with the licence, its conditions and required notices, and writes a model card with Hugging Face front matter,
   a Licence & attribution section (Built with Llama, the Meta and Gemma notices, datasets and their
   licences, OpenAI-written examples) and an Intended use & limitations section. Regression-tested
   in `tests/test_compliance.py`.

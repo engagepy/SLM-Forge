@@ -122,6 +122,10 @@ def test_an_export_carries_licence_datasets_attribution_and_limitations(session,
     assert "1 training examples were written or reviewed by an OpenAI model" in card
     assert "## Intended use & limitations" in card and "medical" in card
     assert (dest / "LICENSE").read_text().startswith("LLAMA") and (dest / "USE_POLICY.md").exists()
+    # Always present, even when the gated original's files can't be fetched (offline in tests):
+    notice = (dest / "LICENSE-BASE-MODEL.md").read_text()
+    assert "Llama 3.2 Community licence" in notice and "meta-llama/Llama-3.2-1B-Instruct" in notice
+    assert "Built with Llama." in notice and "Copyright © Meta Platforms" in notice
     meta = json.loads((dest / "slm_forge.json").read_text())
     assert meta["base_license"]["licence"] == "Llama 3.2 Community licence"
     assert meta["datasets"] == [{"name": "org/recipes", "source": "hf", "license": "cc-by-4.0"}]

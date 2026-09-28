@@ -513,8 +513,11 @@ def export_job(ctx: JobContext) -> None:
     elif project_info.get("system_prompt"):
         ctx.note("Could not build the system prompt into this chat template: pass --system-prompt when running it.")
     copied = fusing.copy_licence_files(manage.local_path_for(project_info.get("base_model") or ""), dest)
+    # mlx-community conversions publish no licence file: fetch it from the original model.
+    copied += fusing.fetch_upstream_licence_files((provenance.get("base_license") or {}).get("upstream"), dest)
+    fusing.write_licence_notice(dest, provenance)
     if copied:
-        ctx.note(f"Copied the base model's {', '.join(copied)} into the export.")
+        ctx.note(f"Included the base model's {', '.join(copied)} in the export.")
     fusing.write_model_card(
         dest, name=name, project=project_info, lineage=lineage, sampling=c.get("sampling", {}), built_in=built_in,
         provenance=provenance,
