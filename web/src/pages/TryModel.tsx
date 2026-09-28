@@ -104,7 +104,8 @@ export default function TryModel() {
   });
   const usedTexts = () => chips.filter((c) => c.used).map((c) => c.text);
   useEffect(() => {
-    if (seeded || !project.data) return;
+    // No model, nothing to try: never ask the teacher model (a paid call) for suggestions.
+    if (seeded || !project.data || !chosen) return;
     const own: Chip[] = (project.data.project.test_questions ?? []).map((q) => ({
       text: q.input,
       kind: q.kind === "should-not" ? "should-not" : "on-goal",
@@ -119,7 +120,7 @@ export default function TryModel() {
     setSeeded(true);
     if (first.length) setChips(first);
     else suggest.mutate([]);
-  }, [project.data, seeded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project.data, seeded, chosen]); // eslint-disable-line react-hooks/exhaustive-deps
   const useChip = (c: Chip) => {
     send(c.text);
     const next = chips.map((x) => (x.text === c.text ? { ...x, used: true } : x));
