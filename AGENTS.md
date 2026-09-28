@@ -71,7 +71,7 @@ Nothing in the code or config is tied to one machine: paths come from the checko
    end (~5 minutes, downloads ~0.3 GB).
 
 Your data stays in `./workspace` of your clone (gitignored). An installed copy (`uv tool install
-slm-forge`) uses `~/Library/Application Support/SLM Forge/` instead.
+m37labs-slm-forge`; PyPI name, since `slm-forge` was too close to an existing project) uses `~/Library/Application Support/SLM Forge/` instead.
 
 ## Commands
 
