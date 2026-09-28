@@ -581,6 +581,7 @@ def gguf_job(ctx: JobContext) -> None:
     for f in dest.glob("*"):
         if f.name == "chat_template.jinja" or f.name.startswith("tokenizer") or f.name == "special_tokens_map.json":
             shutil.copyfile(f, hf / f.name)
+    gguf.legacy_tokenizer_config(hf)
     gguf.ensure_toolchain(ctx.note)
 
     files, skipped = [], []
@@ -602,7 +603,7 @@ def gguf_job(ctx: JobContext) -> None:
             _run(ctx, gguf.convert_command(hf, out, gguf.DIRECT[quant]))
         else:
             _run(ctx, gguf.quantize_command(f16, out, quant))
-        files.append({"name": out.name, "quant": quant, "size_gb": round(manage.dir_size_gb(out), 3)})
+        files.append({"name": out.name, "quant": quant, "size_gb": round(out.stat().st_size / 1024**3, 3)})
     shutil.rmtree(hf, ignore_errors=True)
     f16.unlink(missing_ok=True)
     if not files:

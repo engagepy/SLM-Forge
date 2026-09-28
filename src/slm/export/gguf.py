@@ -90,5 +90,23 @@ def quantize_command(source: Path, out: Path, quant: str) -> list[str]:
     return [quantizer() or "llama-quantize", str(source), str(out), quant]
 
 
+def legacy_tokenizer_config(model_dir: Path) -> None:
+    """The converter's transformers (4.57) reads `extra_special_tokens` as a dict; transformers 5,
+    which saved our exports, writes it as a list of the tokens that 4.x calls
+    `additional_special_tokens`. Rewrite it in the older form, in the converter's copy only."""
+    import json
+
+    cfg_path = model_dir / "tokenizer_config.json"
+    if not cfg_path.exists():
+        return
+    cfg = json.loads(cfg_path.read_text())
+    extra = cfg.get("extra_special_tokens")
+    if isinstance(extra, list):
+        merged = list(dict.fromkeys([*(cfg.get("additional_special_tokens") or []), *extra]))
+        cfg["additional_special_tokens"] = merged
+        del cfg["extra_special_tokens"]
+        cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+
+
 def gguf_name(export_name: str, quant: str) -> str:
     return f"{export_name}-{quant}.gguf"

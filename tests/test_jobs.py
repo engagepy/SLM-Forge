@@ -62,10 +62,12 @@ class FakeTrainer:
             return 0
         if any(str(c).endswith("convert_hf_to_gguf.py") for c in cmd):  # llama.cpp's converter
             self.gguf_inputs.append(sorted(p.name for p in Path(cmd[2]).iterdir()))
-            Path(cmd[cmd.index("--outfile") + 1]).write_bytes(b"GGUF" + cmd[cmd.index("--outtype") + 1].encode())
+            Path(cmd[cmd.index("--outfile") + 1]).write_bytes(
+                b"GGUF" + cmd[cmd.index("--outtype") + 1].encode() + b"\0" * 3_000_000
+            )
             return 0
         if str(cmd[0]).endswith("llama-quantize"):
-            Path(cmd[2]).write_bytes(b"GGUF" + cmd[3].encode())
+            Path(cmd[2]).write_bytes(b"GGUF" + cmd[3].encode() + b"\0" * 3_000_000)
             return 0
         if "convert" in cmd:
             src, dest = cmd[cmd.index("--hf-path") + 1], Path(cmd[cmd.index("--mlx-path") + 1])
@@ -311,7 +313,8 @@ def test_gguf_converts_the_export_itself_with_its_built_in_prompt(session, expor
     job, ctx = run(session, "gguf", p.id, {"export_job_id": export.id, "quants": ["Q4_K_M", "Q8_0"]})
     names = {f["quant"]: f["name"] for f in job.result["files"]}
     assert names == {"Q4_K_M": "chef-Q4_K_M.gguf", "Q8_0": "chef-Q8_0.gguf"}
-    assert (dest / "chef-Q4_K_M.gguf").read_bytes() == b"GGUFQ4_K_M" and (dest / "chef-Q8_0.gguf").exists()
+    assert (dest / "chef-Q4_K_M.gguf").read_bytes().startswith(b"GGUFQ4_K_M") and (dest / "chef-Q8_0.gguf").exists()
+    assert all(f["size_gb"] > 0 for f in job.result["files"])  # a file's size, not a folder walk's 0
     # The converter saw the export's baked template, not the base one the dequantizer wrote.
     assert "chat_template.jinja" in trainer.gguf_inputs[0]
     assert not (ctx.run_dir / "hf-f16").exists() and not (ctx.run_dir / "model-F16.gguf").exists()
@@ -374,3 +377,20 @@ def test_upload_refuses_a_folder_that_still_names_the_home_directory(session, ex
     with pytest.raises(RuntimeError, match="contain a local path"):
         run(session, "hf_upload", p.id, {"export_job_id": export.id, "repo_id": "someone/chef"})
     assert hub.calls == []
+
+
+def test_the_converter_gets_a_tokenizer_config_its_transformers_can_read(tmp_path):
+    # Regression: transformers 5 saves extra_special_tokens as a list; the converter's transformers
+    # 4.57 expects a dict and crashed ("'list' object has no attribute 'keys'") on a real export.
+    from slm.export import gguf
+
+    (tmp_path / "tokenizer_config.json").write_text(
+        json.dumps(
+            {"extra_special_tokens": ["<|im_start|>", "<|im_end|>"], "additional_special_tokens": ["<|im_end|>"]}
+        )
+    )
+    gguf.legacy_tokenizer_config(tmp_path)
+    cfg = json.loads((tmp_path / "tokenizer_config.json").read_text())
+    assert "extra_special_tokens" not in cfg and cfg["additional_special_tokens"] == ["<|im_end|>", "<|im_start|>"]
+    gguf.legacy_tokenizer_config(tmp_path)  # already in the old form: unchanged
+    assert json.loads((tmp_path / "tokenizer_config.json").read_text()) == cfg
