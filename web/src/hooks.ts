@@ -221,7 +221,18 @@ function jobToast(job: Job): ToastInput {
   const r = job.result as Record<string, unknown>;
   const kind = JOB_KIND[job.kind];
   const page = kind?.page;
-  const to = !base || !page ? undefined : ["sft", "dpo"].includes(job.kind) ? `${base}/train/${job.id}` : `${base}/${page}`;
+  // Keep the view you're in: from the Studio (or Home, or Try it) a toast opens the Studio; only
+  // on the Advanced screens does it open the matching Advanced page. A new export opens Try it.
+  const advanced = /^\/p\/\d+\/(?!try\b)[^/]+/.test(window.location.pathname);
+  const to = !base
+    ? undefined
+    : job.kind === "export" && job.status === "succeeded"
+      ? `${base}/try?export=${job.id}`
+      : !advanced || !page
+        ? base
+        : ["sft", "dpo"].includes(job.kind)
+          ? `${base}/train/${job.id}`
+          : `${base}/${page}`;
   if (job.status === "failed") {
     return {
       tone: "bad",
@@ -254,6 +265,7 @@ function jobToast(job: Job): ToastInput {
     }
     case "export":
       body = `${r.size_gb} GB · runs on ${r.min_ram_gb} GB+ Macs`;
+      label = "▶ Try it";
       break;
     case "synthesize":
       body = `${r.saved} examples waiting for your review.`;

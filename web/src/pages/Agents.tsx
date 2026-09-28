@@ -2,9 +2,10 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { api, fmt, type AgentEvent, type Proposal } from "../api";
+import { PAGE, PageHeader } from "../components/Page";
 import ProposalCard from "../components/ProposalCard";
 import { useProjectId, useSystem } from "../hooks";
-import { Badge, Button, Card, cx, Empty, ErrorNote, Field, Input, NumberField, Select } from "../ui";
+import { Badge, Button, Card, cx, EmptyNote, ErrorNote, Field, Input, NumberField, Select, StatusBadge } from "../ui";
 
 const AGENT_TONE = { scout: "info", prep: "neutral", observer: "accent", synth: "good" } as const;
 
@@ -24,14 +25,11 @@ export default function AgentsPage() {
   const noKey = system.data && !system.data.agents.key_configured;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5 p-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Agents</h1>
-        <p className="mt-1 max-w-3xl text-[13px] text-muted">
-          Agents research, prepare data, watch feedback and write synthetic examples. They only propose: anything that
-          downloads, trains or adds data waits here for your approval.
-        </p>
-      </div>
+    <div className={PAGE}>
+      <PageHeader title="Agents">
+        Agents research, prepare data, watch feedback and write synthetic examples. They only propose: anything that
+        downloads, trains or adds data waits here for your approval.
+      </PageHeader>
       {noKey && (
         <div className="rounded-lg border border-warn/40 bg-warn-soft px-4 py-3 text-[13px] text-warn">
           No API key for the {system.data?.agents.provider} agent provider. Add{" "}
@@ -42,26 +40,30 @@ export default function AgentsPage() {
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
         <div className="space-y-4">
-          <h2 className="text-[13px] font-semibold">Waiting for you ({pending.length})</h2>
-          {pending.length ? (
-            pending.map((p) => <ProposalCard key={p.id} p={p} projectId={projectId} />)
-          ) : (
-            <Empty title="No pending proposals">Run an agent on the right, or give feedback and ask the Observer.</Empty>
-          )}
+          <Card title={`Waiting for you (${pending.length})`} subtitle="Nothing downloads, trains or adds data until you approve it">
+            {pending.length ? (
+              <div className="space-y-4">
+                {pending.map((p) => (
+                  <ProposalCard key={p.id} p={p} projectId={projectId} />
+                ))}
+              </div>
+            ) : (
+              <EmptyNote>No pending proposals. Run an agent, or give feedback on the Refine page and ask the Observer.</EmptyNote>
+            )}
+          </Card>
           {history.length > 0 && (
-            <>
-              <h2 className="pt-2 text-[13px] font-semibold">History</h2>
-              <ul className="divide-y divide-line rounded-xl border border-line bg-panel">
+            <Card title="History" pad={false}>
+              <ul className="divide-y divide-line">
                 {history.map((p) => (
                   <li key={p.id} className="flex items-center gap-3 px-4 py-2.5 text-[13px]">
                     <Badge tone={AGENT_TONE[p.agent as keyof typeof AGENT_TONE] ?? "neutral"}>{p.agent}</Badge>
                     <span className="min-w-0 flex-1 truncate">{p.title}</span>
                     <span className="text-[11px] text-faint">{fmt.ago(p.created_at)}</span>
-                    <Badge tone={p.status === "executed" ? "good" : p.status === "failed" ? "bad" : "neutral"}>{p.status}</Badge>
+                    <StatusBadge status={p.status} />
                   </li>
                 ))}
               </ul>
-            </>
+            </Card>
           )}
         </div>
 
@@ -72,7 +74,7 @@ export default function AgentsPage() {
               {(events.data ?? []).slice().reverse().map((e) => (
                 <EventRow key={e.id} e={e} />
               ))}
-              {!events.data?.length && <li className="p-2 text-xs text-faint">No agent activity yet.</li>}
+              {!events.data?.length && <li className="p-2"><EmptyNote>No agent activity yet.</EmptyNote></li>}
             </ol>
           </Card>
         </div>

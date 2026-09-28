@@ -2,11 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { api, fmt, isServing, type Job, type Project, type Stage, STAGES } from "../api";
+import { api, DPO_MIN_PAIRS, fmt, isServing, type Job, type Project, type Stage, STAGES } from "../api";
+import { NextStage, PAGE, PageHeader } from "../components/Page";
 import { ADVANCED_PAGE, stageDone, stageSkipped } from "../components/StageStepper";
 import { useOverview, useProjectId, useStudio } from "../hooks";
 import { STAGE_LABEL } from "./studio/bits";
-import { Badge, Button, Card, cx, Field, LinkButton, StatusBadge, TextArea } from "../ui";
+import { Badge, Button, Card, cx, EmptyNote, Field, StatusBadge, TextArea } from "../ui";
 
 export default function OverviewPage() {
   const projectId = useProjectId();
@@ -31,37 +32,17 @@ export default function OverviewPage() {
     model: project.base_model || "not chosen yet",
     train: `${sft} SFT run${sft === 1 ? "" : "s"}`,
     evaluate: best != null ? `${snap.evals.length} evaluations · best ${best.toFixed(1)} / 10` : `${counts.feedback} judgements`,
-    refine: stageSkipped("refine", done, snap) ? "skipped (optional)" : `${dpo} DPO rounds · ${counts.pairs_ready} pairs ready (30+ to be worth it)`,
+    refine: stageSkipped("refine", done, snap) ? "skipped (optional)" : `${dpo} DPO rounds · ${counts.pairs_ready} pairs ready (${DPO_MIN_PAIRS}+ to be worth it)`,
     export: snap.exports.length ? `${snap.exports.length} export${snap.exports.length === 1 ? "" : "s"}` : "fused, quantized, with a model card",
   };
-  const next = STAGES.find((st) => !done[st] && !stageSkipped(st, done, snap));
+  // "Now" is where the Tuner is, as in the Studio; finished projects have nothing left.
+  const next = snap.completed ? undefined : snap.stage;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Goal and pipeline</h1>
-          <p className="mt-1 max-w-2xl text-[13px] text-muted">
-            The same stages as the Studio, with the same ticks. Each opens its expert screen.
-          </p>
-        </div>
-        {next === "goal" ? (
-          // The Tuner settles the goal and test set, so the way forward from here is the Studio.
-          <LinkButton to={`/p/${projectId}`} variant="primary" className="shrink-0 whitespace-nowrap">
-            Continue in the Studio →
-          </LinkButton>
-        ) : next ? (
-          <LinkButton to={`/p/${projectId}/${ADVANCED_PAGE[next]}`} variant="primary" className="shrink-0 whitespace-nowrap">
-            Next: {STAGE_LABEL[next].toLowerCase()} →
-          </LinkButton>
-        ) : (
-          snap.exports.length > 0 && (
-            <LinkButton to={`/p/${projectId}/try`} variant="good" className="shrink-0 whitespace-nowrap">
-              ▶ Try your model
-            </LinkButton>
-          )
-        )}
-      </div>
+    <div className={PAGE}>
+      <PageHeader title="Goal" actions={<NextStage stage="goal" />}>
+        The goal, the system prompt and the pipeline: the same stages and ticks as the Studio, each opening its expert screen.
+      </PageHeader>
 
       {(counts.pending_proposals > 0 || counts.awaiting_review > 0) && (
         <div className="flex flex-wrap gap-3">
@@ -98,8 +79,8 @@ export default function OverviewPage() {
                       <span className={cx("block text-[13px]", done[st] && "text-good")}>{STAGE_LABEL[st]}</span>
                       <span className="block truncate text-xs text-faint">{DETAIL[st]}</span>
                     </span>
-                    {done[st] && <Badge tone="good">done</Badge>}
-                    {st === next && <Badge tone="accent">next</Badge>}
+                    {done[st] && <Badge tone="good">✓ done</Badge>}
+                    {st === next && !done[st] && <Badge tone="accent">now</Badge>}
                   </Link>
                 </li>
               );
@@ -125,7 +106,7 @@ export default function OverviewPage() {
                         <span className="flex items-center gap-1.5">
                           <Badge tone={c.kind === "dpo" ? "accent" : "info"}>{c.kind.toUpperCase()}</Badge>
                           <Link className="text-muted hover:text-fg" to={`/p/${projectId}/train/${c.job_id}`}>
-                            job {c.job_id}
+                            run {c.job_id}
                           </Link>
                           {fromBase && <Badge>from base</Badge>}
                           {serving && <Badge tone="good">serving</Badge>}
@@ -142,7 +123,7 @@ export default function OverviewPage() {
                 })}
               </ol>
             ) : (
-              <p className="p-4 text-xs text-muted">No training runs yet.</p>
+              <EmptyNote className="p-4">No training runs yet.</EmptyNote>
             )}
           </Card>
 
@@ -156,7 +137,7 @@ export default function OverviewPage() {
                   <StatusBadge status={j.status} />
                 </li>
               ))}
-              {!jobs.data?.length && <li className="px-4 py-3 text-xs text-muted">Nothing has run yet.</li>}
+              {!jobs.data?.length && <li className="px-4 py-3"><EmptyNote>Nothing has run yet.</EmptyNote></li>}
             </ul>
           </Card>
         </div>

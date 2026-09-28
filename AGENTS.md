@@ -164,7 +164,8 @@ web/src/
                    Hugging Face), Evaluate, Console, bits; pages/TryModel.tsx (chat with an export);
                    pages/Home.tsx; other pages = Advanced
   components/      StageStepper (stageDone: the one definition of a finished stage), MetricsBar
-                   (with the Studio/Advanced switch), ProjectHeader, SessionsSidebar, ThemeToggle,
+                   (with the Studio | Advanced | Try it switch), ProjectHeader, Page (PAGE, PageHeader,
+                   NextStage), ChatMessage, SessionsSidebar, ThemeToggle,
                    ProfilePanel, Markdown (safe renderer), Charts, JobLog, …
   hooks.ts, ui.tsx, api.ts
 tests/             one file per area; conftest gives a temp workspace; fixtures/templates (real chat
@@ -321,6 +322,19 @@ docs/brag/         the promo video shown in the README
   - With autopilot off, a finished job only leaves a quiet event in the transcript.
 
 ### API and frontend
+- **One frame, controls that never move (regression-checked with Playwright).** Every screen has the
+  sessions sidebar and `MetricsBar` on top; project screens (Studio, every Advanced page, Try it)
+  add `ProjectHeader` and the **Studio | Advanced | ▶ Try it** switch at the far right, Try it greyed
+  out until there is a model. Don't give a screen its own header or back link. Sidebar project links
+  (`sameViewPath`) and job toasts keep the view you're in. "Try it" always means the exported model
+  (green, "▶ Try it"); the Playground is for checkpoints. A run is named `runLabel` ("SFT run 54")
+  everywhere; Advanced page titles are the stepper's labels; `DPO_MIN_PAIRS` (30) is shared with
+  `agents/observer.py` (a test keeps them equal).
+- **Shared page pieces, not per-page styling.** Pages use `components/Page` (`PAGE` width,
+  `PageHeader` title + one-line purpose + actions, and `NextStage`: "Next: <stage> →" top right on
+  every stage page, "▶ Try it" on Export). The stepper row sits under the project header on the
+  Studio and Advanced alike. In-card empties are `EmptyNote`; chats with a local model use
+  `ChatMessage`; the test set renders with `TestSetList`; status colours come from `StatusBadge`.
 - **The Studio and Advanced never disagree.** Both draw the stepper from `StageStepper` and
   compute ticks with `stageDone` (and `stageSkipped`: Refine on a finished project without DPO).
   Don't write another "is this step done" rule on a page; extend `stageDone`.

@@ -1,10 +1,10 @@
 // The stage cards: goal, model, data, train, refine, export.
 import { Fragment } from "react";
-import { fmt, isActive, JOB_KIND, runCommand, type Snapshot } from "../../api";
+import { fmt, isActive, JOB_KIND, runCommand, runLabel, type Snapshot } from "../../api";
 import { MetricChart } from "../../components/Charts";
 import { runProgress, useLiveJob } from "../../hooks";
-import { Badge, CodeBlock, cx, LinkButton, MemoryBar, ProgressBar, SectionLabel, StatusBadge } from "../../ui";
-import { Empty, Fact, Progress, BeforeResetBadge } from "./bits";
+import { Badge, CodeBlock, LinkButton, MemoryBar, ProgressBar, SectionLabel, StatusBadge } from "../../ui";
+import { BeforeResetBadge, Empty, Fact, Progress, TestSetList, testSetSummary } from "./bits";
 import { ExportActions } from "./ExportActions";
 
 export function GoalView({ s }: { s: Snapshot }) {
@@ -38,19 +38,10 @@ export function GoalView({ s }: { s: Snapshot }) {
       {s.project.test_questions?.length > 0 && (
         <div>
           <dt>
-            <SectionLabel>
-              Test set · {s.project.test_questions.length} cases, {s.project.test_questions.filter((q) => q.expected).length} with an expected output
-            </SectionLabel>
+            <SectionLabel>Test set · {testSetSummary(s.project.test_questions)}</SectionLabel>
           </dt>
-          <dd>
-            <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-xs text-muted">
-              {s.project.test_questions.map((q) => (
-                <li key={q.input} className={cx(q.kind === "should-not" && "italic")} title={q.expected ? `Expected: ${q.expected}` : undefined}>
-                  {q.input}
-                  {q.kind === "should-not" && <span className="ml-1 text-faint">(should return nothing)</span>}
-                </li>
-              ))}
-            </ol>
+          <dd className="mt-1">
+            <TestSetList tests={s.project.test_questions} />
           </dd>
         </div>
       )}
@@ -171,7 +162,7 @@ function LiveRun({ jobId }: { jobId: number }) {
       <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
         <Fact label="Train loss" value={fmt.num(last?.loss)} />
         <Fact label="Val loss" value={fmt.num(lastVal?.loss)} />
-        {isDpo ? <Fact label="Prefers chosen" value={last?.accuracy != null ? `${Math.round(last.accuracy * 100)}%` : "–"} /> : <Fact label="Tokens/sec" value={last ? String(Math.round(last.tokens_per_sec)) : "–"} />}
+        {isDpo ? <Fact label="Prefers your picks" value={last?.accuracy != null ? `${Math.round(last.accuracy * 100)}%` : "–"} /> : <Fact label="Tokens/sec" value={last ? String(Math.round(last.tokens_per_sec)) : "–"} />}
         <Fact label="Peak memory" value={fmt.gb(last?.peak_mem_gb)} />
       </div>
       <MetricChart
@@ -234,7 +225,7 @@ export function RefineView({ s }: { s: Snapshot }) {
       </div>
       {dpo.map((c) => (
         <p key={c.id} className="text-xs text-muted">
-          Round {c.job_id}: prefers your picks {c.metrics.reward_accuracy != null ? `${Math.round(c.metrics.reward_accuracy * 100)}%` : "–"} of the time
+          {runLabel("dpo", c.job_id)}: prefers your picks {c.metrics.reward_accuracy != null ? `${Math.round(c.metrics.reward_accuracy * 100)}%` : "–"} of the time
         </p>
       ))}
     </div>
@@ -252,7 +243,7 @@ export function ExportView({ s }: { s: Snapshot }) {
             <Badge>{fmt.gb(e.size_gb)}</Badge>
             <Badge tone="good">runs on {e.min_ram_gb} GB+ Macs</Badge>
             <BeforeResetBadge e={e} />
-            <LinkButton to={`/p/${s.project.id}/try?export=${e.job_id}`} variant="primary" size="sm" className="ml-auto">
+            <LinkButton to={`/p/${s.project.id}/try?export=${e.job_id}`} variant="good" size="sm" className="ml-auto">
               ▶ Try it
             </LinkButton>
           </div>

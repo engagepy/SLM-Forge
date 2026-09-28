@@ -1,10 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, NavLink, useMatch } from "react-router";
+import { Link, NavLink, useLocation, useMatch } from "react-router";
 
 import { api } from "../api";
 import ThemeToggle from "./ThemeToggle";
-import UsageMeter from "./UsageMeter";
 import { IDLE_POLL_MS, invalidate } from "../hooks";
 import { Badge, cx, Spinner } from "../ui";
 
@@ -19,7 +18,7 @@ interface SessionJob {
   queue_position?: number;
 }
 
-interface SessionItem {
+export interface SessionItem {
   project_id: number;
   name: string;
   goal: string;
@@ -54,7 +53,7 @@ export function useSessions() {
   });
 }
 
-const STATE: Record<SessionItem["state"], { tone: "info" | "accent" | "good" | "warn" | "neutral"; label: string }> = {
+export const STATE: Record<SessionItem["state"], { tone: "info" | "accent" | "good" | "warn" | "neutral"; label: string }> = {
   running: { tone: "info", label: "running" },
   queued: { tone: "warn", label: "queued" },
   thinking: { tone: "accent", label: "thinking" },
@@ -63,6 +62,15 @@ const STATE: Record<SessionItem["state"], { tone: "info" | "accent" | "good" | "
   paused: { tone: "neutral", label: "paused" },
   idle: { tone: "neutral", label: "idle" },
 };
+
+/** Where a project link goes: the same view you're in (Studio, the same Advanced page, Try it),
+ * so moving between projects never switches views. Try it needs a model; without one, the Studio. */
+export function sameViewPath(targetId: number, pathname: string, hasModel: boolean): string {
+  const m = pathname.match(/^\/p\/\d+\/([^/]+)/);
+  if (!m) return `/p/${targetId}`;
+  if (m[1] === "try") return hasModel ? `/p/${targetId}/try` : `/p/${targetId}`;
+  return `/p/${targetId}/${m[1]}`;
+}
 
 export function sessionDetail(s: SessionItem): string {
   const j = s.job;
@@ -78,14 +86,15 @@ export function sessionDetail(s: SessionItem): string {
   return `${model}${s.stage}`;
 }
 
-/** Every project and what this Mac is doing. Shown on Home and in the Studio, so leaving a
- * project never hides its running work. */
+/** Every project and what this Mac is doing, beside every screen, so running work is always
+ * visible. The top bar (MetricsBar) carries the live GPU, disk and spend. */
 export default function SessionsSidebar() {
   const { data } = useSessions();
   // Both hooks run on every render (hooks must not be called conditionally).
   const nested = useMatch("/p/:projectId/*");
   const studio = useMatch("/p/:projectId");
   const current = Number((nested ?? studio)?.params.projectId);
+  const { pathname } = useLocation();
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem("slm.sidebar") === "collapsed";
@@ -116,7 +125,7 @@ export default function SessionsSidebar() {
         {data?.sessions.map((s) => (
           <NavLink
             key={s.project_id}
-            to={`/p/${s.project_id}`}
+            to={sameViewPath(s.project_id, pathname, s.models > 0)}
             title={`${s.name}: ${sessionDetail(s)}`}
             className={cx("grid size-7 place-items-center rounded-md text-[11px] font-semibold", s.project_id === current ? "bg-accent-soft text-accent" : "text-muted hover:bg-panel-2")}
           >
@@ -138,7 +147,7 @@ export default function SessionsSidebar() {
 
       <div className="px-3">
         <Link to="/" className="flex items-center justify-center gap-1.5 rounded-lg border border-accent/50 bg-accent-soft px-3 py-1.5 text-[13px] font-medium text-accent hover:brightness-110">
-          + New model
+          + New project
         </Link>
       </div>
 
@@ -148,7 +157,7 @@ export default function SessionsSidebar() {
         {data?.sessions.length === 0 && <p className="px-2 text-xs text-faint">No projects yet.</p>}
         <ul className="space-y-0.5">
           {data?.sessions.map((s) => (
-            <SessionRow key={s.project_id} s={s} active={s.project_id === current} />
+            <SessionRow key={s.project_id} s={s} active={s.project_id === current} to={sameViewPath(s.project_id, pathname, s.models > 0)} />
           ))}
         </ul>
       </div>
@@ -159,7 +168,7 @@ export default function SessionsSidebar() {
   );
 }
 
-function SessionRow({ s, active }: { s: SessionItem; active: boolean }) {
+function SessionRow({ s, active, to }: { s: SessionItem; active: boolean; to: string }) {
   const qc = useQueryClient();
   const [menu, setMenu] = useState(false);
   const act = useMutation({
@@ -176,8 +185,8 @@ function SessionRow({ s, active }: { s: SessionItem; active: boolean }) {
   const pct = s.job?.progress?.percent;
   return (
     <li className="group relative">
-      <NavLink
-        to={`/p/${s.project_id}`}
+      <Link
+        to={to}
         className={cx("block rounded-lg px-2 py-2 pr-7", active ? "bg-accent-soft" : "hover:bg-panel-2")}
       >
         <div className="flex items-center gap-1.5">
@@ -193,7 +202,7 @@ function SessionRow({ s, active }: { s: SessionItem; active: boolean }) {
             <div className="h-full bg-info transition-all" style={{ width: `${pct}%` }} />
           </div>
         )}
-      </NavLink>
+      </Link>
       <button
         onClick={() => setMenu(!menu)}
         className="absolute top-2 right-1 rounded px-1 text-faint opacity-0 group-hover:opacity-100 hover:text-fg"
@@ -206,12 +215,12 @@ function SessionRow({ s, active }: { s: SessionItem; active: boolean }) {
           {s.autopilot && !s.completed ? (
             <MenuItem onClick={() => act.mutate("pause")} label="Pause autopilot" hint="a running job finishes" />
           ) : (
-            <MenuItem onClick={() => act.mutate("resume")} label="Resume" hint="the Tuner carries on" />
+            <MenuItem onClick={() => act.mutate("resume")} label="Resume autopilot" hint="the Tuner carries on" />
           )}
           {s.job && <MenuItem onClick={() => act.mutate("stop")} label="Stop now" hint="cancels the running job" danger />}
           <Link to={`/p/${s.project_id}/overview`} className="block px-3 py-2 text-xs hover:bg-panel-2">
-            Advanced controls
-            <span className="block text-[11px] text-faint">the full manual screens</span>
+            Advanced
+            <span className="block text-[11px] text-faint">every setting and number</span>
           </Link>
         </div>
       )}
@@ -230,7 +239,6 @@ function MenuItem({ onClick, label, hint, danger }: { onClick: () => void; label
 
 function MachinePanel({ c }: { c: Sessions["capacity"] }) {
   const [why, setWhy] = useState(false);
-  const run = c.gpu_running;
   return (
     <div className="border-t border-line p-3 text-xs">
       <div className="flex items-center gap-1.5 font-medium">
@@ -239,23 +247,9 @@ function MachinePanel({ c }: { c: Sessions["capacity"] }) {
           · {c.memory_gb.toFixed(0)} GB · {c.gpu_slots} training at a time
         </span>
       </div>
-      <UsageMeter className="mt-2" side="up" align="left" />
       <Link to="/storage" className="mt-2 block text-[12px] text-muted hover:text-fg">
         Storage & cleanup →
       </Link>
-      {run ? (
-        <div className="mt-1.5">
-          <span className="text-info">● </span>
-          <span className="text-fg">{run.project}</span>
-          <span className="text-muted">
-            : {run.label}
-            {run.progress?.percent != null ? ` ${run.progress.percent}%` : ""}
-            {run.progress?.minutes_left ? ` · ~${run.progress.minutes_left} min left` : ""}
-          </span>
-        </div>
-      ) : (
-        <div className="mt-1.5 text-muted">GPU free</div>
-      )}
       {c.gpu_queue.length > 0 && (
         <div className="mt-1 text-muted">
           Waiting: {c.gpu_queue.map((j) => j.project).join(", ")}

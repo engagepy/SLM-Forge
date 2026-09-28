@@ -360,6 +360,12 @@ export interface Snapshot {
 export const STAGES = ["goal", "data", "model", "train", "evaluate", "refine", "export"] as const;
 export type Stage = (typeof STAGES)[number];
 
+/** One name for a training run everywhere: its kind and job number ("SFT run 54"). */
+export const runLabel = (kind: string, jobId: number | null) => (jobId == null ? `${kind.toUpperCase()} run` : `${kind.toUpperCase()} run ${jobId}`);
+
+/** Preference tuning needs this many pairs to measure anything (AGENTS.md, lesson 5). */
+export const DPO_MIN_PAIRS = 30;
+
 export const isActive = (j: Job) => j.status === "running" || j.status === "queued";
 
 /** How to run an exported model from Terminal. Exports built before the system prompt was baked

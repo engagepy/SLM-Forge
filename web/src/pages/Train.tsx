@@ -2,9 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { api, fmt, isActive, type DatasetVersion, type Job, type MemoryEstimate, type Preset, type TrainConfig } from "../api";
+import { api, DPO_MIN_PAIRS, fmt, isActive, runLabel, type DatasetVersion, type Job, type MemoryEstimate, type Preset, type TrainConfig } from "../api";
 import { MetricChart } from "../components/Charts";
 import JobLog from "../components/JobLog";
+import { NextStage, PageHeader } from "../components/Page";
 import TrainControls from "../components/TrainControls";
 import { runProgress, useLiveJob, useOverview, useProjectId } from "../hooks";
 import { Badge, Button, Card, cx, Empty, ErrorNote, Field, LinkButton, MemoryBar, ProgressBar, Select, Stat, StatusBadge } from "../ui";
@@ -32,7 +33,7 @@ export default function TrainPage() {
               >
                 <Badge tone={j.kind === "dpo" ? "accent" : "info"}>{j.kind.toUpperCase()}</Badge>
                 <span className="flex-1 text-xs">
-                  job {j.id}
+                  run {j.id}
                   <span className="block text-[11px] text-faint">{fmt.ago(j.created_at)}</span>
                 </span>
                 <StatusBadge status={j.status} />
@@ -109,9 +110,14 @@ function Launcher({ projectId }: { projectId: number }) {
 
   if (ov && !ov.base_model_downloaded) {
     return (
-      <Empty title="Choose a base model first" action={<LinkButton to={`/p/${projectId}/model`} variant="primary">Pick a model →</LinkButton>}>
-        Training needs a downloaded base model.
-      </Empty>
+      <div className="mx-auto w-full max-w-6xl space-y-5">
+        <PageHeader title="Train" actions={<NextStage stage="train" />}>
+          Fine-tune the base model on your data (SFT), or on your preferences (DPO).
+        </PageHeader>
+        <Empty title="Choose a base model first" action={<LinkButton to={`/p/${projectId}/model`} variant="primary">Pick a model →</LinkButton>}>
+          Training needs a downloaded base model.
+        </Empty>
+      </div>
     );
   }
 
@@ -119,27 +125,31 @@ function Launcher({ projectId }: { projectId: number }) {
   const canLaunch = cfg && (mode === "sft" ? !!effectiveVersion : !!effectiveVersion || pairsReady >= 3);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold tracking-tight">New training run</h1>
-        <div className="flex rounded-lg border border-line p-0.5">
-          {(["sft", "dpo"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => (setMode(m), setVersionId(""))}
-              className={cx("rounded-md px-3 py-1 text-[13px]", mode === m ? "bg-accent text-white" : "text-muted hover:text-fg")}
-            >
-              {m === "sft" ? "Fine-tune (SFT)" : "Preference (DPO)"}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="-mt-2 text-[13px] text-muted">
+    <div className="mx-auto w-full max-w-6xl space-y-5">
+      <PageHeader
+        title="Train"
+        actions={
+          <>
+            <div className="flex rounded-lg border border-line p-0.5">
+              {(["sft", "dpo"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => (setMode(m), setVersionId(""))}
+                  className={cx("rounded-md px-3 py-1 text-[13px]", mode === m ? "bg-accent text-white" : "text-muted hover:text-fg")}
+                >
+                  {m === "sft" ? "Fine-tune (SFT)" : "Preference (DPO)"}
+                </button>
+              ))}
+            </div>
+            <NextStage stage="train" />
+          </>
+        }
+      >
         {mode === "sft"
           ? "Supervised fine-tuning teaches the model to produce the answers in your dataset."
           : "DPO nudges the model toward answers people preferred and away from the ones they rejected. It uses your feedback, so run it after a few rounds of comparisons."}{" "}
         By default training continues from whatever the project is serving now.
-      </p>
+      </PageHeader>
 
       <Card title="Data">
         <Field label={mode === "sft" ? "Dataset version" : "Preference data"}>
@@ -174,6 +184,11 @@ function Launcher({ projectId }: { projectId: number }) {
         {mode === "dpo" && !effectiveVersion && pairsReady < 3 && (
           <p className="mt-2 text-xs text-warn">
             Need at least 3 preference pairs. <Link className="underline" to={`/p/${projectId}/feedback`}>Give feedback →</Link>
+          </p>
+        )}
+        {mode === "dpo" && !effectiveVersion && pairsReady >= 3 && pairsReady < DPO_MIN_PAIRS && (
+          <p className="mt-2 text-xs text-warn">
+            {pairsReady} pairs: under {DPO_MIN_PAIRS}, a DPO round rarely measures anything. You can still run it.
           </p>
         )}
       </Card>
@@ -262,7 +277,7 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold tracking-tight">
-          {isDpo ? "DPO" : "SFT"} run · job {job.id}
+          {runLabel(job.kind, job.id)}
         </h1>
         <StatusBadge status={job.status} />
         <span className="text-xs text-faint">{fmt.duration(job.started_at, job.finished_at)}</span>
@@ -272,7 +287,10 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
           </Button>
         )}
         {job.status === "succeeded" && (
-          <LinkButton to={`/p/${projectId}/playground`} size="sm" variant="primary" className="ml-auto">Try it in the playground →</LinkButton>
+          <span className="ml-auto flex gap-2">
+            <LinkButton to={`/p/${projectId}/playground`}>Open the Playground →</LinkButton>
+            <NextStage stage="train" />
+          </span>
         )}
       </div>
 
@@ -298,9 +316,9 @@ function RunView({ jobId, projectId }: { jobId: number; projectId: number }) {
         <Stat label="Train loss" value={fmt.num(last?.loss)} />
         <Stat label="Val loss" value={fmt.num(lastVal?.loss)} sub={val.length > 1 ? `from ${fmt.num(val[0].values.loss)}` : undefined} />
         {isDpo ? (
-          <Stat label="Reward accuracy" value={last?.accuracy != null ? `${Math.round(last.accuracy * 100)}%` : "–"} sub={`margin ${fmt.num(last?.margin, 2)}`} />
+          <Stat label="Prefers your picks" value={last?.accuracy != null ? `${Math.round(last.accuracy * 100)}%` : "–"} sub={`margin ${fmt.num(last?.margin, 2)}`} />
         ) : (
-          <Stat label="Tokens / sec" value={last ? Math.round(last.tokens_per_sec) : "–"} />
+          <Stat label="Tokens/sec" value={last ? Math.round(last.tokens_per_sec) : "–"} />
         )}
         <Stat label="Peak memory" value={fmt.gb(last?.peak_mem_gb)} tone={last && last.peak_mem_gb > 10 ? "warn" : undefined} />
         <Stat label="Learning rate" value={last?.learning_rate != null ? last.learning_rate.toExponential(1) : "–"} />

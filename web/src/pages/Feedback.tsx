@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { api, DEFAULT_SAMPLING, postStream, type PreferencePair, type SamplingParams, type SftExample } from "../api";
+import { api, DEFAULT_SAMPLING, DPO_MIN_PAIRS, postStream, type PreferencePair, type SamplingParams, type SftExample } from "../api";
+import { NextStage, PAGE, PageHeader } from "../components/Page";
 import SamplingControls from "../components/SamplingControls";
 import { useOverview, useProjectId, useStudio, followJob } from "../hooks";
 import { RefineView } from "./studio/stages";
@@ -20,14 +21,11 @@ export default function FeedbackPage() {
   const { data: ov } = useOverview(projectId);
   const { data: snap } = useStudio(projectId);
   return (
-    <div className="mx-auto max-w-6xl space-y-5 p-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Human feedback</h1>
-        <p className="mt-1 max-w-3xl text-[13px] text-muted">
-          Ask something, compare two answers and pick the better one. Each pick becomes a preference pair for DPO. Rewriting an
-          answer also creates a supervised example. The Observer reads your critiques and decides what to generate next.
-        </p>
-      </div>
+    <div className={PAGE}>
+      <PageHeader title="Refine" actions={<NextStage stage="refine" />}>
+        Human feedback and preference tuning (DPO). Ask something, compare two answers and pick the better one. Each pick becomes a preference pair for DPO. Rewriting an
+        answer also creates a supervised example. The Observer reads your critiques and decides what to generate next.
+      </PageHeader>
       {/* The Studio's Refine card, when it adds something the counts below don't: AI reviews, DPO rounds. */}
       {snap && (snap.comparisons.some((c) => c.judge === "ai") || snap.checkpoints.some((c) => c.kind === "dpo")) && (
         <Card title="Refine" subtitle="What the Studio shows for this stage: AI reviews, your judgements, preference pairs and DPO rounds">
@@ -215,6 +213,7 @@ function Compare({ projectId, systemPrompt }: { projectId: number; systemPrompt:
 
 function SidePanel({ projectId }: { projectId: number }) {
   const { data: ov } = useOverview(projectId);
+  const { data: snap } = useStudio(projectId);
   const qc = useQueryClient();
   const [status, setStatus] = useState<string | null>(null);
   const observe = useMutation({
@@ -230,11 +229,17 @@ function SidePanel({ projectId }: { projectId: number }) {
     },
   });
   const c = ov?.counts;
+  const pairs = snap?.feedback.pairs_ready ?? 0;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2">
-        <Stat label="Judgements" value={c?.feedback ?? 0} />
-        <Stat label="Pairs ready" value={c?.pairs_ready ?? 0} tone={(c?.pairs_ready ?? 0) >= 8 ? "good" : undefined} sub="for DPO" />
+        <Stat label="Your judgements" value={snap?.feedback.judgements ?? 0} />
+        <Stat
+          label="Preference pairs ready"
+          value={pairs}
+          tone={pairs >= DPO_MIN_PAIRS ? "good" : undefined}
+          sub={pairs >= DPO_MIN_PAIRS ? "enough for DPO" : `${DPO_MIN_PAIRS} for DPO`}
+        />
         <Stat label="SFT examples" value={c?.sft_ready ?? 0} sub="ready" />
         <Stat label="To review" value={c?.awaiting_review ?? 0} tone={c?.awaiting_review ? "warn" : undefined} />
       </div>
@@ -259,7 +264,7 @@ function SidePanel({ projectId }: { projectId: number }) {
           </div>
         )}
       </Card>
-      {(c?.pairs_ready ?? 0) >= 3 && (
+      {pairs >= DPO_MIN_PAIRS && (
         <LinkButton to={`/p/${projectId}/train`} className="w-full">Run a DPO round now →</LinkButton>
       )}
     </div>

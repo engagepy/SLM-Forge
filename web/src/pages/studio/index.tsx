@@ -5,6 +5,7 @@ import { useParams } from "react-router";
 import { api, type Snapshot, type TunerMessage } from "../../api";
 import MetricsBar from "../../components/MetricsBar";
 import ProjectHeader from "../../components/ProjectHeader";
+import { StageStepper } from "../../components/StageStepper";
 import { useStudio, useTunerStream } from "../../hooks";
 import { Spinner } from "../../ui";
 import { Canvas } from "./Canvas";
@@ -30,6 +31,18 @@ export default function Studio() {
   return (
     <div className="flex h-full flex-col">
       <TopBar snapshot={snapshot.data} />
+      {/* The same stepper row, in the same place, as on the Advanced screens; here a click scrolls to the stage's card. */}
+      <div className="shrink-0 border-b border-line px-5 py-2.5">
+        {snapshot.data ? (
+          <StageStepper
+            s={snapshot.data}
+            current={snapshot.data.stage}
+            onPick={(st) => document.getElementById(`stage-${st}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          />
+        ) : (
+          <div className="h-6" />
+        )}
+      </div>
       {/* Side by side from lg; stacked on a phone, each half scrolling on its own. */}
       <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-2 lg:grid-rows-1">
         <Chat

@@ -4,10 +4,12 @@ import { Link, useParams, useSearchParams } from "react-router";
 
 import { api, DEFAULT_SAMPLING, type ExportRow, fmt, runCommand } from "../api";
 import ChatComposer from "../components/ChatComposer";
-import Markdown from "../components/Markdown";
+import ChatMessage from "../components/ChatMessage";
+import MetricsBar from "../components/MetricsBar";
+import ProjectHeader from "../components/ProjectHeader";
 import { useChatStream, useStudio } from "../hooks";
 import { BeforeResetBadge } from "./studio/bits";
-import { Badge, Bubble, CodeBlock, cx, ErrorNote, SectionLabel, Select, Spinner } from "../ui";
+import { Badge, CodeBlock, cx, ErrorNote, SectionLabel, Select, Spinner } from "../ui";
 
 /** Things to try: on-goal inputs and one the model should answer with its empty or negative
  * result. Used ones stay, ticked, until all four are used and four fresh ones replace them. */
@@ -137,15 +139,10 @@ export default function TryModel() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4">
-        <Link to={`/p/${projectId}`} className="shrink-0 whitespace-nowrap rounded-md px-2 py-1 text-xs text-muted hover:bg-panel-2 hover:text-fg">
-          ← Studio
-        </Link>
-        <div className="min-w-0">
-          <div className="truncate text-[13px] font-semibold">{chosen ? chosen.name : project.data?.project.name ?? "…"}</div>
-          <div className="truncate text-[11px] text-faint">{project.data?.project.goal}</div>
-        </div>
-        <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-xs">
+      <MetricsBar snapshot={project.data} view="try" />
+      <ProjectHeader snapshot={project.data}>
+        <div className="flex shrink-0 items-center gap-2 whitespace-nowrap text-xs">
+          {chosen && <span className="hidden font-medium text-fg md:inline">{chosen.name}</span>}
           {chosen && <Badge>{fmt.gb(chosen.size_gb)}</Badge>}
           {chosen && <Badge tone="good">runs on {chosen.min_ram_gb} GB+ Macs</Badge>}
           {chosen && <BeforeResetBadge e={chosen} />}
@@ -164,14 +161,14 @@ export default function TryModel() {
             />
           )}
         </div>
-      </header>
+      </ProjectHeader>
 
       {!chosen ? (
         <div className="mx-auto mt-24 max-w-sm text-center text-[13px] text-muted">
           <h1 className="text-lg font-semibold text-fg">No finished model yet</h1>
           <p className="mt-1">Once the Tuner exports your model (it asks you first), you can chat with it here.</p>
           <Link to={`/p/${projectId}`} className="mt-4 inline-block text-accent hover:underline">
-            Back to the Studio
+            Go to the Studio →
           </Link>
         </div>
       ) : (
@@ -199,14 +196,7 @@ export default function TryModel() {
                 </div>
               )}
               {messages.map((m, i) => (
-                <Bubble key={i} role={m.role}>
-                  {m.role === "user" ? m.content : m.content ? <Markdown text={m.content} /> : busy && i === messages.length - 1 ? <Spinner className="size-3" /> : null}
-                  {m.stats && (
-                    <div className="num mt-1.5 text-[11px] text-faint">
-                      {m.stats.tokens_per_sec} tokens/s{m.stats.finish_reason === "length" && " · stopped at the length limit"}
-                    </div>
-                  )}
-                </Bubble>
+                <ChatMessage key={i} m={m} pending={busy && i === messages.length - 1} />
               ))}
               <ErrorNote error={chat.error} />
               <div ref={chat.bottom} />

@@ -57,7 +57,7 @@ Talking to the Tuner never costs anything. Between the export and your next go-a
 that spends (writing examples with GPT-6, an AI review, a download) is a card you confirm, and
 questions get answers rather than actions.
 
-For ML experts, **Advanced** (the switch in the top bar) shows the same project with every setting and number: the same stages and ticks as the Studio, each opening a full screen (data, base model, training hyperparameters and runs, evaluation scores and test set, feedback and DPO, export), plus a Playground to chat with any checkpoint.
+Every project has the same switch at the top right: **Studio**, **Advanced** and **▶ Try it** (once a model is exported). For ML experts, **Advanced** shows the same project with every setting and number: the same stages and ticks as the Studio, each opening a full screen (data, base model, training hyperparameters and runs, evaluation scores and test set, feedback and DPO, export), plus a Playground to chat with any checkpoint.
 
 ## Quick start
 

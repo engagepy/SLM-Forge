@@ -106,6 +106,17 @@ def test_observer_rules_propose_dpo_once(session, project):
     assert observer.run(project.id, use_llm=False)["rule_proposals"] == []  # no duplicate while pending
 
 
+def test_one_dpo_threshold_for_the_observer_and_the_ui():
+    # Regression: the Observer proposed DPO at 8 pairs, the Refine page lit up at 8 and linked at 3,
+    # and the Goal page said 30 (lesson 5). One number now, the same on both sides.
+    import re
+    from pathlib import Path
+
+    api_ts = (Path(__file__).parents[1] / "web" / "src" / "api.ts").read_text()
+    ui = int(re.search(r"export const DPO_MIN_PAIRS = (\d+);", api_ts).group(1))
+    assert observer.DPO_MIN_PAIRS == ui == 30
+
+
 def test_observer_llm_proposes_synthesis_and_marks_feedback(session, project):
     session.add(Feedback(project_id=project.id, prompt="how to boil pasta", candidate_a="a", candidate_b="b",
                          choice="both_bad", critique="too long and rambling"))  # fmt: skip

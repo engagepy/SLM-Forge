@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import { api, fmt, type MemoryEstimate, type ModelCandidate, type Preset } from "../api";
+import { NextStage, PAGE, PageHeader } from "../components/Page";
 import { useOverview, useProjectId, followJob } from "../hooks";
 import { Badge, Button, Card, cx, Empty, ErrorNote, Input, MemoryBar, Spinner, Toggle } from "../ui";
 
@@ -43,19 +44,16 @@ export default function ModelPage() {
 
   const current = ov?.project.base_model;
   return (
-    <div className="mx-auto max-w-6xl space-y-5 p-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Base model</h1>
-        <p className="mt-1 text-[13px] text-muted">
-          Models from <span className="font-mono">mlx-community</span> are already converted for Apple Silicon. Sizes are checked
-          against this Mac's memory. Smaller models train faster and are easier to run anywhere; start with 0.5–3B.
-        </p>
-      </div>
+    <div className={PAGE}>
+      <PageHeader title="Model" actions={<NextStage stage="model" />}>
+        The base model to fine-tune. Models from <span className="font-mono">mlx-community</span> are already converted for Apple Silicon. Sizes are checked
+        against this Mac's memory. Smaller models train faster and are easier to run anywhere; start with 0.5–3B.
+      </PageHeader>
 
       {current && (
         <div className="flex items-center gap-2 rounded-lg border border-line bg-panel px-4 py-3 text-[13px]">
           Current base model: <span className="font-mono">{current}</span>
-          {ov?.base_model_downloaded ? <Badge tone="good">downloaded</Badge> : <Badge tone="warn">not downloaded</Badge>}
+          {ov?.base_model_downloaded ? <Badge tone="good">on this Mac</Badge> : <Badge tone="warn">not downloaded</Badge>}
           {!!ov?.checkpoints.length && <span className="text-xs text-faint">(locked: training has started)</span>}
         </div>
       )}
