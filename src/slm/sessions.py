@@ -5,6 +5,7 @@ at once would compete for it and likely fail. Everything else queues. Downloads,
 agent turns run alongside.
 """
 
+import json
 from pathlib import Path
 
 from sqlmodel import Session, select
@@ -52,6 +53,21 @@ def export_jobs(s: Session, project_id: int | None = None) -> list[Job]:
     if project_id is not None:
         q = q.where(Job.project_id == project_id)
     return [j for j in s.exec(q.order_by(Job.id.desc())).all() if not (j.result or {}).get("deleted")]
+
+
+def trained_before_reset(s: Session, job: Job) -> list[dict] | None:
+    """An export kept through a project reset: the runs its folder records (slm_forge.json) are no
+    longer in the project's history, so the Studio's stages can't be ticked for it. Returns that
+    recorded lineage, or None for an export whose runs are all still there."""
+    try:
+        lineage = json.loads((Path(job.result["path"]) / "slm_forge.json").read_text()).get("lineage") or []
+    except (OSError, KeyError, TypeError, ValueError):
+        return None
+    ids = {e.get("job_id") for e in lineage if isinstance(e, dict) and e.get("job_id") is not None}
+    if not ids:
+        return None
+    have = set(s.exec(select(Job.id).where(Job.project_id == job.project_id, Job.id.in_(ids))).all())
+    return lineage if ids - have else None
 
 
 def on_disk(job: Job) -> bool:

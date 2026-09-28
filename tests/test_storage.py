@@ -216,6 +216,8 @@ def test_reset_keeps_the_project_shell_and_chosen_exports(session, client, monke
     monkeypatch.setattr("slm.inference.engine.engine.unload", lambda: None)
     p, run, exp, export_dir = _project_with_files(session)
     pid, exp_id = p.id, exp.id
+    lineage = [{"kind": "sft", "job_id": run.id, "metrics": {"val_loss": 0.025}}]
+    (export_dir / "slm_forge.json").write_text(__import__("json").dumps({"lineage": lineage}))
     session.add(StudioState(project_id=pid, stage="export", completed=True, evals=[{"mean": 7}]))
     p.plan, p.test_questions, p.system_prompt = {"task_type": "extraction"}, [{"input": "q"}], "sys"
     session.add(p)
@@ -228,6 +230,21 @@ def test_reset_keeps_the_project_shell_and_chosen_exports(session, client, monke
     assert [j.id for j in session.exec(select(Job)).all()] == [exp_id] and export_dir.exists()
     st = session.get(StudioState, pid)
     assert st.stage == "goal" and st.completed is False and st.evals == []
+
+    # Regression: after a reset the kept model had no ticked stages and nothing said why. Its runs
+    # are gone from the history, so every view of it says it was trained before a reset.
+    assert client.get(f"/api/projects/{pid}/studio").json()["exports"][0]["trained_before_reset"] == lineage
+    assert client.get(f"/api/projects/{pid}/exports").json()[0]["trained_before_reset"] == lineage
+
+
+def test_an_export_whose_runs_are_all_there_is_not_flagged(session, client):
+    p, run, exp, export_dir = _project_with_files(session, name="Baker")
+    (export_dir / "slm_forge.json").write_text(
+        __import__("json").dumps({"lineage": [{"kind": "sft", "job_id": run.id}]})
+    )
+    assert client.get(f"/api/projects/{p.id}/exports").json()[0]["trained_before_reset"] is None
+    (export_dir / "slm_forge.json").unlink()  # an old export without the file: nothing to say
+    assert client.get(f"/api/projects/{p.id}/exports").json()[0]["trained_before_reset"] is None
 
 
 def test_removing_a_model_deletes_files_before_the_row_and_counts_only_real_bytes(session, tmp_path, monkeypatch):

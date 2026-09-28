@@ -4,6 +4,7 @@ import { Link } from "react-router";
 
 import { api, DEFAULT_SAMPLING, type ExportRow, fmt, isServing, runCommand } from "../api";
 import { useOverview, useProjectId, followJob } from "../hooks";
+import { BeforeResetBadge } from "./studio/bits";
 import { Badge, Button, Card, CodeBlock, Empty, ErrorNote, Field, Input, Mono, Select } from "../ui";
 
 export default function ExportPage() {
@@ -119,6 +120,7 @@ export default function ExportPage() {
                   <span className="font-medium">{e.name}</span>
                   <Badge>{fmt.gb(e.size_gb)}</Badge>
                   <Badge tone="good">runs on {e.min_ram_gb} GB+ Macs</Badge>
+                  <BeforeResetBadge e={e} />
                   <span className="ml-auto text-[11px] text-faint">{fmt.ago(e.created_at)}</span>
                 </div>
                 <CodeBlock text={e.path} />

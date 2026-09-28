@@ -2,6 +2,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { api, isActive, type Snapshot, type Stage, STAGES, type TunerMessage } from "../../api";
+import { StageStepper, stageDone, stageSkipped } from "../../components/StageStepper";
 import { Badge, Button, cx, LinkButton } from "../../ui";
 import { Console } from "./Console";
 import { EvaluateView } from "./Evaluate";
@@ -20,19 +21,6 @@ const STAGE_VIEW: Record<Stage, React.FC<{ s: Snapshot }>> = {
 
 // ── right: canvas ────────────────────────────────────────────────────────────
 
-function stageDone(s: Snapshot): Record<Stage, boolean> {
-  const sft = s.checkpoints.some((c) => c.kind === "sft");
-  return {
-    goal: !!s.project.goal && s.stage !== "goal",
-    model: !!s.model?.downloaded,
-    data: s.versions.length > 0,
-    train: sft,
-    evaluate: sft && (s.evals.some((e) => e.checkpoint_id != null) || s.samples.some((x) => x.target !== "base") || s.feedback.judgements > 0),
-    refine: s.checkpoints.some((c) => c.kind === "dpo"),
-    export: s.exports.length > 0,
-  };
-}
-
 export function Canvas({ snapshot: s, messages }: { snapshot: Snapshot; messages: TunerMessage[] }) {
   const done = stageDone(s);
   const reached = STAGES.slice(0, STAGES.indexOf(s.stage) + 1);
@@ -50,32 +38,11 @@ export function Canvas({ snapshot: s, messages }: { snapshot: Snapshot; messages
   return (
     <section className="flex min-h-0 min-w-0 flex-col bg-bg">
       <div className="border-b border-line px-5 py-3">
-        <ol className="flex items-center gap-1 overflow-x-auto">
-          {STAGES.map((st, i) => (
-            <li key={st} className="flex flex-1 items-center gap-1">
-              <button
-                onClick={() => document.getElementById(`stage-${st}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                className={cx(
-                  "flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium whitespace-nowrap transition",
-                  // A finished stage shows its tick even when it's the current one (e.g. Export at the end).
-                  st === s.stage && !done[st] ? "bg-accent text-white" : done[st] ? "text-good" : "text-faint",
-                  st === s.stage && done[st] && "bg-good-soft",
-                )}
-              >
-                <span
-                  className={cx(
-                    "grid size-4 place-items-center rounded-full text-[9px]",
-                    done[st] ? "bg-good text-white" : st === s.stage ? "bg-white/25" : "bg-panel-2",
-                  )}
-                >
-                  {done[st] ? "✓" : i + 1}
-                </span>
-                {STAGE_LABEL[st]}
-              </button>
-              {i < STAGES.length - 1 && <span className="h-px flex-1 bg-line" />}
-            </li>
-          ))}
-        </ol>
+        <StageStepper
+          s={s}
+          current={s.stage}
+          onPick={(st) => document.getElementById(`stage-${st}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+        />
         {s.note && <p className="mt-2 text-xs text-muted">{s.note}</p>}
       </div>
 
@@ -84,7 +51,7 @@ export function Canvas({ snapshot: s, messages }: { snapshot: Snapshot; messages
           const View = STAGE_VIEW[st];
           return (
             <div key={st} id={`stage-${st}`} className="scroll-mt-4">
-              <StageCard stage={st} active={st === s.stage} done={done[st]}>
+              <StageCard stage={st} active={st === s.stage} done={done[st]} skipped={stageSkipped(st, done, s)}>
                 <View s={s} />
               </StageCard>
             </div>
@@ -119,13 +86,14 @@ function DoneBanner({ s }: { s: Snapshot }) {
   );
 }
 
-function StageCard({ stage, active, done, children }: { stage: Stage; active: boolean; done: boolean; children: React.ReactNode }) {
+function StageCard({ stage, active, done, skipped, children }: { stage: Stage; active: boolean; done: boolean; skipped: boolean; children: React.ReactNode }) {
   return (
     <div className={cx("rounded-xl border bg-panel transition", active ? "border-accent/60 shadow-[0_0_0_3px_var(--accent-soft)]" : "border-line")}>
       <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
         <span className="text-[13px] font-semibold">{STAGE_LABEL[stage]}</span>
         {active && !done && <Badge tone="accent">now</Badge>}
-        {done && <Badge tone="good">done</Badge>}
+        {done && <Badge tone="good">✓ done</Badge>}
+        {skipped && <Badge>skipped · optional</Badge>}
       </div>
       <div className="p-4">{children}</div>
     </div>

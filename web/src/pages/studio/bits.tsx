@@ -1,6 +1,6 @@
 // Small pieces the canvas cards share.
-import { type Stage } from "../../api";
-import { SectionLabel, Spinner } from "../../ui";
+import { type ExportInfo, type Stage } from "../../api";
+import { Badge, SectionLabel, Spinner } from "../../ui";
 
 export const STAGE_LABEL: Record<Stage, string> = {
   goal: "Goal",
@@ -33,5 +33,19 @@ export function Progress({ label }: { label: string }) {
         <div className="h-full w-1/3 animate-[pulse_1.2s_ease-in-out_infinite] rounded-full bg-info" />
       </div>
     </div>
+  );
+}
+
+/** On a model kept through a project reset: why its stages aren't ticked, and what it was built from. */
+export function BeforeResetBadge({ e }: { e: Pick<ExportInfo, "trained_before_reset"> }) {
+  const runs = e.trained_before_reset;
+  if (!runs?.length) return null;
+  const built = runs
+    .map((r) => `${r.kind.toUpperCase()} job ${r.job_id}${r.metrics?.val_loss != null ? ` (val loss ${r.metrics.val_loss})` : ""}`)
+    .join(", then ");
+  return (
+    <span title={`Built from ${built}. The project was reset after, so those runs are no longer in its history and its stages aren't ticked for this model.`}>
+      <Badge>trained before a reset</Badge>
+    </span>
   );
 }

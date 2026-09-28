@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useParams } from "react-router";
 import { api, type Snapshot, type TunerMessage } from "../../api";
 import MetricsBar from "../../components/MetricsBar";
+import ProjectHeader from "../../components/ProjectHeader";
 import { useStudio, useTunerStream } from "../../hooks";
 import { Spinner } from "../../ui";
 import { Canvas } from "./Canvas";
@@ -48,15 +49,8 @@ export default function Studio() {
 function TopBar({ snapshot }: { snapshot?: Snapshot }) {
   return (
     <>
-      <MetricsBar snapshot={snapshot} />
-      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-4">
-        <div className="min-w-0">
-          <div className="truncate text-[13px] font-semibold">{snapshot?.project.name ?? "…"}</div>
-          <div className="truncate text-[11px] text-faint" title={snapshot?.project.goal}>
-            {snapshot?.project.goal}
-          </div>
-        </div>
-      </header>
+      <MetricsBar snapshot={snapshot} view="studio" />
+      <ProjectHeader snapshot={snapshot} />
     </>
   );
 }

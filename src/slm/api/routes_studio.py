@@ -28,7 +28,7 @@ from slm.db import (
 from slm.events import canvas_changed
 from slm.feedback import record_feedback
 from slm.models import manage
-from slm.sessions import export_jobs, overview, resume_project, stop_project
+from slm.sessions import export_jobs, overview, resume_project, stop_project, trained_before_reset
 from slm.tuner import confirm
 from slm.tuner.session import save_message, tuner
 
@@ -87,7 +87,10 @@ def studio_snapshot(project_id: int, s: Session = SessionDep) -> dict:
             "pairs_ready": count(s, PreferencePair, PreferencePair.project_id == project_id, *ready(PreferencePair)),
         },
         # Every export, however old (the job list above only covers the latest 30).
-        "exports": [j.result | {"job_id": j.id} for j in export_jobs(s, project_id)],
+        "exports": [
+            j.result | {"job_id": j.id, "trained_before_reset": trained_before_reset(s, j)}
+            for j in export_jobs(s, project_id)
+        ],
     }
 
 

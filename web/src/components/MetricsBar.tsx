@@ -70,7 +70,7 @@ function DiskMeter({ disk }: { disk: SystemStatus["disk"] }) {
 
 /** The strip of machine and account metrics above a project: the Mac, the GPU, disk, spend, and
  * the project's controls. Its own row, so the project's title never runs into it. */
-export default function MetricsBar({ snapshot }: { snapshot?: Snapshot }) {
+export default function MetricsBar({ snapshot, view = "studio" }: { snapshot?: Snapshot; view?: "studio" | "advanced" }) {
   const { data: sys } = useSystem();
   const qc = useQueryClient();
   const gpu = sys?.worker.running.gpu;
@@ -117,11 +117,27 @@ export default function MetricsBar({ snapshot }: { snapshot?: Snapshot }) {
           ▶ Try it
         </Link>
       )}
-      {snapshot && (
-        <Link to={`/p/${snapshot.project.id}/overview`} className="rounded-md px-2 py-1 hover:bg-panel-2 hover:text-fg">
-          Advanced
-        </Link>
-      )}
+      {snapshot && <ViewSwitch projectId={snapshot.project.id} view={view} />}
     </div>
+  );
+}
+
+/** Studio or Advanced: two views of the same project, one switch, in the same place on both. */
+function ViewSwitch({ projectId, view }: { projectId: number; view: "studio" | "advanced" }) {
+  const tab = (on: boolean) => cx("rounded px-2 py-0.5 font-medium transition", on ? "bg-panel-2 text-fg" : "text-faint hover:text-fg");
+  return (
+    <nav className="flex rounded-md border border-line p-0.5" aria-label="View">
+      <Link to={`/p/${projectId}`} className={tab(view === "studio")} aria-current={view === "studio" ? "page" : undefined}>
+        Studio
+      </Link>
+      <Link
+        to={`/p/${projectId}/overview`}
+        className={tab(view === "advanced")}
+        aria-current={view === "advanced" ? "page" : undefined}
+        title="Every setting and number, for ML experts"
+      >
+        Advanced
+      </Link>
+    </nav>
   );
 }

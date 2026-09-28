@@ -6,6 +6,7 @@ import { api, DEFAULT_SAMPLING, type ExportRow, fmt, runCommand } from "../api";
 import ChatComposer from "../components/ChatComposer";
 import Markdown from "../components/Markdown";
 import { useChatStream, useStudio } from "../hooks";
+import { BeforeResetBadge } from "./studio/bits";
 import { Badge, Bubble, CodeBlock, cx, ErrorNote, SectionLabel, Select, Spinner } from "../ui";
 
 /** Things to try: on-goal inputs and one the model should answer with its empty or negative
@@ -147,6 +148,7 @@ export default function TryModel() {
         <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-xs">
           {chosen && <Badge>{fmt.gb(chosen.size_gb)}</Badge>}
           {chosen && <Badge tone="good">runs on {chosen.min_ram_gb} GB+ Macs</Badge>}
+          {chosen && <BeforeResetBadge e={chosen} />}
           {!!chosen?.gguf?.length && <Badge tone="info">GGUF {chosen.gguf.map((f) => f.quant).join(" · ")}</Badge>}
           {chosen?.huggingface && (
             <a href={chosen.huggingface.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">

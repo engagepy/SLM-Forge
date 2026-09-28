@@ -4,7 +4,7 @@ import { fmt, isActive, JOB_KIND, runCommand, type Snapshot } from "../../api";
 import { MetricChart } from "../../components/Charts";
 import { runProgress, useLiveJob } from "../../hooks";
 import { Badge, CodeBlock, cx, LinkButton, MemoryBar, ProgressBar, SectionLabel, StatusBadge } from "../../ui";
-import { Empty, Fact, Progress } from "./bits";
+import { Empty, Fact, Progress, BeforeResetBadge } from "./bits";
 import { ExportActions } from "./ExportActions";
 
 export function GoalView({ s }: { s: Snapshot }) {
@@ -251,6 +251,7 @@ export function ExportView({ s }: { s: Snapshot }) {
             <span className="font-medium">{e.path.split("/").pop()}</span>
             <Badge>{fmt.gb(e.size_gb)}</Badge>
             <Badge tone="good">runs on {e.min_ram_gb} GB+ Macs</Badge>
+            <BeforeResetBadge e={e} />
             <LinkButton to={`/p/${s.project.id}/try?export=${e.job_id}`} variant="primary" size="sm" className="ml-auto">
               ▶ Try it
             </LinkButton>

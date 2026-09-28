@@ -29,7 +29,7 @@ from slm.db import (
 )
 from slm.export import fuse as fusing
 from slm.models import manage
-from slm.sessions import export_jobs, on_disk
+from slm.sessions import export_jobs, on_disk, trained_before_reset
 from slm.train.config import TrainConfig, preset
 from slm.train.jobs import model_in_use, serve_checkpoint
 from slm.train.worker import worker
@@ -407,6 +407,6 @@ def publish_export(project_id: int, job_id: int, body: PublishIn, s: Session = S
 def list_exports(project_id: int, s: Session = SessionDep) -> list[dict]:
     return [
         {"job_id": j.id, **j.result, "name": Path(j.result.get("path", "")).name, "on_disk": on_disk(j),
-         "created_at": j.finished_at}
+         "created_at": j.finished_at, "trained_before_reset": trained_before_reset(s, j)}
         for j in export_jobs(s, project_id)
     ]  # fmt: skip
