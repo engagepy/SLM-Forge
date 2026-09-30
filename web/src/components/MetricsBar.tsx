@@ -166,20 +166,27 @@ function ViewSwitch({ s, view }: { s: Snapshot; view: View }) {
  * guessing which one) and a command that adds it. */
 function KeyHint({ keyName, file, label }: { keyName: string; file: string; label: string }) {
   const [open, setOpen] = useState(false);
+  // Open towards the side with room: a narrow window puts the badge near the right edge.
+  const [align, setAlign] = useState<"left" | "right">("left");
+  const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setAlign(r.left + 416 + 16 > window.innerWidth ? "right" : "left");
+    setOpen(!open);
+  };
   const cmd = `echo '${keyName}=...' >> "${file}"`;
   return (
     <div className="relative">
-      <button onClick={() => setOpen(!open)} aria-expanded={open} title={`Put ${keyName} in ${file}`}>
+      <button onClick={toggle} aria-expanded={open} title={`Put ${keyName} in ${file}`}>
         <Badge tone="warn">
           {label} {keyName} · where?
         </Badge>
       </button>
-      <Popover open={open} onClose={() => setOpen(false)} align="left">
-        <div className="w-[26rem] space-y-2 whitespace-normal text-[12px] leading-relaxed text-muted">
+      <Popover open={open} onClose={() => setOpen(false)} align={align} wide>
+        <div className="min-w-0 space-y-2 whitespace-normal text-[12px] leading-relaxed text-muted">
           <p className="font-semibold text-fg">Add {keyName} to this file</p>
-          <CodeBlock text={file} />
+          <CodeBlock text={file} wrap />
           <p>Create it if it doesn't exist, with one line per key, then restart SLM Forge. Or run:</p>
-          <CodeBlock text={cmd} />
+          <CodeBlock text={cmd} wrap />
           <p className="text-faint">A .env in the folder you start the app from also works. Keys exported in your shell win.</p>
         </div>
       </Popover>

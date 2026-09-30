@@ -134,6 +134,7 @@ export function Popover({
   onClose,
   align = "right",
   side = "down",
+  wide = false,
   className,
   children,
 }: {
@@ -141,6 +142,8 @@ export function Popover({
   onClose: () => void;
   align?: "left" | "right";
   side?: "down" | "up";
+  /** 26rem instead of 18rem, for panels holding paths or commands. */
+  wide?: boolean;
   className?: string;
   children: ReactNode;
 }) {
@@ -165,7 +168,8 @@ export function Popover({
       ref={ref}
       role="dialog"
       className={cx(
-        "absolute z-20 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-panel p-3 text-xs shadow-lg",
+        "absolute z-20 max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-panel p-3 text-xs shadow-lg",
+        wide ? "w-[26rem]" : "w-72",
         align === "right" ? "right-0" : "left-0",
         side === "down" ? "mt-1.5 top-full" : "mb-1.5 bottom-full",
         className,
@@ -429,7 +433,9 @@ export function Collapsible({ title, children }: { title: ReactNode; children: R
 }
 
 /** A command or path the user will want to paste somewhere: monospace, with a copy button. */
-export function CodeBlock({ text, label, className }: { text: string; label?: ReactNode; className?: string }) {
+/** A command or path with a copy button. `wrap` breaks long lines inside the block (paths in a
+ * narrow panel) instead of scrolling them sideways, so the whole value and the button stay in view. */
+export function CodeBlock({ text, label, className, wrap = false }: { text: string; label?: ReactNode; className?: string; wrap?: boolean }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard?.writeText(text).then(() => {
@@ -441,7 +447,14 @@ export function CodeBlock({ text, label, className }: { text: string; label?: Re
     <div className={className}>
       {label && <div className="mb-0.5 text-[11px] text-faint">{label}</div>}
       <div className="group flex items-start gap-1 rounded-md bg-bg pr-1">
-        <pre className="min-w-0 flex-1 overflow-x-auto py-2 pl-3 font-mono text-[11.5px] text-muted">{text}</pre>
+        <pre
+          className={cx(
+            "min-w-0 flex-1 py-2 pl-3 font-mono text-[11.5px] text-muted",
+            wrap ? "whitespace-pre-wrap break-all" : "overflow-x-auto",
+          )}
+        >
+          {text}
+        </pre>
         <button
           type="button"
           onClick={copy}
