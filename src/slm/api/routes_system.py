@@ -9,6 +9,7 @@ from slm.inference.engine import engine as infer
 from slm.models import hub
 from slm.train.config import preset
 from slm.train.worker import worker
+from slm.tuner.models import EXPERIMENTAL, TUNER_KEY, tuner_model_name
 
 router = APIRouter(prefix="/api", tags=["system"])
 
@@ -35,7 +36,13 @@ def system_status() -> dict:
             "key_env": {"openai": "OPENAI_API_KEY", "claude": "ANTHROPIC_API_KEY", "ollama": None}[s.agent_provider],
             # The Tuner and its specialists are OpenAI-only; the provider switch above covers the
             # judge and the Advanced screens' agents.
-            "tuner": {"ready": tuner_ready(s), "key_env": "OPENAI_API_KEY", "model": s.openai_model},
+            "tuner": {
+                "ready": tuner_ready(s),
+                "key_env": TUNER_KEY[s.agent_provider],
+                "model": tuner_model_name(s),
+                "provider": s.agent_provider,
+                "experimental": s.agent_provider in EXPERIMENTAL,
+            },
             # The exact file keys are read from, so the UI can say where to put one.
             "env_file": str(env_file()),
         },

@@ -20,7 +20,6 @@ from agents import Runner, SQLiteSession
 from agents.exceptions import MaxTurnsExceeded
 from sqlmodel import Session, select
 
-from slm.agents.provider import OpenAIProvider
 from slm.config import get_settings
 from slm.db import (
     Checkpoint,
@@ -36,6 +35,7 @@ from slm.db import (
 )
 from slm.events import bus, canvas_changed, shutting_down
 from slm.tuner.agent import build_agent
+from slm.tuner.models import prepare_sdk
 from slm.tuner.tools import TunerContext
 
 
@@ -231,7 +231,7 @@ class Tuner:
 
         try:
             if self.model_override is None:
-                OpenAIProvider()  # configures the SDK's key and tracing, or raises a clear error
+                prepare_sdk()  # sets the SDK up for SLM_AGENT_PROVIDER, or raises naming the missing key
             agent = build_agent(self.model_override)
             session = SQLiteSession(f"project-{pid}", settings.workspace / "tuner_sessions.db")
             result = Runner.run_streamed(agent, text, context=TunerContext(pid), session=session, max_turns=40)

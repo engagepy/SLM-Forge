@@ -130,20 +130,18 @@ same human preference pairs with just the policy and a frozen reference.
 
 The Tuner and its specialists (DataScout, DataPrep) run on the
 [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) with streaming and persistent
-session memory, on `gpt-6-luna` (`SLM_OPENAI_MODEL` overrides). They always need `OPENAI_API_KEY`.
-Agent traces are sent to the OpenAI dashboard only if you opt in with `SLM_OPENAI_TRACING=true`.
+session memory. `SLM_AGENT_PROVIDER` picks the model behind them, and behind the AI judge and the
+Advanced screens' agents too:
 
-`SLM_AGENT_PROVIDER` chooses the LLM behind the AI judge (evaluation, answer review) and the
-Advanced screens' agents (Observer, Synth):
+| Provider | Key | Model | How it runs |
+|---|---|---|---|
+| `openai` (default) | `OPENAI_API_KEY` | `gpt-6-luna` (`SLM_OPENAI_MODEL`) | Responses API. |
+| `claude` | `ANTHROPIC_API_KEY` | `claude-fable-5-1` (`SLM_CLAUDE_MODEL`) | The Agents SDK's LiteLLM extension for the Tuner; the Anthropic SDK for the judge. |
+| `ollama` (experimental) | none | `qwen2.5:7b-instruct` (`SLM_OLLAMA_MODEL`) | Ollama's OpenAI-compatible endpoint. Fully offline, but a small local model rarely drives the Tuner's long, tool-heavy loop well, and it competes with training for memory. |
 
-| Provider | Key | How it runs |
-|---|---|---|
-| `openai` (default) | `OPENAI_API_KEY` | Responses API with strict JSON schemas for structured outputs. |
-| `claude` | `ANTHROPIC_API_KEY` | Anthropic SDK, with adaptive thinking and server-side refusal fallback. |
-| `ollama` | none | A local model. Fully offline, but it competes with training for memory and writes weaker synthetic data. |
-
-Every provider exposes the same two calls, and every tool call is logged the same way, so those
-agents and the UI don't care which one is behind them.
+The prompts and tools are the same for every provider; only the model changes. Agent traces go to
+the OpenAI dashboard only with the OpenAI provider and only if you opt in with
+`SLM_OPENAI_TRACING=true`. The spend meter reads OpenAI's billing only.
 
 ## Lessons the Tuner carries
 
@@ -300,14 +298,15 @@ The Tuner can do both too, as cards you confirm, when you ask it to share the mo
 
 Training and inference run on your Mac. Three things leave it:
 
-- **OpenAI** (the Tuner, its specialists and the AI judge): your goal and chat, samples of your
+- **OpenAI** (with the default provider: the Tuner, its specialists and the AI judge): your goal and chat, samples of your
   dataset rows, the test set, and the local model's answers when they are scored or reviewed. Don't
   put data you may not share with OpenAI through it, such as health records or other personal
   data. Agent traces go to your OpenAI dashboard only if you set `SLM_OPENAI_TRACING=true`.
 - **Hugging Face:** model and dataset downloads and dataset searches, and the models you choose to
   publish. It uses `HF_TOKEN` from `.env` or your `hf auth login`; SLM Forge never stores it elsewhere.
 - **GitHub and PyPI**, once, when the first GGUF export downloads llama.cpp's converter.
-- **Anthropic or Ollama**, only if you choose them as `SLM_AGENT_PROVIDER`.
+- **Anthropic** instead of OpenAI, the same data, if you set `SLM_AGENT_PROVIDER=claude`. With
+  `ollama` nothing leaves the Mac for the agents.
 
 API keys stay in `.env` or your environment and are never logged. The server listens on
 `127.0.0.1` only and has no login: don't expose it to a network. There is no telemetry.

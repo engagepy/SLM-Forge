@@ -48,14 +48,14 @@ class Settings(BaseSettings):
 
     # Agent LLM provider. OpenAI is the default; Claude and a local Ollama model also work.
     agent_provider: Literal["openai", "claude", "ollama"] = "openai"
-    openai_model: str = "gpt-6-luna"  # all agentic work: the Tuner and the helper agents
+    openai_model: str = "gpt-6-luna"  # with SLM_AGENT_PROVIDER=openai (the default): the Tuner and every agent
     # Agent traces (full prompts, tool calls and outputs) go to the OpenAI dashboard only if you opt in.
     openai_tracing: bool = False
     # The spend meter reads OpenAI's Costs API, which needs an organisation admin key; the project
     # id narrows it to the project the API key belongs to. Both also accepted unprefixed in .env.
     openai_admin_key: str | None = None
     openai_project_id: str | None = None
-    claude_model: str = "claude-opus-5"
+    claude_model: str = "claude-fable-5-1"
     ollama_model: str = "qwen2.5:7b-instruct"
     ollama_url: str = "http://localhost:11434"
 
@@ -133,10 +133,11 @@ def get_settings() -> Settings:
 
 
 def agent_key_configured(s: Settings) -> bool:
-    """The provider switch covers the AI judge and the Advanced screens' agents (Observer, Synth)."""
+    """Whether SLM_AGENT_PROVIDER's key is set: it drives the Tuner, the AI judge and every agent."""
     return {"openai": bool(s.openai_api_key), "claude": bool(s.anthropic_api_key), "ollama": True}[s.agent_provider]
 
 
 def tuner_ready(s: Settings) -> bool:
-    """The Tuner and its specialists run on the OpenAI Agents SDK whatever SLM_AGENT_PROVIDER says."""
-    return bool(s.openai_api_key)
+    """The Tuner runs on SLM_AGENT_PROVIDER's model (tuner/models.py): OpenAI and Claude need their
+    key, a local Ollama model needs none."""
+    return agent_key_configured(s)

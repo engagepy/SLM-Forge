@@ -2,7 +2,7 @@
 
 from agents import Agent, ModelSettings
 
-from slm.config import get_settings
+from slm.tuner.models import tuner_model
 from slm.tuner.tools import ALL_TOOLS
 
 INSTRUCTIONS = """\
@@ -185,11 +185,11 @@ def instructions(ctx, agent) -> str:
     return INSTRUCTIONS + LEARNING + "\n" + profile.prompt_section()
 
 
-def build_agent(model: str | None = None) -> Agent:
+def build_agent(model=None) -> Agent:
     return Agent(
         name="Tuner",
         instructions=instructions,
-        model=model or get_settings().openai_model,
+        model=model or tuner_model(),  # SLM_AGENT_PROVIDER: OpenAI, Claude or Ollama (tuner/models.py)
         tools=ALL_TOOLS,
         model_settings=ModelSettings(parallel_tool_calls=False),
     )

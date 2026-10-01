@@ -127,15 +127,40 @@ def test_try_prompts_are_scoped_and_skip_used_ones(client, session, project):
     assert r["prompts"][1]["kind"] == "on-goal"  # unknown kinds fall back to on-goal
 
 
-def test_system_reports_the_tuner_needs_openai_whatever_the_provider(client, monkeypatch):
+def test_system_says_the_tuner_is_ready_only_when_a_turn_would_start(client, monkeypatch):
     # Regression: SLM_AGENT_PROVIDER=claude reported "configured" while every Tuner turn failed.
-    from slm.config import get_settings
+    # The Tuner now follows the provider, and "ready" must still match what a turn needs.
+    import pytest
 
-    monkeypatch.setattr(get_settings(), "agent_provider", "ollama")
-    monkeypatch.setattr(get_settings(), "openai_api_key", None)
-    agents = client.get("/api/system").json()["agents"]
-    assert agents["key_configured"] is True  # ollama needs no key
-    assert agents["tuner"] == {"ready": False, "key_env": "OPENAI_API_KEY", "model": get_settings().openai_model}
+    from slm.agents.provider import ProviderError
+    from slm.config import get_settings
+    from slm.tuner.models import prepare_sdk
+
+    s = get_settings()
+    cases = [
+        ("openai", None, None, False, "OPENAI_API_KEY", s.openai_model),
+        ("openai", "sk-test", None, True, "OPENAI_API_KEY", s.openai_model),
+        ("claude", None, None, False, "ANTHROPIC_API_KEY", s.claude_model),
+        ("claude", None, "sk-ant-test", True, "ANTHROPIC_API_KEY", s.claude_model),
+        ("ollama", None, None, True, None, s.ollama_model),
+    ]
+    for provider, openai_key, anthropic_key, ready, key_env, model in cases:
+        monkeypatch.setattr(s, "agent_provider", provider)
+        monkeypatch.setattr(s, "openai_api_key", openai_key)
+        monkeypatch.setattr(s, "anthropic_api_key", anthropic_key)
+        tuner = client.get("/api/system").json()["agents"]["tuner"]
+        assert tuner == {
+            "ready": ready,
+            "key_env": key_env,
+            "model": model,
+            "provider": provider,
+            "experimental": provider == "ollama",
+        }, provider
+        if ready:
+            prepare_sdk()
+        else:
+            with pytest.raises(ProviderError, match=key_env):
+                prepare_sdk()
 
 
 def test_rollback_is_refused_while_a_job_uses_the_model(client, session):
