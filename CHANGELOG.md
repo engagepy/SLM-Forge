@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0]
+
 ### Added
 - **The Tuner runs on Claude or a local Ollama model, not only OpenAI.** `SLM_AGENT_PROVIDER` now
   picks the model for every agent, the Tuner and its specialists included: `openai` (default),
@@ -14,6 +16,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - The default Claude model is `claude-fable-5-1`.
+- A provider error reads as one plain sentence in the Tuner's chat ("Anthropic said: …"), instead
+  of the SDK's wrapped exception.
+
+### Fixed
+- The "where?" key panel kept its long path, text and copy buttons inside the card. On a copy
+  installed from PyPI they spilled past it.
 
 ## [0.1.1]
 
@@ -51,6 +59,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Keys in one place: `OPENAI_API_KEY` and `HF_TOKEN` both read from `.env`.
 - Apache-2.0 licence, contributing guide, security policy and CI on Apple Silicon.
 
-[Unreleased]: https://github.com/engagepy/SLM-Forge/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/engagepy/SLM-Forge/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/engagepy/SLM-Forge/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/engagepy/SLM-Forge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/engagepy/SLM-Forge/releases/tag/v0.1.0
