@@ -45,7 +45,7 @@ jobs:
           assert any(n.endswith("licenses/LICENSE") for n in names), "LICENSE missing from the wheel"
           print("wheel ok:", len(names), "files")
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
