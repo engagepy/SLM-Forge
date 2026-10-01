@@ -1164,3 +1164,22 @@ def test_the_prompts_are_the_same_for_every_provider(monkeypatch):
         a = build_agent()
         seen.add((a.instructions, tuple(t.name for t in a.tools), a.model_settings.parallel_tool_calls))
     assert len(seen) == 1
+
+
+def test_a_provider_error_reads_as_one_plain_sentence(monkeypatch):
+    # Regression: an Anthropic account without credit showed the Tuner error as
+    # "BadRequestError: litellm.BadRequestError: AnthropicException - b'{"type":"error",...}'".
+    from slm.config import get_settings
+    from slm.tuner.models import readable_error
+
+    monkeypatch.setattr(get_settings(), "agent_provider", "claude")
+    raw = (
+        'litellm.BadRequestError: AnthropicException - b\'{"type":"error","error":{"type":'
+        '"invalid_request_error","message":"Your credit balance is too low to access the Anthropic '
+        'API. Please go to Plans & Billing to upgrade or purchase credits."},"request_id":"req_1"}\''
+    )
+    assert readable_error(RuntimeError(raw)) == (
+        "Anthropic said: Your credit balance is too low to access the Anthropic API. "
+        "Please go to Plans & Billing to upgrade or purchase credits."
+    )
+    assert readable_error(ValueError("bad mapping")) == "ValueError: bad mapping"  # not a provider error

@@ -58,3 +58,25 @@ def prepare_sdk(s: Settings | None = None) -> None:
         raise ProviderError(f"No Anthropic API key. {key_help('ANTHROPIC_API_KEY')}.")
     # Traces only ever go to OpenAI's dashboard; with another provider there's nowhere to send them.
     set_tracing_disabled(True)
+
+
+_PROVIDER_NAME = {"openai": "OpenAI", "claude": "Anthropic", "ollama": "Ollama"}
+
+
+def readable_error(e: Exception, s: Settings | None = None) -> str:
+    """One plain line from a provider error. LiteLLM and the SDKs wrap the provider's sentence in
+    several layers ("litellm.BadRequestError: AnthropicException - b'{...}'"); show the sentence,
+    named after the provider. Errors that aren't from a provider keep their own text."""
+    import json
+    import re
+
+    text = str(e)
+    m = re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+    if not m:
+        return f"{e.__class__.__name__}: {text}"
+    try:
+        message = json.loads(f'"{m.group(1)}"')
+    except json.JSONDecodeError:
+        message = m.group(1)
+    s = s or get_settings()
+    return f"{_PROVIDER_NAME[s.agent_provider]} said: {message}"

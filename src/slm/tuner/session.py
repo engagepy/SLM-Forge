@@ -35,7 +35,7 @@ from slm.db import (
 )
 from slm.events import bus, canvas_changed, shutting_down
 from slm.tuner.agent import build_agent
-from slm.tuner.models import prepare_sdk
+from slm.tuner.models import prepare_sdk, readable_error
 from slm.tuner.tools import TunerContext
 
 
@@ -267,7 +267,7 @@ class Tuner:
         except Exception as e:
             flush()
             traceback.print_exc()
-            save_message(pid, "event", f"The Tuner hit an error: {e.__class__.__name__}: {e}", {"error": True})
+            save_message(pid, "event", f"The Tuner hit an error. {readable_error(e)}", {"error": True})
             _publish(pid, {"type": "error", "message": str(e)})
         finally:
             self._runs.pop(pid, None)
