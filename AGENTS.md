@@ -25,9 +25,11 @@ SLM Forge is a local web app for building small language models on Apple Silicon
    It does the groundwork on autopilot, but **every run (download, training, export) waits for
    the user's confirmation**.
 
-The Tuner and its specialists run on OpenAI `gpt-6-luna` through the OpenAI Agents SDK and always
-need `OPENAI_API_KEY`; `SLM_AGENT_PROVIDER` (Claude, Ollama) only switches the AI judge and the
-Advanced screens' agents. Beyond the goal, the user only confirms runs, but can steer at any time.
+The Tuner and its specialists run on the OpenAI Agents SDK. `SLM_AGENT_PROVIDER` picks the model for
+them and for every other agent (`tuner/models.py`): OpenAI `gpt-6-luna` by default (Responses API),
+Claude through the SDK's LiteLLM extension, or a local Ollama model (experimental) through Ollama's
+OpenAI-compatible endpoint. The prompts are the same for all of them. Beyond the goal, the user only
+confirms runs, but can steer at any time.
 
 The Tuner adapts how it explains things to the user's level (beginner, intermediate or expert),
 which it learns across projects (`profile.py`). Whatever the level, its goal stays the same: an
@@ -58,7 +60,8 @@ Nothing in the code or config is tied to one machine: paths come from the checko
 
    | Key | Needed for | Without it |
    |---|---|---|
-   | `OPENAI_API_KEY` | the Tuner, its specialists, the AI judge | The header says so, and the Tuner answers with "No OpenAI API key". |
+   | `OPENAI_API_KEY` | every agent, with the default provider | The header says so, and the Tuner answers with "No OpenAI API key". |
+   | `SLM_AGENT_PROVIDER` + `ANTHROPIC_API_KEY` | running every agent on Claude (`claude`) | The header names the missing key. `ollama` (experimental) needs no key, only Ollama running. |
    | `HF_TOKEN` (a token that can write) | gated models (Llama, Gemma), publishing to Hugging Face | Public models and datasets still work. Alternative: `uv run hf auth login`. |
    | `SLM_OPENAI_MODEL` | an account without `gpt-6-luna` | The Tuner's calls fail with a model error. |
    | `OPENAI_ADMIN_KEY` | the spend meter (organisation-wide key: use a dedicated one) | The meter reads "spend not set up". |
@@ -149,7 +152,8 @@ src/slm/
                    gguf.py (llama.cpp converter toolchain pinned at LLAMA_CPP_TAG, llama-quantize)
   agents/          provider abstraction (OpenAI | Claude | Ollama) + legacy proposal agents
                    (scout, prep, observer, synth) used by the Advanced screens
-  tuner/           agent.py (INSTRUCTIONS, build_agent), tools/ (33 @tool functions: status, models,
+  tuner/           models.py (tuner_model: the provider's model for Agent(model=...); prepare_sdk),
+                   agent.py (INSTRUCTIONS, build_agent), tools/ (33 @tool functions: status, models,
                    data, training, generate, scoring, evaluation, person; _core has the helpers),
                    runs.py (submit_job/wait_job, shared with confirm),
                    specialists.py (DataScout, DataPrep: SDK agents-as-tools with structured outputs,
@@ -257,6 +261,12 @@ docs/brag/         the promo video shown in the README
 - **Every `@tool` (they register in `tools._core.REGISTRY`) must be in `ALL_TOOLS`.** A test guards this.
 - **Quick jobs are awaited inside the tool.** Long ones (download, sft, dpo, export) return at once
   with `notify: True`; `on_job_finished` then wakes the Tuner.
+
+- **The provider only changes the model.** `tuner_model()` returns a model name (OpenAI) or a model
+  object (LiteLLM for Claude, OpenAI-compatible for Ollama) for `Agent(model=...)`; the instructions,
+  tools and settings stay identical (a test guards this). For Claude, `litellm.drop_params` drops a
+  setting a model doesn't support instead of failing the turn. The streaming code reads the SDK's
+  normalised `response.output_text.delta` events, which all three routes emit.
 
 **Memory and instructions**
 - **Memory:** `SQLiteSession` stores the agent's context in `workspace/tuner_sessions.db`. The visible

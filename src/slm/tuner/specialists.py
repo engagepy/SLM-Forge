@@ -19,9 +19,9 @@ from dataclasses import dataclass, field
 from agents import Agent, AgentOutputSchema, ModelSettings, RunContextWrapper, Runner, function_tool
 from pydantic import BaseModel
 
-from slm.config import get_settings
 from slm.data import format as fmt
 from slm.data import scout_tools
+from slm.tuner.models import tuner_model
 from slm.tuner.util import clip as _clip
 
 model_override = None  # tests inject a scripted model
@@ -197,7 +197,7 @@ def build_scout(model=None) -> Agent:
     return Agent(
         name="DataScout",
         instructions=SCOUT_INSTRUCTIONS,
-        model=model or model_override or get_settings().openai_model,
+        model=model or model_override or tuner_model(),
         tools=[search_datasets, dataset_card, preview_dataset],
         output_type=AgentOutputSchema(ScoutReport, strict_json_schema=False),
         model_settings=ModelSettings(parallel_tool_calls=True),  # previews run side by side
@@ -208,7 +208,7 @@ def build_prep(model=None) -> Agent:
     return Agent(
         name="DataPrep",
         instructions=PREP_INSTRUCTIONS,
-        model=model or model_override or get_settings().openai_model,
+        model=model or model_override or tuner_model(),
         tools=[sample_rows, check_mapping],
         output_type=AgentOutputSchema(PrepPlan, strict_json_schema=False),
         model_settings=ModelSettings(parallel_tool_calls=False),

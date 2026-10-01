@@ -1119,3 +1119,67 @@ def test_gguf_and_publish_are_cards_that_leave_a_finished_project_finished(
     assert session.get(StudioState, project.id).completed is True
     bad = call(project.id, "upload_to_huggingface", export_job_id=export.id, repo_name="bad name!")
     assert "up to 96 characters" in str(bad)
+
+
+def test_the_tuner_runs_on_the_chosen_provider(monkeypatch):
+    # SLM_AGENT_PROVIDER picks the Tuner's model too: OpenAI by name (Responses API, as before),
+    # Claude through the Agents SDK's LiteLLM extension, Ollama through its OpenAI-compatible endpoint.
+    from agents import OpenAIChatCompletionsModel
+    from agents.extensions.models.litellm_model import LitellmModel
+
+    from slm.config import get_settings
+    from slm.tuner import specialists
+    from slm.tuner.agent import build_agent
+    from slm.tuner.models import tuner_model
+
+    s = get_settings()
+    monkeypatch.setattr(s, "agent_provider", "openai")
+    assert tuner_model() == s.openai_model == build_agent().model
+
+    monkeypatch.setattr(s, "agent_provider", "claude")
+    monkeypatch.setattr(s, "anthropic_api_key", "sk-ant-test")
+    m = tuner_model()
+    assert isinstance(m, LitellmModel) and m.model == f"anthropic/{s.claude_model}"
+    assert isinstance(build_agent().model, LitellmModel)
+    assert isinstance(specialists.build_scout().model, LitellmModel)
+    assert isinstance(specialists.build_prep().model, LitellmModel)
+
+    monkeypatch.setattr(s, "agent_provider", "ollama")
+    m = tuner_model()
+    assert isinstance(m, OpenAIChatCompletionsModel) and m.model == s.ollama_model
+    assert str(m._client.base_url).rstrip("/") == s.ollama_url.rstrip("/") + "/v1"
+
+
+def test_the_prompts_are_the_same_for_every_provider(monkeypatch):
+    # The owner's call: SOTA models from OpenAI and Anthropic read the same instructions equally
+    # well, so switching provider changes the model only, never the prompt or the tools.
+    from slm.config import get_settings
+    from slm.tuner.agent import build_agent
+
+    s = get_settings()
+    seen = set()
+    for provider in ("openai", "claude", "ollama"):
+        monkeypatch.setattr(s, "agent_provider", provider)
+        monkeypatch.setattr(s, "anthropic_api_key", "sk-ant-test")
+        a = build_agent()
+        seen.add((a.instructions, tuple(t.name for t in a.tools), a.model_settings.parallel_tool_calls))
+    assert len(seen) == 1
+
+
+def test_a_provider_error_reads_as_one_plain_sentence(monkeypatch):
+    # Regression: an Anthropic account without credit showed the Tuner error as
+    # "BadRequestError: litellm.BadRequestError: AnthropicException - b'{"type":"error",...}'".
+    from slm.config import get_settings
+    from slm.tuner.models import readable_error
+
+    monkeypatch.setattr(get_settings(), "agent_provider", "claude")
+    raw = (
+        'litellm.BadRequestError: AnthropicException - b\'{"type":"error","error":{"type":'
+        '"invalid_request_error","message":"Your credit balance is too low to access the Anthropic '
+        'API. Please go to Plans & Billing to upgrade or purchase credits."},"request_id":"req_1"}\''
+    )
+    assert readable_error(RuntimeError(raw)) == (
+        "Anthropic said: Your credit balance is too low to access the Anthropic API. "
+        "Please go to Plans & Billing to upgrade or purchase credits."
+    )
+    assert readable_error(ValueError("bad mapping")) == "ValueError: bad mapping"  # not a provider error

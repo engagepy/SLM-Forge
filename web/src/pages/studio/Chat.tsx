@@ -83,7 +83,14 @@ export function Chat({
             {busy ? (
               <span className="text-accent">working…</span>
             ) : (
-              <>your guide · {sys?.agents.model ?? "…"}</>
+              <>
+                your guide · {sys?.agents.tuner.model ?? "…"}
+                {sys?.agents.tuner.experimental && (
+                  <span className="ml-1.5 rounded bg-warn-soft px-1 py-px text-warn" title="A local Ollama model runs the Tuner, but rarely drives its long, tool-heavy loop well">
+                    experimental
+                  </span>
+                )}
+              </>
             )}
           </div>
         </div>

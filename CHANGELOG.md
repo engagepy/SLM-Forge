@@ -5,6 +5,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **The Tuner runs on Claude or a local Ollama model, not only OpenAI.** `SLM_AGENT_PROVIDER` now
+  picks the model for every agent, the Tuner and its specialists included: `openai` (default),
+  `claude` (via the Agents SDK's LiteLLM extension; needs `ANTHROPIC_API_KEY`) or `ollama`
+  (experimental, local, no key). The prompts are unchanged. The Tuner's header shows the model it runs
+  on, tagged "experimental" for Ollama.
+
+### Changed
+- The default Claude model is `claude-fable-5-1`.
+
 ## [0.1.1]
 
 ### Changed

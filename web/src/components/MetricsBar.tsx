@@ -100,7 +100,7 @@ export default function MetricsBar({ snapshot, view }: { snapshot?: Snapshot; vi
       )}
       {sys?.disk && <DiskMeter disk={sys.disk} />}
       <UsageMeter />
-      {sys && !sys.agents.tuner.ready && <KeyHint keyName={sys.agents.tuner.key_env} file={sys.agents.env_file} label="Tuner needs" />}
+      {sys && !sys.agents.tuner.ready && sys.agents.tuner.key_env && <KeyHint keyName={sys.agents.tuner.key_env} file={sys.agents.env_file} label="Tuner needs" />}
       {sys && sys.agents.tuner.ready && !sys.agents.key_configured && sys.agents.key_env && (
         <KeyHint keyName={sys.agents.key_env} file={sys.agents.env_file} label="set" />
       )}

@@ -25,7 +25,8 @@ export interface SystemStatus {
     model: string;
     key_configured: boolean;
     key_env: string | null;
-    tuner: { ready: boolean; key_env: string; model: string };
+    /** The Tuner runs on SLM_AGENT_PROVIDER's model; Ollama is experimental and needs no key. */
+    tuner: { ready: boolean; key_env: string | null; model: string; provider: string; experimental: boolean };
     env_file: string;
   };
   workspace: string;
