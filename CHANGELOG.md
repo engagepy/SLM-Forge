@@ -5,6 +5,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **A published model card always has the Hub's YAML metadata.** Publishing an export made before
+  model cards carried front matter now adds it (licence, base model, library, pipeline), plus the
+  licence section and licence files, so Hugging Face no longer shows "empty or missing yaml
+  metadata". Qwen's research licence is tagged the way Qwen tags it (`license: other`,
+  `license_name: qwen-research`, with a link).
+- The Llama publish check no longer mistakes SLM Forge's own `LICENSE-BASE-MODEL.md` for Meta's
+  licence file.
+
 ## [0.2.0]
 
 ### Added

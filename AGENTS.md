@@ -244,7 +244,12 @@ docs/brag/         the promo video shown in the README
   by llama.cpp's converter pinned at `LLAMA_CPP_TAG`, run in its own venv under
   `<workspace>/tools/` (it needs torch and an older transformers). Q8_0 comes from the converter;
   Q4_K_M needs `llama-quantize` (Homebrew). Publishing is a user click or a confirmed card
-  (`publish`), never automatic; it refuses a Llama export without Meta's licence file and scrubs
+  (`publish`), never automatic. Before uploading, `fuse.ensure_card_metadata` gives the card the
+  Hub's YAML front matter (`license` via `HUB_LICENCE`, with `license_name`/`license_link` for
+  `other`; `base_model`, `library_name: mlx`, `pipeline_tag`), a licence section and the licence
+  files, so exports older than these still publish a complete card (the Hub otherwise shows "empty
+  or missing yaml metadata"). It refuses a Llama export without Meta's licence file
+  (`has_upstream_licence`; our `LICENSE-BASE-MODEL.md` doesn't count) and scrubs
   the local export path from every text file, refusing if another local path remains. `gguf` and
   `publish` cards don't reopen a finished round (`confirm.REOPENS_ROUND`).
 - **Paths:** a source checkout keeps `./workspace` and `./.env` (`config.SOURCE_CHECKOUT`); an

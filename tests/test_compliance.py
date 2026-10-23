@@ -162,3 +162,47 @@ def test_a_llama_model_is_not_published_without_metas_licence_file(session, tmp_
     ):
         run(session, "hf_upload", p.id, {"export_job_id": export.id, "repo_id": "someone/llama-chef"})
     assert hub.calls == []
+    # Regression: our own LICENSE-BASE-MODEL.md (written before the gate) once counted as Meta's licence.
+    assert (dest / "LICENSE-BASE-MODEL.md").exists()
+
+
+def test_an_old_export_is_published_with_complete_hub_metadata(session, tmp_path, monkeypatch):
+    # Regression: exports made before model cards had YAML front matter were published as they were,
+    # and the Hub showed "empty or missing yaml metadata" with no licence or base model.
+    import huggingface_hub
+    import yaml
+    from huggingface_hub import ModelCard
+    from test_jobs import FakeHub, run
+
+    from slm.db import Job, Project
+    from slm.export import fuse as fusing
+
+    hub = FakeHub()
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda: hub)
+    monkeypatch.setattr(fusing, "fetch_upstream_licence_files", lambda upstream, dest: [])
+    dest = tmp_path / "exports" / "ade-extract"
+    dest.mkdir(parents=True)
+    (dest / "README.md").write_text("# ade-extract\n\nFine-tuned with SLM Forge.\n")
+    base_model = "mlx-community/Qwen2.5-3B-Instruct-4bit"
+    (dest / "slm_forge.json").write_text(json.dumps({"project": {"base_model": base_model}}))
+    p = Project(name="x", goal="y")
+    session.add(p)
+    session.commit()
+    export = Job(project_id=p.id, kind="export", status="succeeded", result={"path": str(dest)})
+    session.add(export)
+    session.commit()
+
+    run(session, "hf_upload", p.id, {"export_job_id": export.id, "repo_id": "someone/ade-extract"})
+
+    card = (dest / "README.md").read_text()
+    meta = yaml.safe_load(card.split("---\n")[1])
+    assert meta["license"] == "other" and meta["license_name"] == "qwen-research"
+    assert meta["license_link"].startswith("https://huggingface.co/Qwen/")
+    assert meta["base_model"] == [base_model] and meta["library_name"] == "mlx"
+    assert meta["pipeline_tag"] == "text-generation"
+    assert ModelCard(card).data.base_model == [base_model]  # the Hub library reads it too
+    assert "## Licence & attribution" in card and "## Intended use & limitations" in card
+    assert "Qwen Research licence" in (dest / "LICENSE-BASE-MODEL.md").read_text()
+    # A second publish adds nothing twice.
+    assert fusing.ensure_card_metadata(dest, fusing.card_provenance(dest)) == []
+    assert (dest / "README.md").read_text() == card
