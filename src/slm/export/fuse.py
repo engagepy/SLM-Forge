@@ -203,21 +203,81 @@ def _required_notices(licence: str) -> list[str]:
     return []
 
 
+# How Hugging Face names each licence: its own id where it has one, else "other" with a slug name and
+# a link (Qwen's own repos use license: other / license_name: qwen-research).
+HUB_LICENCE = {
+    "Apache-2.0": ("apache-2.0", None),
+    "MIT": ("mit", None),
+    "Llama 3.2 Community licence": ("llama3.2", None),
+    "Gemma Terms of Use": ("gemma", None),
+    "Qwen Research licence": ("other", "qwen-research"),
+}
+
+
 def _front_matter(provenance: dict) -> list[str]:
-    """Hugging Face model-card metadata, so a Hub upload shows the licence and lineage."""
-    lic = (provenance.get("base_license") or {}).get("licence", "unknown")
-    hub_id = {"Apache-2.0": "apache-2.0", "MIT": "mit", "Llama 3.2 Community licence": "llama3.2",
-              "Gemma Terms of Use": "gemma"}.get(lic, "other")  # fmt: skip
+    """Hugging Face model-card metadata (the YAML block at the top). Without it the Hub shows "empty or
+    missing yaml metadata" and can't list the licence, base model or library."""
+    base = provenance.get("base_license") or {}
+    lic = base.get("licence", "unknown")
+    hub_id, name = HUB_LICENCE.get(lic, ("other", None))
     lines = ["---", f"license: {hub_id}"]
     if hub_id == "other":
-        lines.append(f"license_name: {json.dumps(lic)}")
-    if base := provenance.get("base_model"):
-        lines += ["base_model:", f"  - {base}"]
+        lines.append(f"license_name: {name or re.sub(r'[^a-z0-9]+', '-', lic.lower()).strip('-') or 'unknown'}")
+        if base.get("url"):
+            lines.append(f"license_link: {base['url']}")
+    if base_model := provenance.get("base_model"):
+        lines += ["base_model:", f"  - {base_model}"]
     hub_datasets = [d["name"] for d in provenance.get("datasets", []) if d.get("source") == "hf"]
     if hub_datasets:
         lines += ["datasets:", *[f"  - {d}" for d in hub_datasets]]
-    lines += ["tags:", "  - mlx", "  - slm-forge", "  - lora", "---", ""]
-    return lines
+    lines += ["library_name: mlx", "pipeline_tag: text-generation", "tags:", "  - mlx", "  - slm-forge", "  - lora"]
+    return [*lines, "---", ""]
+
+
+def card_provenance(dest: Path) -> dict:
+    """What a model card needs about its sources, read from the export's slm_forge.json. Exports made
+    before licences were recorded get the base model's licence from the catalog."""
+    from slm.models import catalog
+
+    meta = json.loads((dest / "slm_forge.json").read_text()) if (dest / "slm_forge.json").exists() else {}
+    base_model = (meta.get("project") or {}).get("base_model")
+    return {
+        "base_model": base_model,
+        "base_license": meta.get("base_license") or (catalog.licence_for(base_model, None) if base_model else None),
+        "datasets": meta.get("datasets") or [],
+        "synthetic_examples_used": meta.get("synthetic_examples_used") or 0,
+    }
+
+
+def ensure_card_metadata(dest: Path, provenance: dict) -> list[str]:
+    """Before an export is published: give its README the Hub's YAML metadata and a licence section,
+    and make sure the licence files travel with it. Exports made before these existed lacked them, and
+    the Hub flagged the card. Returns what was added."""
+    added = []
+    card = dest / "README.md"
+    text = card.read_text() if card.exists() else ""
+    if not text.startswith("---\n"):
+        text = "\n".join(_front_matter(provenance)) + text
+        added.append("YAML metadata")
+    if "## Licence & attribution" not in text:
+        tail = [] if "## Intended use & limitations" in text else LIMITATIONS
+        text = text.rstrip("\n") + "\n\n" + "\n".join([*_licence_section(provenance), *tail]) + "\n"
+        added.append("licence section")
+    card.write_text(text)
+    if not (dest / "LICENSE-BASE-MODEL.md").exists():
+        write_licence_notice(dest, provenance)
+        added.append("LICENSE-BASE-MODEL.md")
+    if not has_upstream_licence(dest):
+        added += fetch_upstream_licence_files((provenance.get("base_license") or {}).get("upstream"), dest)
+    return added
+
+
+def has_upstream_licence(dest: Path) -> bool:
+    """Whether the base model's own licence file is in the folder. LICENSE-BASE-MODEL.md is our summary
+    of it, not the licence itself, so it doesn't count (the Llama gate depends on this)."""
+    return any(
+        f.name.upper().startswith(("LICENSE", "LICENCE")) and f.name != "LICENSE-BASE-MODEL.md" for f in dest.iterdir()
+    )
 
 
 def _licence_section(provenance: dict) -> list[str]:

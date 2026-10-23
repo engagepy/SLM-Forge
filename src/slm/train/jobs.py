@@ -654,13 +654,16 @@ def hf_upload_job(ctx: JobContext) -> None:
     c = ctx.config
     export_id, repo_id, private = int(c["export_job_id"]), c["repo_id"], bool(c.get("private", False))
     dest = _export_folder(ctx.project_id, export_id)
-    meta = json.loads((dest / "slm_forge.json").read_text()) if (dest / "slm_forge.json").exists() else {}
-    base = meta.get("base_license") or {}
-    has_licence_file = any(f.name.upper().startswith(("LICENSE", "LICENCE")) for f in dest.iterdir())
-    if "Llama" in (base.get("licence") or "") and not has_licence_file:
+    # Every published card carries the Hub's YAML metadata, a licence section and the licence files,
+    # including exports made before those existed (they showed "empty or missing yaml metadata").
+    provenance = fusing.card_provenance(dest)
+    if added := fusing.ensure_card_metadata(dest, provenance):
+        ctx.note(f"Added to the model card before publishing: {', '.join(added)}")
+    base = provenance.get("base_license") or {}
+    if "Llama" in (base.get("licence") or "") and not fusing.has_upstream_licence(dest):
         # Meta's licence must travel with every copy: fetch it now if the user has since accepted it.
         fusing.fetch_upstream_licence_files(base.get("upstream"), dest)
-        if not any(f.name.upper().startswith("LICENSE") for f in dest.iterdir()):
+        if not fusing.has_upstream_licence(dest):
             raise RuntimeError(
                 "Llama models must be published with Meta's licence file, and it couldn't be downloaded: accept "
                 f"the licence at https://huggingface.co/{base.get('upstream') or 'meta-llama'} while logged in "
