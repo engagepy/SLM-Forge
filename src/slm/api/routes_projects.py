@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from slm import hardware, storage
+from slm import hardware, spec, storage
 from slm.agents.base import set_proposal_status
 from slm.api.common import SessionDep, get_or_404, project_or_404
 from slm.config import HF_LOGIN_HELP, get_settings
@@ -68,6 +68,28 @@ def create_project(body: ProjectIn, s: Session = SessionDep) -> dict:
     s.commit()
     s.refresh(p)
     return p.model_dump(mode="json")
+
+
+class SpecIn(BaseModel):
+    yaml: str
+    preview: bool = False  # map and warn only; create nothing
+
+
+@router.post("/from-spec")
+def create_from_spec(body: SpecIn, s: Session = SessionDep) -> dict:
+    """Create a project from a build spec (`kind: slm_build`). Starts nothing: the caller starts
+    the Tuner (tuner/start), which then follows the spec's plan with the usual confirmations."""
+    try:
+        imported = spec.load(body.yaml)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if body.preview:
+        return imported
+    p = Project(**imported["project"])
+    s.add(p)
+    s.commit()
+    s.refresh(p)
+    return {"project": p.model_dump(mode="json"), "warnings": imported["warnings"]}
 
 
 @router.patch("/{project_id}")

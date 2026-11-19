@@ -1,0 +1,362 @@
+# ============================================================================
+# SLM-Forge build spec
+# ----------------------------------------------------------------------------
+# A single, self-describing recipe for one SLM build. Feed this file to
+# SLM-Forge. Every section is documented inline so the harness (and a human
+# reviewer) can map fields without external docs. Values are concrete and
+# runnable; placeholders are marked with ${...} and listed under `secrets`.
+#
+# Design contract SLM-Forge is expected to honor:
+#   1. Stages run in the order given under `pipeline.stages`, respecting
+#      `needs:` dependencies. A stage that fails its `gate` halts the build.
+#   2. Any string of the form ${NAME} is resolved from env/secrets at run time.
+#   3. Paths are relative to `workspace.root` unless absolute.
+#   4. `eval.gates` are hard pass/fail thresholds. The build does NOT publish
+#      unless every gate passes. This is the integrity backbone: no gate, no
+#      model card number, no Space.
+# ============================================================================
+
+spec_version: "1.0"
+kind: slm_build
+id: legal-clause-extractor-4b
+created: "2026-11-19"
+
+# ----------------------------------------------------------------------------
+# meta: human-facing identity. Drives the HF repo name and model card header.
+# ----------------------------------------------------------------------------
+meta:
+  display_name: "Legal Clause Extractor 4B"
+  one_liner: >
+    A 4B specialist that reads a commercial contract and returns structured,
+    span-grounded JSON for 20 high-value clause types, on-premise.
+  industry: legal_procurement
+  task_family: structured_extraction   # not open chat; objective to evaluate
+  tags: [legal, contracts, information-extraction, nlp, structured-output, cuad]
+  intended_use: >
+    Decision-support extraction for contract review and procurement triage.
+    NOT legal advice. Every extracted field must carry an evidence span so a
+    human reviewer can verify against source text.
+  out_of_scope: [legal-advice, jurisdiction-specific-interpretation, litigation]
+
+# ----------------------------------------------------------------------------
+# task_contract: THE central artifact. Defines exactly what the model must
+# emit. The eval harness, the synthetic generator, and constrained decoding
+# all read this one schema. Change nothing downstream by hand; change it here.
+# ----------------------------------------------------------------------------
+task_contract:
+  input:
+    description: "Raw contract text or a contract clause/section (UTF-8)."
+    max_input_tokens: 8192          # chunk longer contracts upstream (see data.chunking)
+  output:
+    format: json
+    # JSON Schema the model output is validated against at train and eval time.
+    json_schema:
+      type: object
+      required: [clauses]
+      properties:
+        clauses:
+          type: array
+          items:
+            type: object
+            required: [clause_type, present, evidence_span]
+            properties:
+              clause_type:
+                type: string
+                enum:   # 20 high-signal CUAD categories (subset of 41, chosen for enterprise value)
+                  - governing_law
+                  - effective_date
+                  - expiration_date
+                  - renewal_term
+                  - notice_period_to_terminate_renewal
+                  - termination_for_convenience
+                  - cap_on_liability
+                  - uncapped_liability
+                  - indemnification
+                  - insurance
+                  - most_favored_nation
+                  - exclusivity
+                  - non_compete
+                  - ip_ownership_assignment
+                  - license_grant
+                  - assignment
+                  - change_of_control
+                  - confidentiality
+                  - audit_rights
+                  - warranty_duration
+              present:
+                type: boolean       # whether the clause is present in the input
+              value:
+                type: [string, "null"]   # normalized value when applicable (e.g. "Delaware", "30 days")
+              evidence_span:
+                type: [string, "null"]   # verbatim substring from input; null iff present=false
+              confidence:
+                type: [number, "null"]   # optional model-reported confidence 0..1
+    # Hard rules the validator enforces on every generated/predicted row.
+    invariants:
+      - "if present == false then evidence_span == null and value == null"
+      - "if present == true then evidence_span is a verbatim substring of input"
+      - "clause_type values are unique within clauses[]"
+
+# ----------------------------------------------------------------------------
+# base_model: the student. Apache-2.0 keeps the commercial/enterprise story
+# clean. Alternatives listed for SLM-Forge to A/B if `experiments.sweep_base`.
+# ----------------------------------------------------------------------------
+base_model:
+  id: Qwen/Qwen3-4B
+  revision: main
+  license: apache-2.0
+  dtype: bfloat16
+  alternatives:
+    - { id: HuggingFaceTB/SmolLM3-3B, license: apache-2.0 }   # fully-open stack story
+    - { id: google/gemma-3-4b-it, license: gemma }            # only if Gemma terms accepted
+
+# ----------------------------------------------------------------------------
+# data: everything that becomes training/eval rows. `gold` = real labeled data
+# (honest eval + part of train). `synthetic` = teacher-distilled scale lever.
+# Provenance tagging is mandatory so the eval harness can prove no leakage.
+# ----------------------------------------------------------------------------
+data:
+  workspace_subdir: data
+  chunking:
+    strategy: section_aware   # split contracts on headings/numbered sections
+    max_tokens_per_chunk: 6000
+    overlap_tokens: 256
+
+  gold:
+    - name: cuad_v1
+      source: { type: hf_dataset, id: theatticusproject/cuad }
+      license: cc-by-4.0
+      role: [train, eval]
+      map: cuad_to_task_contract     # named transform under transforms/
+      notes: "510 commercial contracts, 41 clause types hand-annotated by lawyers."
+    - name: contractnli
+      source: { type: hf_dataset, id: kiddothe2b/contract-nli }
+      license: cc-by-4.0
+      role: [eval_ood]               # out-of-distribution generalization check only
+      optional: true
+
+  synthetic:
+    enabled: true
+    role: [train]
+    target_rows: 15000
+    teacher:
+      # First choice: a frontier open model callable via API. Fall back to local.
+      id: ${TEACHER_MODEL}           # e.g. Qwen3-235B-A22B or DeepSeek-class
+      endpoint: ${TEACHER_ENDPOINT}  # OpenAI-compatible URL; empty => run local teacher
+      local_fallback: { id: Qwen/Qwen3-32B, dtype: bfloat16 }
+      max_tokens: 2048
+      temperature: 0.7
+    generation:
+      prompt_template: prompts/synth_legal_extract.jinja   # must emit task_contract JSON
+      style_mix:                     # cover formats gold underrepresents
+        - { style: saas_msa, weight: 0.25 }
+        - { style: nda, weight: 0.15 }
+        - { style: employment_agreement, weight: 0.15 }
+        - { style: supply_agreement, weight: 0.15 }
+        - { style: license_agreement, weight: 0.15 }
+        - { style: negative_no_clause, weight: 0.15 }   # teaches NOT to hallucinate clauses
+      validate_against: task_contract.json_schema         # discard/repair invalid JSON
+      dedup: { method: minhash, threshold: 0.85 }
+      max_repair_attempts: 2
+
+  splits:
+    freeze_test_first: true          # define + lock test BEFORE any synthesis (anti-leak)
+    test:  { from: cuad_v1, fraction: 0.15, stratify_by: clause_type, seed: 13 }
+    val:   { from: cuad_v1, fraction: 0.10, seed: 13 }
+    train: { from: [cuad_v1_remainder, synthetic], mix: { gold: 0.30, synthetic: 0.70 } }
+
+  leakage_guard:
+    # Reject any synthetic row whose source contract overlaps a test contract.
+    enabled: true
+    method: contract_id_disjoint + ngram_overlap
+    ngram: 13
+    max_overlap: 0.0
+
+# ----------------------------------------------------------------------------
+# training: two phases. LoRA for cheap sweeps, one full FT for the published
+# checkpoint. SLM-Forge runs `phases` in order; `final_checkpoint` names which
+# phase output is promoted to publish.
+# ----------------------------------------------------------------------------
+training:
+  framework: trl.SFTTrainer
+  prompt_mask: completion_only       # mask prompt tokens; learn to emit JSON only
+  packing: true
+  max_seq_len: 8192
+  phases:
+    - name: lora_sweep
+      method: qlora
+      load_in_4bit: true
+      lora: { r: 16, alpha: 32, dropout: 0.05, target_modules: all-linear }
+      epochs: 3
+      lr: 2.0e-4
+      lr_scheduler: cosine
+      warmup_ratio: 0.03
+      per_device_batch_size: 8
+      grad_accum: 4
+      optim: paged_adamw_8bit
+      sweep:                         # SLM-Forge expands these into runs, picks best on val F1
+        lr: [1.0e-4, 2.0e-4, 3.0e-4]
+        data_mix.synthetic: [0.5, 0.7, 0.85]
+        lora.r: [16, 32]
+      select_best_by: eval.metrics.relation_f1
+    - name: full_ft_final
+      method: full
+      precision: bf16
+      gradient_checkpointing: true
+      optim: adamw_8bit
+      epochs: 2
+      lr: 1.0e-5
+      lr_scheduler: cosine
+      warmup_ratio: 0.03
+      per_device_batch_size: 4
+      grad_accum: 8
+      inherit_best_hparams_from: lora_sweep   # reuse winning data mix, etc.
+  final_checkpoint: full_ft_final
+  logging: { backend: wandb, project: slm-forge-legal, run_name: "${BUILD_ID}" }
+
+# ----------------------------------------------------------------------------
+# inference: how the model is served for eval and the demo. Constrained
+# decoding makes invalid JSON impossible, which is the credibility multiplier.
+# ----------------------------------------------------------------------------
+inference:
+  engine: vllm
+  structured_decoding:
+    enabled: true
+    backend: xgrammar            # or outlines; both enforce task_contract.json_schema
+    schema_ref: task_contract.json_schema
+  max_new_tokens: 2048
+  temperature: 0.0               # deterministic for extraction
+
+# ----------------------------------------------------------------------------
+# eval: objective, reproducible, and the publish gate. `baselines` are the
+# comparisons that make the enterprise claim land (small specialist vs giant).
+# `gates` must ALL pass or the build stops before publish.
+# ----------------------------------------------------------------------------
+eval:
+  harness: eval/run_eval.py
+  test_split: data.splits.test
+  metrics:
+    - name: relation_f1            # clause_type + present + value correct
+      primary: true
+    - name: presence_f1            # clause_type + present correct (easier)
+    - name: span_exact_match       # evidence_span is a verbatim substring
+    - name: json_validity_rate     # fraction of outputs that parse + pass schema
+    - name: hallucinated_clause_rate  # present=true where gold says absent (lower better)
+    - name: latency_ms_p50
+    - name: cost_per_1k_docs_usd
+  baselines:
+    - { id: Qwen/Qwen3-4B, mode: zero_shot, label: "base_4b_untuned" }
+    - { id: "${FRONTIER_MODEL}", mode: zero_shot, label: "frontier_generalist" }  # the one to beat on cost/latency
+  gates:
+    - "metrics.json_validity_rate >= 0.99"
+    - "metrics.relation_f1 >= baselines.base_4b_untuned.relation_f1 + 0.15"
+    - "metrics.relation_f1 >= baselines.frontier_generalist.relation_f1 - 0.03"  # parity or better
+    - "metrics.hallucinated_clause_rate <= 0.05"
+  error_analysis:
+    sample_n: 50                   # dump 50 worst cases per clause_type for human read
+    out: reports/error_analysis.md
+
+# ----------------------------------------------------------------------------
+# quantization: produce deployable variants + re-measure honest degradation.
+# ----------------------------------------------------------------------------
+quantization:
+  enabled: true
+  variants:
+    - { format: gguf, method: q4_k_m, tool: llama.cpp }
+    - { format: awq, bits: 4 }
+  reeval: true                     # run eval on each variant; record delta on model card
+
+# ----------------------------------------------------------------------------
+# publish: HF targets. SLM-Forge only runs this after eval.gates pass.
+# The model card is generated from the eval table, not written by hand.
+# ----------------------------------------------------------------------------
+publish:
+  enabled: true
+  hub:
+    token: ${HF_TOKEN}
+    model_repo: "${HF_USER}/legal-clause-extractor-4b"
+    dataset_repo: "${HF_USER}/legal-clause-synth-15k"
+    space_repo: "${HF_USER}/legal-clause-extractor-demo"
+    private_until_gates_pass: true
+  model_card:
+    template: cards/model_card.jinja
+    include: [eval_table, baselines, data_provenance, license, limitations, not_legal_advice]
+  dataset_card:
+    template: cards/dataset_card.jinja
+    include: [generation_method, teacher_model, dedup, license, known_biases]
+  space:
+    sdk: gradio
+    app: demo/app.py
+    examples: demo/examples/        # 3 contracts: MSA, NDA, employment
+    features: [structured_decoding, evidence_span_highlight, frontier_cost_compare_toggle]
+
+# ----------------------------------------------------------------------------
+# compute: your H100 on Digital Ocean. SLM-Forge uses this to size batches and
+# to spin up / tear down so an idle GPU never bills.
+# ----------------------------------------------------------------------------
+compute:
+  provider: digitalocean
+  accelerator: { type: H100, count: 1, vram_gb: 80 }
+  lifecycle:
+    spin_up: scripts/do_up.sh
+    tear_down: scripts/do_down.sh
+    teardown_on: [build_complete, build_failed, idle_30m]   # cost discipline
+  image: scripts/Dockerfile          # pinned torch/transformers/trl/peft/vllm
+  env:
+    HF_HOME: /workspace/.hf
+    PIP_FLAGS: "--break-system-packages"
+
+# ----------------------------------------------------------------------------
+# guardrails: integrity rules that protect reputation. SLM-Forge should refuse
+# to publish if any are violated, regardless of metrics.
+# ----------------------------------------------------------------------------
+guardrails:
+  license_compat:
+    weights_license: apache-2.0
+    forbid_in_trained_weights: [research-only, non-commercial]  # keep such data to eval_ood only
+  claims:
+    forbid_clinical_or_legal_advice_language: true
+    require_eval_script_published: true    # numbers must ship with a reproducible script
+    require_evidence_spans: true           # no ungrounded extraction in a legal product
+  pii:
+    scrub_synthetic: true                  # contracts may carry names; scrub before publishing dataset
+
+# ----------------------------------------------------------------------------
+# pipeline: the DAG SLM-Forge executes. `needs` sets dependencies; `gate` binds
+# a stage to the eval gates. This is the only ordering the harness must follow.
+# ----------------------------------------------------------------------------
+pipeline:
+  stages:
+    - { id: provision,    run: compute.lifecycle.spin_up }
+    - { id: prepare_gold, run: data.gold,       needs: [provision] }
+    - { id: freeze_split, run: data.splits,     needs: [prepare_gold] }   # test locked first
+    - { id: baseline_eval, run: eval,           needs: [freeze_split], args: { baselines_only: true } }
+    - { id: synth_data,   run: data.synthetic,  needs: [freeze_split] }   # after freeze => no leak
+    - { id: leak_check,   run: data.leakage_guard, needs: [synth_data], gate: hard }
+    - { id: lora_sweep,   run: training.phases.lora_sweep, needs: [leak_check, baseline_eval] }
+    - { id: full_ft,      run: training.phases.full_ft_final, needs: [lora_sweep] }
+    - { id: final_eval,   run: eval,            needs: [full_ft], gate: eval.gates }
+    - { id: quantize,     run: quantization,    needs: [final_eval] }
+    - { id: publish,      run: publish,         needs: [final_eval, quantize], gate: eval.gates }
+    - { id: teardown,     run: compute.lifecycle.tear_down, needs: [publish], always: true }
+
+# ----------------------------------------------------------------------------
+# secrets: names SLM-Forge must resolve from env/secret store. Never inline.
+# ----------------------------------------------------------------------------
+secrets:
+  - HF_TOKEN
+  - HF_USER
+  - WANDB_API_KEY
+  - TEACHER_MODEL
+  - TEACHER_ENDPOINT      # optional; empty uses local_fallback
+  - FRONTIER_MODEL        # the generalist baseline to beat on cost/latency
+  - DIGITALOCEAN_TOKEN
+
+# ----------------------------------------------------------------------------
+# next_builds: queue of future specs. Same schema, swap task_contract + data.
+# This is how SLM-Forge produces "lots of smaller models across industries."
+# ----------------------------------------------------------------------------
+next_builds:
+  - { id: text-to-sql-4b, industry: analytics, gold: [bird, spider2] }
+  - { id: product-attr-extractor-4b, industry: ecommerce, gold: [mave, amazon-esci] }
+  - { id: support-ticket-triage-4b, industry: cx, gold: [banking77, synthetic] }
