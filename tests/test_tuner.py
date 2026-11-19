@@ -1183,3 +1183,21 @@ def test_a_provider_error_reads_as_one_plain_sentence(monkeypatch):
         "Please go to Plans & Billing to upgrade or purchase credits."
     )
     assert readable_error(ValueError("bad mapping")) == "ValueError: bad mapping"  # not a provider error
+
+
+def test_a_fine_tuned_qwen3s_empty_think_block_does_not_fail_exact_match(monkeypatch):
+    # Regression: Qwen3's template trains "<think>\n\n</think>\n\n" into every assistant turn but not into the
+    # generation prompt, so the fine-tuned model writes it before its JSON; the scorer read the whole answer as
+    # invalid JSON and every checkpoint scored 0.0 (Legal Clause Extractor, runs 20-21).
+    from slm.inference.engine import SamplingParams, strip_think
+    from slm.tuner.tools.scoring import _canon
+
+    answer = '{"clauses":[{"clause_type":"governing_law","present":true}]}'
+    tokens = ["<think>", "\n\n", "</think>", "\n\n", answer]
+    monkeypatch.setattr(
+        infer, "stream", lambda *a, **k: iter([{"type": "token", "text": t} for t in tokens] + [{"type": "done"}])
+    )
+    text, _ = infer.generate([{"role": "user", "content": "x"}], SamplingParams(), model_path="m")
+    assert text == answer and _canon(text) == _canon(answer)
+    assert strip_think("<think>\nplan\n</think>\nfinal") == "final"
+    assert strip_think("no tags <think></think>") == "no tags <think></think>"  # only a leading block
