@@ -19,6 +19,7 @@
 spec_version: "1.0"
 kind: slm_build
 id: legal-clause-extractor-4b
+owner: zorawar.purohit
 created: "2026-11-19"
 
 # ----------------------------------------------------------------------------
