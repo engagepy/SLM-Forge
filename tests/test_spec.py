@@ -15,7 +15,8 @@ def test_sample_spec_maps_onto_a_project():
     p = r["project"]
     assert p["name"] == "Legal Clause Extractor 4B"
     assert p["goal"].startswith("A 4B specialist that reads a commercial contract")
-    assert '"governing_law"' in p["system_prompt"] and "verbatim substring" in p["system_prompt"]
+    assert "governing_law" in p["system_prompt"] and "verbatim substring" in p["system_prompt"]
+    assert '"evidence_span":str|null' in p["system_prompt"]
     assert p["plan"]["source"] == "spec:legal-clause-extractor-4b"
     assert p["plan"]["task_type"] == "extraction"
     assert "theatticusproject/cuad" in p["plan"]["data_sources"]
@@ -25,8 +26,24 @@ def test_sample_spec_maps_onto_a_project():
 
 def test_what_the_mac_cannot_do_is_a_warning_not_silence():
     w = " ".join(spec.load(SAMPLE)["warnings"])
-    for dropped in ("H100", "full fine-tuning", "15000 rows", "awq", "never automatic", "unattended"):
+    for dropped in (
+        "H100",
+        "full fine-tuning",
+        "15000 rows",
+        "awq",
+        "never automatic",
+        "unattended",
+        "8192-token",
+        "cuad_to_task_contract",
+    ):
         assert dropped in w
+
+
+def test_system_prompt_is_a_shape_not_the_whole_schema():
+    # Regression: the full JSON Schema took 270 of a 512-token training window, leaving too little room for the
+    # contract text and the answer; every trained checkpoint scored 0.0 on the legal spec.
+    p = spec.load(SAMPLE)["project"]["system_prompt"]
+    assert len(p) < 900 and '"type"' not in p and '"properties"' not in p
 
 
 @pytest.mark.parametrize(
