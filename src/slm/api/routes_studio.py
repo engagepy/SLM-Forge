@@ -163,11 +163,23 @@ def tuner_start(project_id: int, s: Session = SessionDep) -> dict:
     s.commit()
     tuner.unhalt(project_id)
     goal = p.goal or "(not given yet)"
+    if str(p.plan.get("source", "")).startswith("spec:"):
+        text = (
+            "[New project] The user imported a build spec and started the Tuner. "
+            f"Goal: {goal.rstrip('.')}. Its name, goal, "
+            "system prompt (the output contract) and plan (data sources, evaluation, stop rule) are already set: "
+            "read them with get_status and follow them. Keep the system prompt as it is. Greet them in one line, "
+            "say what you'll build on this Mac, then do the groundwork and propose the base model for them to confirm."
+        )
+    else:
+        text = (
+            f"[New project] The user just started the Tuner. Their description of the model: {goal}. "
+            "Greet them in one line, restate the goal as a small, fun model you'll build, then do the groundwork "
+            "and propose the base model for them to confirm."
+        )
     tuner.send(
         project_id,
-        f"[New project] The user just started the Tuner. Their description of the model: {goal}. "
-        "Greet them in one line, restate the goal as a small, fun model you'll build, then do the groundwork "
-        "and propose the base model for them to confirm.",
+        text,
         role="event",
         meta={"kickoff": True},
     )

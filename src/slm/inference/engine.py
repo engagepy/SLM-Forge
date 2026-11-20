@@ -12,6 +12,7 @@ thread is torn down while Python is still alive, and one thread also keeps MLX u
 
 import gc
 import queue
+import re
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -208,7 +209,17 @@ class Engine:
                 text.append(ev["text"])
             else:
                 stats = ev
-        return "".join(text), stats
+        return strip_think("".join(text)), stats
+
+
+THINK_BLOCK = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL)
+
+
+def strip_think(text: str) -> str:
+    """The answer without a leading <think>…</think> block. Qwen3 templates render an empty one into
+    every trained assistant turn but not into the generation prompt, so a fine-tuned Qwen3 writes it
+    itself; left in, a JSON answer never parses and scores 0."""
+    return THINK_BLOCK.sub("", text, count=1)
 
 
 engine = Engine()

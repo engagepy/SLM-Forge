@@ -5,6 +5,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Build specs.** `uv run slm spec <file.yaml>` imports a YAML build recipe (`kind: slm_build`) as a
+  project: name, goal, the output contract as the system prompt, and a plan (data sources,
+  evaluation, stop rule) the Tuner follows. What the Mac can't do (cloud GPUs, full fine-tuning,
+  sweeps, thousands of synthetic rows, auto-publishing) is listed as warnings, not silently dropped.
+  Dry run by default; `--start` creates the project on the running server and starts the Tuner,
+  which still asks before every run. On Home, "Or import a build spec (YAML)" previews the
+  project and its warnings before creating anything. API: `POST /api/projects/from-spec`
+  (`preview: true` creates nothing).
+
 ### Fixed
 - **A published model card always has the Hub's YAML metadata.** Publishing an export made before
   model cards carried front matter now adds it (licence, base model, library, pipeline), plus the

@@ -51,7 +51,7 @@ const buttonStyles: Record<Variant, string> = {
 /** The classes a button (or a link that looks like one) wears. */
 export function buttonClass(variant: Variant = "secondary", size: Size = "md", className?: string) {
   return cx(
-    "inline-flex items-center justify-center gap-1.5 rounded-lg border font-medium transition",
+    "inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border font-medium transition",
     "disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent",
     size === "sm" ? "h-7 px-2.5 text-xs" : "h-8.5 px-3.5 text-[13px]",
     buttonStyles[variant],

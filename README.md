@@ -100,6 +100,7 @@ Useful commands:
 ```bash
 uv run slm hardware                 # what this Mac can train
 uv run slm models qwen              # base models that fit, with memory estimates
+uv run slm spec build.yaml --start  # import a YAML build spec as a project and start the Tuner
 uv run python scripts/smoke.py      # end-to-end check: download → SFT → DPO → export (~4 min)
 uv run pytest                       # unit + API tests (no GPU or network needed)
 ```

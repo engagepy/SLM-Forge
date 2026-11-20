@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
 import MetricsBar from "../components/MetricsBar";
@@ -10,6 +10,11 @@ import { useSystem } from "../hooks";
 import { Badge, Button, ErrorNote, LinkButton, TextArea } from "../ui";
 
 // Small, characterful goals: what a tiny model does well and people enjoy trying.
+interface SpecImport {
+  project: { name: string; goal: string };
+  warnings: string[];
+}
+
 const EXAMPLES = [
   "A pirate who explains everyday science in two sentences",
   "A haiku poet that turns any topic into a haiku",
@@ -28,6 +33,24 @@ export default function Home() {
       const p = await api.post<Project>("/api/projects", { name: "New model", goal });
       await api.post(`/api/projects/${p.id}/tuner/start`);
       return p;
+    },
+    onSuccess: (p) => navigate(`/p/${p.id}`),
+  });
+  // A build spec (YAML, kind: slm_build): preview first (creates nothing), then import and start.
+  const specInput = useRef<HTMLInputElement>(null);
+  const [spec, setSpec] = useState<{ yaml: string; preview: SpecImport } | null>(null);
+  const previewSpec = useMutation({
+    mutationFn: async (file: File) => {
+      const yaml = await file.text();
+      return { yaml, preview: await api.post<SpecImport>("/api/projects/from-spec", { yaml, preview: true }) };
+    },
+    onSuccess: setSpec,
+  });
+  const importSpec = useMutation({
+    mutationFn: async (yaml: string) => {
+      const { project } = await api.post<{ project: Project }>("/api/projects/from-spec", { yaml });
+      await api.post(`/api/projects/${project.id}/tuner/start`);
+      return project;
     },
     onSuccess: (p) => navigate(`/p/${p.id}`),
   });
@@ -103,17 +126,70 @@ export default function Home() {
                   key={ex}
                   type="button"
                   onClick={() => setGoal(ex)}
-                  className="rounded-full border border-line px-3 py-1 text-xs text-muted hover:border-accent hover:text-fg"
+                  className="cursor-pointer rounded-full border border-line px-3 py-1 text-xs text-muted hover:border-accent hover:text-fg"
                 >
                   {ex}
                 </button>
               ))}
             </div>
-            <ErrorNote error={create.error} />
-            <Button type="submit" variant="primary" disabled={!goal.trim()} loading={create.isPending}>
-              Start with the Tuner →
-            </Button>
+            <ErrorNote error={create.error ?? previewSpec.error ?? importSpec.error} />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="submit" variant="primary" disabled={!goal.trim()} loading={create.isPending}>
+                Start with the Tuner →
+              </Button>
+              <span className="text-xs text-faint">or</span>
+              <Button
+                type="button"
+                loading={previewSpec.isPending}
+                onClick={() => specInput.current?.click()}
+                title="A YAML build recipe (kind: slm_build). You'll see what it becomes before anything is created."
+              >
+                Import a build spec (YAML)
+              </Button>
+              <input
+                ref={specInput}
+                type="file"
+                accept=".yaml,.yml"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  setSpec(null);
+                  if (file) previewSpec.mutate(file);
+                  e.target.value = "";
+                }}
+              />
+            </div>
           </form>
+
+          {spec && (
+            <div className="mt-4 space-y-3 rounded-xl border border-accent/40 bg-panel p-4">
+              <div>
+                <div className="text-[11px] font-medium uppercase tracking-wide text-faint">From your build spec</div>
+                <div className="mt-0.5 text-[14px] font-medium">{spec.preview.project.name}</div>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted">{spec.preview.project.goal}</p>
+              </div>
+              {spec.preview.warnings.length > 0 && (
+                <details className="rounded-lg bg-panel-2 px-3 py-2">
+                  <summary className="cursor-pointer text-xs text-warn">
+                    {spec.preview.warnings.length} parts of the spec are done differently on this Mac
+                  </summary>
+                  <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-muted">
+                    {spec.preview.warnings.map((w) => (
+                      <li key={w}>{w}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              <div className="flex gap-2">
+                <Button variant="primary" loading={importSpec.isPending} onClick={() => importSpec.mutate(spec.yaml)}>
+                  Import and start the Tuner →
+                </Button>
+                <Button variant="ghost" onClick={() => setSpec(null)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
         </section>
 
         {finished.length > 0 && (
